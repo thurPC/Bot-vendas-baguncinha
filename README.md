@@ -53,13 +53,15 @@ Edite `PRODUTOS` em `index.js` pra mudar nome, preco (em centavos) e texto. Prec
 
 ## Problemas de "Missing Access" (50001)
 
-Rode o diagnostico com as mesmas variaveis do Render:
+No plano free do Render nao da pra abrir shell. O proprio bot imprime o diagnostico ao iniciar:
+basta reiniciar o servico e olhar os logs (aba **Logs**). Ele mostra o dono do token, se o
+`CLIENT_ID` confere e em quais servidores o bot esta.
+
+Se quiser rodar na mao em outro lugar, existe tambem:
 
 ```
 npm run diagnostico
 ```
-
-Ele mostra o bot dono do token, se o `CLIENT_ID` confere e em quais servidores o bot esta.
 
 Causas mais comuns:
 

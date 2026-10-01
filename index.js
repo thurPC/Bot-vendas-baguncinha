@@ -82,7 +82,7 @@ if (!CLIENT_ID) console.error("CLIENT_ID nao configurado.");
 if (!GUILD_ID) console.error("GUILD_ID nao configurado.");
 
 const client = new Client({
-  intents: [GatewayIntentBits.Guilds, GatewayIntentBits.GuildMembers]
+  intents: [GatewayIntentBits.Guilds]
 });
 
 function carregarStore() {
@@ -386,6 +386,68 @@ const commands = [
     .setDefaultMemberPermissions(PermissionFlagsBits.ManageMessages)
 ].map(c => c.toJSON());
 
+async function discordGet(caminho) {
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), 15000);
+  try {
+    const resposta = await fetch(`https://discord.com/api/v10${caminho}`, {
+      headers: { Authorization: `Bot ${TOKEN}` },
+      signal: controller.signal
+    });
+    const json = await resposta.json().catch(() => null);
+    return { ok: resposta.ok, status: resposta.status, json };
+  } finally {
+    clearTimeout(timeoutId);
+  }
+}
+
+async function diagnosticoInicial() {
+  console.log("== Diagnostico de conexao ==");
+
+  const me = await discordGet("/users/@me").catch(error => ({ ok: false, json: { message: error.message } }));
+  if (!me.ok) {
+    console.error(`Token invalido (HTTP ${me.status}): ${me.json?.message || "sem detalhe"}`);
+    return;
+  }
+  console.log(`Token pertence a: ${me.json.username} (id ${me.json.id})`);
+
+  const app = await discordGet("/applications/@me").catch(() => ({ ok: false }));
+  if (app.ok) {
+    console.log(`Aplicacao do token: ${app.json.name} (id ${app.json.id})`);
+    if (CLIENT_ID && app.json.id !== CLIENT_ID) {
+      console.error(
+        `PROBLEMA: CLIENT_ID (${CLIENT_ID}) e diferente do dono do token (${app.json.id}). ` +
+        "Use o id da aplicacao do token."
+      );
+    } else if (CLIENT_ID) {
+      console.log("CLIENT_ID confere com o token.");
+    }
+  } else {
+    console.error("Nao consegui ler a aplicacao do token.");
+  }
+
+  const guilds = await discordGet("/users/@me/guilds").catch(() => ({ ok: false }));
+  if (guilds.ok) {
+    if (guilds.json.length === 0) {
+      console.error("O bot NAO esta em nenhum servidor. Convide ele primeiro.");
+    }
+    for (const g of guilds.json) {
+      const marca = g.id === GUILD_ID ? "  <== GUILD_ID configurado" : "";
+      console.log(`Servidor: ${g.name} (id ${g.id})${marca}`);
+    }
+    if (GUILD_ID && !guilds.json.some(g => g.id === GUILD_ID)) {
+      console.error(
+        `PROBLEMA: o bot nao esta no servidor GUILD_ID=${GUILD_ID}. ` +
+        "Confirme o id do servidor e reconvide com o escopo applications.commands."
+      );
+    } else if (GUILD_ID) {
+      console.log("OK: o bot esta no servidor configurado.");
+    }
+  } else {
+    console.error("Nao consegui listar os servidores do bot.");
+  }
+}
+
 async function registerCommands() {
   const rest = new REST({ version: "10" }).setToken(TOKEN);
 
@@ -396,9 +458,8 @@ async function registerCommands() {
   } catch (error) {
     if (error.code === 50001 || error.status === 403) {
       console.error(
-        "Missing Access ao registrar no servidor. Confira se o bot foi convidado " +
-        `(client_id ${CLIENT_ID}) e se GUILD_ID (${GUILD_ID}) e o servidor certo. ` +
-        "Vou tentar registrar os comandos globais como fallback."
+        "Missing Access ao registrar no servidor. Veja o diagnostico acima. " +
+        "Vou registrar os comandos globais como fallback."
       );
     } else {
       console.error("Erro ao registrar no servidor:", error.message);
@@ -410,7 +471,7 @@ async function registerCommands() {
     console.log("Comandos globais registrados (podem demorar ate 1h pra aparecer).");
   } catch (error) {
     console.error("Falha tambem no registro global:", error.message);
-    throw error;
+    console.error("Vou conectar mesmo assim pra ver o diagnostico completo nos logs.");
   }
 }
 
@@ -704,7 +765,10 @@ async function start() {
     console.error("Faltam TOKEN, CLIENT_ID ou GUILD_ID.");
     return;
   }
-  await registerCommands();
+  await diagnosticoInicial();
+  await registerCommands().catch(error => {
+    console.error("Falha ao registrar comandos:", error.message);
+  });
   await client.login(TOKEN);
 }
 
