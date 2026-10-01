@@ -1,25 +1,56 @@
 # Bot-vendas-baguncinha
 
-Bot de vendas da Baguncinha: catalogo no Discord, Pix automatico, pedido pra staff e entrega pro cliente.
+Bot de vendas da Baguncinha: catalogo no Discord, Pix automatico, entregas automaticas ou pela staff, cupons, cargos temporarios, feedbacks, tickets e logs completos.
 
 ## Fluxo
 
 1. Cliente escolhe o produto (`/loja` ou catalogo publicado)
-2. Bot gera Pix (Mercado Pago)
-3. Aguarda o pagamento
+2. Pode aplicar um cupom de desconto no modal de compra
+3. Bot gera Pix (Mercado Pago)
 4. Webhook confirma o Pix
-5. Staff recebe o pedido no canal admin
-6. Staff clica em Entregar, cola o codigo/licenca
-7. Bot envia a entrega na DM do cliente
+5. Se o produto for **automatico** e houver estoque, o bot entrega na hora; senao avisa a staff
+6. Staff clica em Entregar, cola o codigo/licenca (modo staff)
+7. Bot envia a entrega na DM do cliente, concede cargo temporario (se configurado) e pede avaliacao
+8. Cliente avalia pelo botao na DM ou por `/feedback`
 
 Prazo padrao: **50 minutos** apos o Pix confirmado.
 
 ## Comandos
 
+Loja e cliente:
+
 - `/loja` — abre o catalogo (so pra quem usou)
-- `/catalogo` — publica o catalogo no canal (staff)
+- `/catalogo` — publica o catalogo no canal (staff, exige Gerenciar Mensagens)
 - `/meuspedidos` — lista seus pedidos
 - `/pedido id:` — consulta um pedido
+- `/feedback id: nota: comentario:` — avalia um pedido entregue
+- `/avaliacoes produto:` — media e comentarios de um produto
+- `/ticket assunto:` — abre um ticket de atendimento
+
+Staff (exigem Gerenciar Servidor):
+
+- `/estoque adicionar produto: conteudo:` — adiciona itens (um por linha)
+- `/estoque listar` — mostra o estoque
+- `/estoque remover produto: id:` — remove um item
+- `/cupom criar codigo: tipo: valor: usos: dias: minimo:`
+- `/cupom listar` / `/cupom remover codigo:`
+- `/produto listar`
+- `/produto editar produto: modo: cargo: cargo-dias: preco: disponivel:`
+- `/config ver`
+- `/config canal-logs canal:` / `/config canal-feedback canal:` / `/config categoria-ticket categoria:`
+- `/painel-ticket` — publica o painel de abertura de tickets
+- `/logs quantidade:` — logs de vendas recentes
+- `/relatorio` — resumo de vendas
+
+## Recursos
+
+- **Entrega automatica**: defina o produto como `modo: auto` (`/produto editar`) e abasteca o estoque (`/estoque adicionar`). Se acabar o estoque, o pedido cai no fluxo da staff automaticamente.
+- **Entrega semi-automatica**: produtos `modo: semi` sao entregues pela staff pelo botao **Entregar**.
+- **Cupons**: percentual ou valor fixo, com limite de usos, validade em dias e compra minima. O codigo e opcional no modal de compra.
+- **Cargos temporarios**: defina `cargo` e `cargo-dias` no produto. O cargo e dado na entrega e removido automaticamente ao expirar (mesmo apos reiniciar, pois fica salvo).
+- **Feedbacks**: apos a entrega o cliente recebe um botao de avaliacao na DM. As avaliacoes vao para o canal de feedback e/ou sao vistas com `/avaliacoes`.
+- **Tickets**: use `/painel-ticket` num canal. O botao abre um canal privado com o cliente e a staff; o botao **Fechar ticket** trava o canal e o renomeia.
+- **Logs completos**: pedido criado, cupom aplicado, pagamento, entrega, cancelamento, expiracao, prazo estourado, cargos e tickets. Todos vao para o canal definido em `/config canal-logs` e ficam salvos no `data/store.json`.
 
 ## Variaveis de ambiente
 
@@ -30,7 +61,7 @@ Copie `.env.example` e preencha no Render:
 - `GUILD_ID` — id do servidor
 - `OWNER_ID` — seu Discord id
 - `ADMIN_CHANNEL_ID` — canal privado de pedidos
-- `ADMIN_ROLE_ID` — cargo avisado em pedido novo
+- `ADMIN_ROLE_ID` — cargo avisado em pedido novo e que acessa os tickets
 - `PORT` — porta HTTP (Render usa 10000)
 - `PUBLIC_URL` — URL publica do servico, ex. `https://bot-vendas.onrender.com`
 - `MERCADOPAGO_ACCESS_TOKEN` — token de producao ou teste
@@ -43,9 +74,21 @@ No painel do Mercado Pago, o webhook deve apontar para:
 https://SEU-SERVICO/webhook/mercadopago
 ```
 
+## Permissoes do bot
+
+Para os recursos internos funcionarem, o bot precisa de:
+
+- **Gerenciar Cargos**, com o cargo do bot acima do cargo temporario na hierarquia
+- **Gerenciar Canais**, para criar e travar tickets
+- **Enviar Mensagens** nos canais de logs e feedback
+
+O cargo em `ADMIN_ROLE_ID` e adicionado automaticamente aos novos tickets.
+
 ## Produtos
 
-Edite `PRODUTOS` em `index.js` pra mudar nome, preco (em centavos) e texto. Precos atuais:
+Os produtos ficam em `PRODUTOS` no `index.js`, mas tambem podem ser ajustados em tempo de execucao com `/produto editar` (preco, modo, disponibilidade e cargo temporario). Os ajustes ficam salvos em `data/store.json`.
+
+Precos iniciais:
 
 - Discord Nitro 1 mes — R$ 24,90
 - Discord Nitro 3 meses — R$ 64,90
