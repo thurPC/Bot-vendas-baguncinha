@@ -51,6 +51,29 @@ Edite `PRODUTOS` em `index.js` pra mudar nome, preco (em centavos) e texto. Prec
 - Discord Nitro 3 meses — R$ 64,90
 - 2 Boosts de servidor — R$ 19,90
 
+## Problemas de "Missing Access" (50001)
+
+Rode o diagnostico com as mesmas variaveis do Render:
+
+```
+npm run diagnostico
+```
+
+Ele mostra o bot dono do token, se o `CLIENT_ID` confere e em quais servidores o bot esta.
+
+Causas mais comuns:
+
+1. O bot nao foi convidado pro servidor (ou foi convidado o app errado).
+2. O convite nao tinha o escopo `applications.commands`.
+
+Convite correto (reconvide mesmo se o bot ja aparece no servidor, pra liberar os comandos):
+
+```
+https://discord.com/oauth2/authorize?client_id=SEU_CLIENT_ID&scope=bot%20applications.commands&permissions=8
+```
+
+3. `TOKEN` de uma aplicacao e `CLIENT_ID` de outra. O diagnostico detecta.
+
 ## Start
 
 ```

@@ -388,8 +388,30 @@ const commands = [
 
 async function registerCommands() {
   const rest = new REST({ version: "10" }).setToken(TOKEN);
-  await rest.put(Routes.applicationGuildCommands(CLIENT_ID, GUILD_ID), { body: commands });
-  console.log("Comandos slash registrados.");
+
+  try {
+    await rest.put(Routes.applicationGuildCommands(CLIENT_ID, GUILD_ID), { body: commands });
+    console.log("Comandos slash registrados no servidor.");
+    return;
+  } catch (error) {
+    if (error.code === 50001 || error.status === 403) {
+      console.error(
+        "Missing Access ao registrar no servidor. Confira se o bot foi convidado " +
+        `(client_id ${CLIENT_ID}) e se GUILD_ID (${GUILD_ID}) e o servidor certo. ` +
+        "Vou tentar registrar os comandos globais como fallback."
+      );
+    } else {
+      console.error("Erro ao registrar no servidor:", error.message);
+    }
+  }
+
+  try {
+    await rest.put(Routes.applicationCommands(CLIENT_ID), { body: commands });
+    console.log("Comandos globais registrados (podem demorar ate 1h pra aparecer).");
+  } catch (error) {
+    console.error("Falha tambem no registro global:", error.message);
+    throw error;
+  }
 }
 
 async function criarPedido(interaction, produtoId) {
