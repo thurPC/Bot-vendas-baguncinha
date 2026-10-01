@@ -112,6 +112,18 @@ const client = new Client({
   intents: [GatewayIntentBits.Guilds]
 });
 
+client.on("error", error => {
+  console.error("Erro no client do Discord:", error.message);
+});
+
+process.on("unhandledRejection", motivo => {
+  console.error("Promise rejeitada sem tratamento:", motivo);
+});
+
+process.on("uncaughtException", error => {
+  console.error("Excecao nao tratada:", error);
+});
+
 function carregarStore() {
   try {
     if (fs.existsSync(DATA_FILE)) {
@@ -751,13 +763,16 @@ async function criarPedido(interaction, produtoId, cupomCodigo) {
 }
 
 async function handleEntregarModal(interaction, pedidoId) {
+  const podeEfemero = interaction.inGuild();
+  await interaction.deferReply({ ephemeral: podeEfemero });
+
   const pedido = store.pedidos[String(pedidoId)];
   if (!pedido) {
-    await interaction.reply({ content: "Pedido nao encontrado.", ephemeral: true });
+    await interaction.editReply({ content: "Pedido nao encontrado." });
     return;
   }
   if (pedido.status !== STATUS.AGUARDANDO_ENTREGA) {
-    await interaction.reply({ content: `Pedido #${pedidoId} nao esta aguardando entrega.`, ephemeral: true });
+    await interaction.editReply({ content: `Pedido #${pedidoId} nao esta aguardando entrega.` });
     return;
   }
 
@@ -765,33 +780,35 @@ async function handleEntregarModal(interaction, pedidoId) {
   const extra = interaction.fields.getTextInputValue("extra").trim();
   await entregarPedido(pedido, { automatico: false, staffId: interaction.user.id, codigo, extra });
 
-  await interaction.reply({ content: `✅ Pedido #${pedido.id} entregue ao cliente.`, ephemeral: true });
+  await interaction.editReply({ content: `✅ Pedido #${pedido.id} entregue ao cliente.` });
 }
 
 async function handleAvaliarModal(interaction, pedidoId) {
   const podeEfemero = interaction.inGuild();
+  await interaction.deferReply({ ephemeral: podeEfemero });
+
   const pedido = store.pedidos[String(pedidoId)];
   if (!pedido) {
-    await interaction.reply({ content: "Pedido nao encontrado.", ephemeral: podeEfemero });
+    await interaction.editReply({ content: "Pedido nao encontrado." });
     return;
   }
   if (pedido.userId !== interaction.user.id) {
-    await interaction.reply({ content: "Voce so pode avaliar os seus pedidos.", ephemeral: podeEfemero });
+    await interaction.editReply({ content: "Voce so pode avaliar os seus pedidos." });
     return;
   }
   if (pedido.feedback) {
-    await interaction.reply({ content: "Voce ja avaliou esse pedido. Obrigado!", ephemeral: podeEfemero });
+    await interaction.editReply({ content: "Voce ja avaliou esse pedido. Obrigado!" });
     return;
   }
 
   const nota = parseInt(interaction.fields.getTextInputValue("nota").trim(), 10);
   if (!Number.isInteger(nota) || nota < 1 || nota > 5) {
-    await interaction.reply({ content: "A nota precisa ser um numero de 1 a 5.", ephemeral: podeEfemero });
+    await interaction.editReply({ content: "A nota precisa ser um numero de 1 a 5." });
     return;
   }
   const comentario = interaction.fields.getTextInputValue("comentario").trim();
   await registrarFeedback(pedido, nota, comentario);
-  await interaction.reply({ content: `${estrelas(nota)} Valeu pela avaliacao!`, ephemeral: podeEfemero });
+  await interaction.editReply({ content: `${estrelas(nota)} Valeu pela avaliacao!` });
 }
 
 async function abrirTicket(guild, user, assunto) {
@@ -862,24 +879,26 @@ async function abrirTicket(guild, user, assunto) {
 }
 
 async function fecharTicket(interaction, canalId) {
+  const efemero = interaction.inGuild();
+  await interaction.deferReply({ ephemeral: efemero });
+
   const guild = interaction.guild;
   if (!guild) {
-    await interaction.reply({ content: "Use esse botao dentro do servidor.", ephemeral: false });
+    await interaction.editReply({ content: "Use esse botao dentro do servidor." });
     return;
   }
   const ticket = store.tickets[canalId];
   const canal = guild.channels.cache.get(canalId) || await guild.channels.fetch(canalId).catch(() => null);
   if (!canal || !ticket) {
-    await interaction.reply({ content: "Ticket nao encontrado.", ephemeral: true });
+    await interaction.editReply({ content: "Ticket nao encontrado." });
     return;
   }
-  const membro = await guild.members.fetch(interaction.user.id).catch(() => null);
-  if (ticket.userId !== interaction.user.id && !isStaff(membro)) {
-    await interaction.reply({ content: "So o dono do ticket ou a staff pode fechar.", ephemeral: true });
+  if (ticket.userId !== interaction.user.id && !isStaff(interaction.member)) {
+    await interaction.editReply({ content: "So o dono do ticket ou a staff pode fechar." });
     return;
   }
   if (ticket.status === "fechado") {
-    await interaction.reply({ content: "Esse ticket ja esta fechado.", ephemeral: true });
+    await interaction.editReply({ content: "Esse ticket ja esta fechado." });
     return;
   }
 
@@ -895,7 +914,7 @@ async function fecharTicket(interaction, canalId) {
     userId: ticket.userId,
     staffId: interaction.user.id
   });
-  await interaction.reply({ content: "🔒 Ticket fechado.", ephemeral: true });
+  await interaction.editReply({ content: "🔒 Ticket fechado." });
 }
 
 async function handleEstoque(interaction) {
@@ -1132,7 +1151,7 @@ async function handleFeedback(interaction) {
     await interaction.reply({ content: "Pedido nao encontrado.", ephemeral: true });
     return;
   }
-  const membro = await interaction.guild.members.fetch(interaction.user.id).catch(() => null);
+  const membro = interaction.member;
   if (pedido.userId !== interaction.user.id && !isStaff(membro)) {
     await interaction.reply({ content: "Voce so pode avaliar os seus pedidos.", ephemeral: true });
     return;
@@ -1181,6 +1200,7 @@ async function handleAvaliacoes(interaction) {
 }
 
 async function handlePainelTicket(interaction) {
+  await interaction.deferReply({ ephemeral: true });
   const embed = new EmbedBuilder()
     .setTitle("🎫 Central de atendimento")
     .setDescription("Precisa de ajuda? Clique no botao abaixo para abrir um ticket privado com a equipe.")
@@ -1189,7 +1209,7 @@ async function handlePainelTicket(interaction) {
     new ButtonBuilder().setCustomId("ticket_abrir").setLabel("Abrir ticket").setEmoji("🎫").setStyle(ButtonStyle.Primary)
   );
   await interaction.channel.send({ embeds: [embed], components: [row] });
-  await interaction.reply({ content: "✅ Painel de tickets publicado.", ephemeral: true });
+  await interaction.editReply({ content: "✅ Painel de tickets publicado." });
 }
 
 async function handleTicket(interaction) {
@@ -1497,7 +1517,7 @@ async function handleCommand(interaction) {
         await interaction.reply({ content: "Pedido nao encontrado.", ephemeral: true });
         return;
       }
-      const member = await interaction.guild.members.fetch(interaction.user.id).catch(() => null);
+      const member = interaction.member;
       if (pedido.userId !== interaction.user.id && !isStaff(member)) {
         await interaction.reply({ content: "Voce so pode ver os seus pedidos.", ephemeral: true });
         return;
@@ -1534,6 +1554,11 @@ async function handleCommand(interaction) {
       return;
     case "relatorio":
       await handleRelatorio(interaction);
+      return;
+    default:
+      await interaction
+        .reply({ content: "Comando desconhecido. Reinvocarei apos o bot atualizar.", ephemeral: true })
+        .catch(() => {});
   }
 }
 
@@ -1546,7 +1571,7 @@ async function handleButton(interaction) {
   }
 
   if (acao === "entregar") {
-    const member = await interaction.guild.members.fetch(interaction.user.id);
+    const member = interaction.member;
     if (!isStaff(member)) {
       await interaction.reply({ content: "So a staff pode entregar.", ephemeral: true });
       return;
@@ -1580,14 +1605,15 @@ async function handleButton(interaction) {
   }
 
   if (acao === "cancelar") {
-    const member = await interaction.guild.members.fetch(interaction.user.id);
+    await interaction.deferReply({ ephemeral: true });
+    const member = interaction.member;
     if (!isStaff(member)) {
-      await interaction.reply({ content: "So a staff pode cancelar.", ephemeral: true });
+      await interaction.editReply({ content: "So a staff pode cancelar." });
       return;
     }
     const pedido = store.pedidos[valor];
     if (!pedido || [STATUS.ENTREGUE, STATUS.CANCELADO].includes(pedido.status)) {
-      await interaction.reply({ content: "Esse pedido nao pode ser cancelado.", ephemeral: true });
+      await interaction.editReply({ content: "Esse pedido nao pode ser cancelado." });
       return;
     }
     pedido.status = STATUS.CANCELADO;
@@ -1600,7 +1626,7 @@ async function handleButton(interaction) {
     });
     await avisarCliente(pedido, `❌ Pedido #${pedido.id} foi cancelado pela staff.`);
     await notificarAdmin(pedido, `Cancelado por <@${interaction.user.id}>.`);
-    await interaction.reply({ content: `Pedido #${pedido.id} cancelado.`, ephemeral: true });
+    await interaction.editReply({ content: `Pedido #${pedido.id} cancelado.` });
     return;
   }
 
@@ -1618,7 +1644,12 @@ async function handleButton(interaction) {
 
   if (acao === "ticket_fechar") {
     await fecharTicket(interaction, valor);
+    return;
   }
+
+  await interaction
+    .reply({ content: "Esse botao ficou desatualizado. Use os comandos de novo.", ephemeral: true })
+    .catch(() => {});
 }
 
 async function handleModal(interaction) {
@@ -1642,7 +1673,12 @@ async function handleModal(interaction) {
 
   if (acao === "avaliar_modal") {
     await handleAvaliarModal(interaction, valor);
+    return;
   }
+
+  await interaction
+    .reply({ content: "Esse formulario ficou desatualizado. Tente novamente.", ephemeral: interaction.inGuild() })
+    .catch(() => {});
 }
 
 client.on("interactionCreate", async interaction => {
