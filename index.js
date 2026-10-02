@@ -225,7 +225,7 @@ function precoVitrine(produto) {
   const original = Number(produto.precoOriginalCentavos) || 0;
   if (original > atual && atual > 0) {
     const pct = Math.round(((original - atual) / original) * 100);
-    return `~~${formatarReais(original)}~~ **${formatarReais(atual)}** (−${pct}%)`;
+    return `**${formatarReais(atual)}**  ~~${formatarReais(original)}~~ (−${pct}%)`;
   }
   return `**${formatarReais(atual)}**`;
 }
