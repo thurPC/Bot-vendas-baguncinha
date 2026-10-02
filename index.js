@@ -1771,8 +1771,18 @@ const server = http.createServer(async (req, res) => {
 
 client.once("ready", () => {
   console.log(`Bot conectado como ${client.user.tag}`);
-  verificarPrazos().catch(() => {});
-  removerCargosExpirados().catch(() => {});
+
+  try {
+    verificarPrazos();
+  } catch (err) {
+    console.error("Erro em verificarPrazos:", err);
+  }
+
+  try {
+    removerCargosExpirados();
+  } catch (err) {
+    console.error("Erro em removerCargosExpirados:", err);
+  }
 });
 
 function verificarPrazos() {
