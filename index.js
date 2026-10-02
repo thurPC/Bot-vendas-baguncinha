@@ -1455,20 +1455,35 @@ async function diagnosticoInicial() {
 async function registerCommands() {
   const rest = new REST({ version: "10" }).setToken(TOKEN);
 
+  // Registra a lista atual no servidor. Isso sobrescreve os comandos do servidor
+  // a cada start, entao qualquer comando removido/renomeado some na hora.
+  let registradoNoServidor = false;
   try {
     await rest.put(Routes.applicationGuildCommands(CLIENT_ID, GUILD_ID), { body: commands });
-    console.log("Comandos slash registrados no servidor.");
-    return;
+    console.log(`Comandos slash registrados no servidor (${commands.length}).`);
+    registradoNoServidor = true;
   } catch (error) {
     if (error.code === 50001 || error.status === 403) {
       console.error(
         "Missing Access ao registrar no servidor. Veja o diagnostico acima. " +
-        "Vou registrar os comandos globais como fallback."
+        "Vou tentar registrar os comandos globais como fallback."
       );
     } else {
       console.error("Erro ao registrar no servidor:", error.message);
     }
   }
+
+  // Limpa comandos globais antigos que ficaram presos na lista do bot. Sem isso,
+  // comandos de versoes passadas continuam aparecendo no Discord (cache de ate 1h)
+  // e o bot responde "Comando desconhecido" quando alguem usa um deles.
+  try {
+    await rest.put(Routes.applicationCommands(CLIENT_ID), { body: [] });
+    console.log("Comandos globais antigos limpos.");
+  } catch (error) {
+    console.error("Nao consegui limpar os comandos globais antigos:", error.message);
+  }
+
+  if (registradoNoServidor) return;
 
   try {
     await rest.put(Routes.applicationCommands(CLIENT_ID), { body: commands });
@@ -1556,6 +1571,8 @@ async function handleCommand(interaction) {
       await handleRelatorio(interaction);
       return;
     default:
+      console.warn(`Comando nao reconhecido: /${interaction.commandName}. Os comandos atuais serao re-registrados.`);
+      await registerCommands().catch(() => {});
       await interaction
         .reply({ content: "Comando desconhecido. Reinvocarei apos o bot atualizar.", ephemeral: true })
         .catch(() => {});
