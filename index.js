@@ -33,6 +33,14 @@ const MP_ACCESS_TOKEN = process.env.MERCADOPAGO_ACCESS_TOKEN;
 const MP_WEBHOOK_SECRET = process.env.MERCADOPAGO_WEBHOOK_SECRET;
 const PAYER_EMAIL = process.env.PAYER_EMAIL || "pagamentos@baguncinha.local";
 
+const CANAIS = {
+  loja: "1554894024849104926",
+  feedbacks: "1555479807926468639",
+  logs: "1555479669082427412",
+  cupons: "1555484389754798161",
+  ticket: "1555489336139579492"
+};
+
 const DATA_FILE = path.join(__dirname, "data", "store.json");
 const PRAZO_ENTREGA_MIN = 50;
 const DIA_MS = 24 * 60 * 60 * 1000;
@@ -163,9 +171,12 @@ if (!store.logs) store.logs = [];
 if (!store.produtoOverrides) store.produtoOverrides = {};
 if (!store.tickets) store.tickets = {};
 if (!store.config) store.config = { logChannelId: null, feedbackChannelId: null, ticketCategoryId: null, lojaChannelId: null, banner: null };
-if (!store.config.lojaChannelId) store.config.lojaChannelId = null;
+store.config.logChannelId = CANAIS.logs;
+store.config.feedbackChannelId = CANAIS.feedbacks;
+store.config.lojaChannelId = CANAIS.loja;
 if (!store.config.banner) store.config.banner = null;
 if (!store.lojaFixa) store.lojaFixa = { channelId: null, messageId: null };
+if (!store.paineisFixos) store.paineisFixos = { ticket: null, cupons: null };
 
 const escolhasProdutos = Object.values(PRODUTOS).map(p => ({ name: p.nome, value: p.id }));
 
@@ -458,18 +469,85 @@ async function atualizarLojaFixa() {
 }
 
 async function publicarLojaFixa(canal) {
+  const destino = canal && canal.id === CANAIS.loja ? canal : await client.channels.fetch(CANAIS.loja).catch(() => null);
+  if (!destino) {
+    console.error("Canal da lojinha nao encontrado.");
+    return null;
+  }
   if (store.lojaFixa.channelId && store.lojaFixa.messageId) {
     const antigo = await client.channels.fetch(store.lojaFixa.channelId).catch(() => null);
     if (antigo) {
       const msg = await antigo.messages.fetch(store.lojaFixa.messageId).catch(() => null);
-      if (msg) await msg.delete().catch(() => {});
+      if (msg) {
+        await msg.edit(payloadLoja()).catch(() => {});
+        return msg;
+      }
     }
   }
-  const enviada = await canal.send(payloadLoja());
-  store.lojaFixa = { channelId: canal.id, messageId: enviada.id };
-  store.config.lojaChannelId = canal.id;
+  const enviada = await destino.send(payloadLoja());
+  store.lojaFixa = { channelId: destino.id, messageId: enviada.id };
+  store.config.lojaChannelId = destino.id;
   salvarStore();
   return enviada;
+}
+
+function payloadPainelTicket() {
+  const embed = new EmbedBuilder()
+    .setTitle("Central de atendimento")
+    .setDescription("Precisa de ajuda? Clique no botao abaixo para abrir um ticket privado com a equipe.")
+    .setColor(0x5865f2);
+  const row = new ActionRowBuilder().addComponents(
+    new ButtonBuilder().setCustomId("ticket_abrir").setLabel("Abrir ticket").setEmoji("🎫").setStyle(ButtonStyle.Primary)
+  );
+  return { embeds: [embed], components: [row] };
+}
+
+function payloadPainelCupons() {
+  const cupons = Object.values(store.cupons).filter(c => c.ativo);
+  const linhas = cupons.length
+    ? cupons.map(c => {
+      const desconto = c.tipo === "percent" ? `${c.valor}%` : formatarReais(c.valor);
+      const exp = c.expiraEm ? `<t:${Math.floor(c.expiraEm / 1000)}:R>` : "sem expiracao";
+      return `\`${c.codigo}\` — ${desconto} — ${exp}`;
+    })
+    : ["Nenhum cupom ativo no momento."];
+  const embed = new EmbedBuilder()
+    .setTitle("Cupons da loja")
+    .setDescription(linhas.join("\n"))
+    .setColor(0xe67e22);
+  return { embeds: [embed], components: [] };
+}
+
+async function publicarOuAtualizarPainel(chave, canalId, payload) {
+  const canal = await client.channels.fetch(canalId).catch(() => null);
+  if (!canal) {
+    console.error(`Canal ${chave} (${canalId}) nao encontrado.`);
+    return;
+  }
+  const salvo = store.paineisFixos[chave];
+  if (salvo) {
+    const msg = await canal.messages.fetch(salvo).catch(() => null);
+    if (msg) {
+      await msg.edit(payload).catch(() => {});
+      return msg;
+    }
+  }
+  const enviada = await canal.send(payload);
+  store.paineisFixos[chave] = enviada.id;
+  salvarStore();
+  return enviada;
+}
+
+async function atualizarPainelCupons() {
+  await publicarOuAtualizarPainel("cupons", CANAIS.cupons, payloadPainelCupons());
+}
+
+async function publicarCanaisFixos() {
+  const loja = await client.channels.fetch(CANAIS.loja).catch(() => null);
+  if (loja) await publicarLojaFixa(loja);
+  else console.error("Canal da lojinha nao encontrado.");
+  await publicarOuAtualizarPainel("ticket", CANAIS.ticket, payloadPainelTicket());
+  await atualizarPainelCupons();
 }
 
 function embedPedidoCliente(pedido, extra, opcoes = {}) {
@@ -1252,6 +1330,7 @@ async function handleCupom(interaction) {
       criadoEm: Date.now()
     };
     salvarStore();
+    await atualizarPainelCupons().catch(() => {});
     await interaction.reply({
       content:
         `🎟️ Cupom **${codigo}** criado.\n` +
@@ -1291,6 +1370,7 @@ async function handleCupom(interaction) {
     }
     store.cupons[codigo].ativo = false;
     salvarStore();
+    await atualizarPainelCupons().catch(() => {});
     await interaction.reply({ content: `🚫 Cupom **${codigo}** desativado.`, ephemeral: true });
   }
 }
@@ -1387,16 +1467,16 @@ async function handleConfig(interaction) {
   }
 
   if (sub === "canal-logs") {
-    store.config.logChannelId = interaction.options.getChannel("canal").id;
+    store.config.logChannelId = CANAIS.logs;
     salvarStore();
-    await interaction.reply({ content: `✅ Canal de logs definido em <#${store.config.logChannelId}>.`, ephemeral: true });
+    await interaction.reply({ content: `Logs ficam em <#${CANAIS.logs}>.`, ephemeral: true });
     return;
   }
 
   if (sub === "canal-feedback") {
-    store.config.feedbackChannelId = interaction.options.getChannel("canal").id;
+    store.config.feedbackChannelId = CANAIS.feedbacks;
     salvarStore();
-    await interaction.reply({ content: `✅ Canal de feedbacks definido em <#${store.config.feedbackChannelId}>.`, ephemeral: true });
+    await interaction.reply({ content: `Feedbacks ficam em <#${CANAIS.feedbacks}>.`, ephemeral: true });
     return;
   }
 
@@ -1408,9 +1488,8 @@ async function handleConfig(interaction) {
   }
 
   if (sub === "canal-loja") {
-    const canal = interaction.options.getChannel("canal");
-    await publicarLojaFixa(canal);
-    await interaction.reply({ content: `✅ Loja fixa publicada em <#${canal.id}>.`, ephemeral: true });
+    await publicarLojaFixa();
+    await interaction.reply({ content: `✅ Loja fixa publicada em <#${CANAIS.loja}>.`, ephemeral: true });
     return;
   }
 
@@ -1486,15 +1565,8 @@ async function handleAvaliacoes(interaction) {
 
 async function handlePainelTicket(interaction) {
   await interaction.deferReply({ ephemeral: true });
-  const embed = new EmbedBuilder()
-    .setTitle("🎫 Central de atendimento")
-    .setDescription("Precisa de ajuda? Clique no botao abaixo para abrir um ticket privado com a equipe.")
-    .setColor(0x5865f2);
-  const row = new ActionRowBuilder().addComponents(
-    new ButtonBuilder().setCustomId("ticket_abrir").setLabel("Abrir ticket").setEmoji("🎫").setStyle(ButtonStyle.Primary)
-  );
-  await interaction.channel.send({ embeds: [embed], components: [row] });
-  await interaction.editReply({ content: "✅ Painel de tickets publicado." });
+  await publicarOuAtualizarPainel("ticket", CANAIS.ticket, payloadPainelTicket());
+  await interaction.editReply({ content: `Painel de tickets publicado em <#${CANAIS.ticket}>.` });
 }
 
 async function handleTicket(interaction) {
@@ -1793,18 +1865,16 @@ async function registerCommands() {
 async function handleCommand(interaction) {
   switch (interaction.commandName) {
     case "loja":
-      if (isStaff(interaction.member) && interaction.channel) {
-        await publicarLojaFixa(interaction.channel);
-        await interaction.reply({ content: `Loja fixa publicada neste canal. Nao precisa mais usar /loja pra comprar.`, ephemeral: true });
-      } else if (store.lojaFixa.channelId) {
-        await interaction.reply({ content: `A loja fica fixa em <#${store.lojaFixa.channelId}>.`, ephemeral: true });
+      if (isStaff(interaction.member)) {
+        await publicarLojaFixa();
+        await interaction.reply({ content: `Loja fixa publicada em <#${CANAIS.loja}>.`, ephemeral: true });
       } else {
-        await interaction.reply({ ...payloadLoja(), ephemeral: true });
+        await interaction.reply({ content: `A loja fica em <#${CANAIS.loja}>.`, ephemeral: true });
       }
       return;
     case "catalogo":
-      await publicarLojaFixa(interaction.channel);
-      await interaction.reply({ content: `Loja fixa publicada em <#${interaction.channel.id}>.`, ephemeral: true });
+      await publicarLojaFixa();
+      await interaction.reply({ content: `Loja fixa publicada em <#${CANAIS.loja}>.`, ephemeral: true });
       return;
     case "meuspedidos": {
       const meus = Object.values(store.pedidos)
@@ -2381,7 +2451,7 @@ client.once("ready", () => {
     console.error("Erro em removerCargosExpirados:", err);
   }
 
-  atualizarLojaFixa().catch(err => console.error("Erro ao atualizar loja fixa:", err.message));
+  publicarCanaisFixos().catch(err => console.error("Erro ao publicar canais fixos:", err.message));
 });
 
 function verificarPrazos() {
