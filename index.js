@@ -47,7 +47,10 @@ const PRODUTOS = {
     disponivel: true,
     modo: "auto",
     cargoId: null,
-    cargoDias: 0
+    cargoDias: 0,
+    imagem: null,
+    banner: null,
+    precoOriginalCentavos: 0
   },
   nitro_3m: {
     id: "nitro_3m",
@@ -58,7 +61,10 @@ const PRODUTOS = {
     disponivel: true,
     modo: "auto",
     cargoId: null,
-    cargoDias: 0
+    cargoDias: 0,
+    imagem: null,
+    banner: null,
+    precoOriginalCentavos: 0
   },
   boost_2: {
     id: "boost_2",
@@ -69,7 +75,10 @@ const PRODUTOS = {
     disponivel: true,
     modo: "semi",
     cargoId: null,
-    cargoDias: 0
+    cargoDias: 0,
+    imagem: null,
+    banner: null,
+    precoOriginalCentavos: 0
   }
 };
 
@@ -153,7 +162,10 @@ if (!store.cargosTemporarios) store.cargosTemporarios = [];
 if (!store.logs) store.logs = [];
 if (!store.produtoOverrides) store.produtoOverrides = {};
 if (!store.tickets) store.tickets = {};
-if (!store.config) store.config = { logChannelId: null, feedbackChannelId: null, ticketCategoryId: null };
+if (!store.config) store.config = { logChannelId: null, feedbackChannelId: null, ticketCategoryId: null, lojaChannelId: null, banner: null };
+if (!store.config.lojaChannelId) store.config.lojaChannelId = null;
+if (!store.config.banner) store.config.banner = null;
+if (!store.lojaFixa) store.lojaFixa = { channelId: null, messageId: null };
 
 const escolhasProdutos = Object.values(PRODUTOS).map(p => ({ name: p.nome, value: p.id }));
 
@@ -198,6 +210,34 @@ function produtoPodeComprar(produto) {
   return !!(produto && produto.disponivel && !produtoEsgotado(produto));
 }
 
+function urlMidiaValida(url) {
+  if (!url) return false;
+  try {
+    const u = new URL(String(url).trim());
+    return u.protocol === "http:" || u.protocol === "https:";
+  } catch {
+    return false;
+  }
+}
+
+function precoVitrine(produto) {
+  const atual = Number(produto.precoCentavos) || 0;
+  const original = Number(produto.precoOriginalCentavos) || 0;
+  if (original > atual && atual > 0) {
+    const pct = Math.round(((original - atual) / original) * 100);
+    return `~~${formatarReais(original)}~~ **${formatarReais(atual)}** (−${pct}%)`;
+  }
+  return `**${formatarReais(atual)}**`;
+}
+
+function linhaPrecoProduto(produto) {
+  const qtd = estoqueDe(produto.id).length;
+  let extra = "";
+  if (produto.modo === "auto") extra = qtd > 0 ? ` — ${qtd} em estoque` : " — **esgotado**";
+  else extra = produto.disponivel ? "" : " — indisponivel";
+  return `${produto.emoji} **${produto.nome}** — ${precoVitrine(produto)}${extra}\n${produto.descricao}`;
+}
+
 function limparPixCopiaECola(codigo) {
   if (!codigo) return "";
   return String(codigo)
@@ -217,21 +257,71 @@ function bufferDoQrMercadoPago(base64) {
   }
 }
 
-function arquivoPixTxt(pedido) {
-  return new AttachmentBuilder(Buffer.from(pedido.pixCopiaECola, "utf8"), {
-    name: `pix-${pedido.id}.txt`
-  });
+function botoesPix(pedidoId) {
+  const row = new ActionRowBuilder().addComponents(
+    new ButtonBuilder()
+      .setCustomId(`pix_copiar:${pedidoId}`)
+      .setLabel("Copiar Pix")
+      .setStyle(ButtonStyle.Success)
+  );
+  if (PUBLIC_URL) {
+    row.addComponents(
+      new ButtonBuilder()
+        .setLabel("Abrir e copiar no celular")
+        .setStyle(ButtonStyle.Link)
+        .setURL(`${PUBLIC_URL}/pix/${pedidoId}`)
+    );
+  }
+  return [row];
 }
 
-function botoesPix(pedidoId) {
-  return [
+function modalPix(pedido) {
+  const modal = new ModalBuilder()
+    .setCustomId(`pix_copiar_modal:${pedido.id}`)
+    .setTitle(`Pix #${pedido.id} — selecione e copie`.slice(0, 45));
+  modal.addComponents(
     new ActionRowBuilder().addComponents(
-      new ButtonBuilder()
-        .setCustomId(`pix_txt:${pedidoId}`)
-        .setLabel("Pix copia e cola")
-        .setStyle(ButtonStyle.Secondary)
+      new TextInputBuilder()
+        .setCustomId("pix")
+        .setLabel("Segure o texto e toque em Copiar")
+        .setStyle(TextInputStyle.Paragraph)
+        .setValue(String(pedido.pixCopiaECola).slice(0, 4000))
+        .setRequired(true)
     )
-  ];
+  );
+  return modal;
+}
+
+function paginaCopiarPix(pedido) {
+  const codigo = String(pedido.pixCopiaECola)
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;");
+  const valor = formatarReais(pedido.valorCentavos);
+  return `<!doctype html><html lang="pt-BR"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Pix #${pedido.id}</title>
+<style>
+body{font-family:system-ui,sans-serif;background:#111;color:#fff;margin:0;padding:24px}
+.box{max-width:560px;margin:0 auto;background:#1e1e24;border-radius:16px;padding:20px}
+h1{font-size:1.2rem;margin:0 0 8px}p{opacity:.8}
+textarea{width:100%;min-height:140px;border-radius:12px;border:0;padding:12px;font-size:14px;box-sizing:border-box}
+button{width:100%;margin-top:12px;padding:14px;border:0;border-radius:12px;background:#57f287;color:#111;font-weight:700;font-size:16px}
+.ok{background:#3ba55d;color:#fff}
+</style></head><body><div class="box">
+<h1>Pedido #${pedido.id}</h1>
+<p>Valor: ${valor}</p>
+<textarea id="pix" readonly>${codigo}</textarea>
+<button id="btn" onclick="copiar()">Copiar Pix</button>
+<p id="msg"></p>
+</div>
+<script>
+async function copiar(){
+  const t=document.getElementById("pix");
+  t.select();t.setSelectionRange(0,99999);
+  try{await navigator.clipboard.writeText(t.value);ok()}
+  catch(e){try{document.execCommand("copy");ok()}catch(err){document.getElementById("msg").textContent="Segure o texto e copie."}}
+}
+function ok(){const b=document.getElementById("btn");b.textContent="Copiado";b.className="ok";document.getElementById("msg").textContent="Cole no app do banco."}
+</script></body></html>`;
 }
 
 function valorPixReais(centavos) {
@@ -300,36 +390,86 @@ function validarCupom(codigo, valorCentavos) {
 }
 
 function catalogoEmbed() {
-  const linhas = todosProdutos().map(p => {
-    const qtd = estoqueDe(p.id).length;
-    let extra = "";
-    if (p.modo === "auto") extra = qtd > 0 ? ` — ${qtd} em estoque` : " — **esgotado**";
-    else extra = p.disponivel ? "" : " — indisponivel";
-    return `${p.emoji} **${p.nome}** — ${formatarReais(p.precoCentavos)}${extra}\n${p.descricao}`;
-  });
-  return new EmbedBuilder()
-    .setTitle("🛒 Loja Baguncinha")
+  const linhas = todosProdutos().map(linhaPrecoProduto);
+  const embed = new EmbedBuilder()
+    .setTitle("Loja Baguncinha")
     .setDescription(
       "Escolha um produto abaixo. O bot gera o Pix, confirma o pagamento e entrega.\n\n" +
       linhas.join("\n\n") +
-      `\n\n📦 Prazo: ate **${PRAZO_ENTREGA_MIN} min** depois do Pix confirmado.`
+      `\n\nPrazo: ate **${PRAZO_ENTREGA_MIN} min** depois do Pix confirmado.`
     )
     .setColor(0x9b59b6);
+  if (urlMidiaValida(store.config.banner)) embed.setImage(store.config.banner);
+  return embed;
+}
+
+function embedProdutoVitrine(produto) {
+  const embed = new EmbedBuilder()
+    .setTitle(`${produto.emoji} ${produto.nome}`)
+    .setDescription(`${produto.descricao}\n\n${precoVitrine(produto)}`)
+    .setColor(0x9b59b6);
+  const midia = produto.banner || produto.imagem;
+  if (urlMidiaValida(midia)) embed.setImage(midia);
+  else if (urlMidiaValida(produto.imagem)) embed.setThumbnail(produto.imagem);
+  if (produto.modo === "auto") {
+    const qtd = estoqueDe(produto.id).length;
+    embed.setFooter({ text: qtd > 0 ? `${qtd} em estoque` : "Esgotado" });
+  }
+  return embed;
 }
 
 function botoesCatalogo() {
-  const row = new ActionRowBuilder();
+  const rows = [];
   for (const produto of todosProdutos()) {
     const esgotado = produtoEsgotado(produto);
-    row.addComponents(
+    const row = new ActionRowBuilder().addComponents(
+      new ButtonBuilder()
+        .setCustomId(`ver:${produto.id}`)
+        .setLabel(produto.nome.slice(0, 80))
+        .setStyle(ButtonStyle.Primary),
       new ButtonBuilder()
         .setCustomId(`comprar:${produto.id}`)
-        .setLabel(esgotado ? `Esgotado ${produto.nome}` : `Comprar ${produto.nome}`)
+        .setLabel(esgotado ? "Esgotado" : "Comprar")
         .setStyle(esgotado ? ButtonStyle.Secondary : ButtonStyle.Success)
-        .setDisabled(!produtoPodeComprar(produto))
+        .setDisabled(!produtoPodeComprar(produto)),
+      new ButtonBuilder()
+        .setCustomId(`gear:${produto.id}`)
+        .setEmoji("⚙️")
+        .setStyle(ButtonStyle.Secondary)
     );
+    rows.push(row);
   }
-  return [row];
+  return rows.slice(0, 5);
+}
+
+function payloadLoja() {
+  return { content: null, embeds: [catalogoEmbed()], components: botoesCatalogo() };
+}
+
+async function atualizarLojaFixa() {
+  const canalId = store.lojaFixa.channelId || store.config.lojaChannelId;
+  const messageId = store.lojaFixa.messageId;
+  if (!canalId || !messageId) return;
+  const canal = await client.channels.fetch(canalId).catch(() => null);
+  if (!canal) return;
+  const msg = await canal.messages.fetch(messageId).catch(() => null);
+  if (!msg) return;
+  await msg.edit(payloadLoja()).catch(() => {});
+}
+
+async function publicarLojaFixa(canal) {
+  if (store.lojaFixa.channelId && store.lojaFixa.messageId) {
+    const antigo = await client.channels.fetch(store.lojaFixa.channelId).catch(() => null);
+    if (antigo) {
+      const msg = await antigo.messages.fetch(store.lojaFixa.messageId).catch(() => null);
+      if (msg) await msg.delete().catch(() => {});
+    }
+  }
+  const enviada = await canal.send(payloadLoja());
+  store.lojaFixa = { channelId: canal.id, messageId: enviada.id };
+  store.config.lojaChannelId = canal.id;
+  salvarStore();
+  return enviada;
 }
 
 function embedPedidoCliente(pedido, extra, opcoes = {}) {
@@ -360,7 +500,7 @@ function embedPedidoCliente(pedido, extra, opcoes = {}) {
   if (pedido.pixCopiaECola && pedido.status === STATUS.AGUARDANDO_PAGAMENTO) {
     embed.addFields({
       name: "Como pagar",
-      value: "Escaneie o QR Code ou baixe o arquivo `.txt` e copie o codigo inteiro. Nao copie de mensagem do Discord — o app do banco recusa caractere extra."
+      value: "Escaneie o QR Code ou toque em **Copiar Pix**. No celular, o codigo abre num campo pra voce selecionar e copiar, sem download."
     });
     if (opcoes.qrNome) {
       embed.setImage(`attachment://${opcoes.qrNome}`);
@@ -665,6 +805,8 @@ async function confirmarPagamento(pedido, payment) {
     const item = consumirEstoque(pedido.produtoId);
     if (item) {
       pedido.modo = "auto";
+      salvarStore();
+      await atualizarLojaFixa();
       await entregarPedido(pedido, { automatico: true, codigo: item.conteudo });
       return;
     }
@@ -852,17 +994,13 @@ async function criarPedido(interaction, produtoId, cupomCodigo) {
   const extra =
     `💰 Pix gerado no valor de **${formatarReais(pedido.valorCentavos)}**.` +
     (descontoCentavos > 0 ? ` Cupom aplicado: de ${formatarReais(pedido.valorOriginalCentavos)} por ${formatarReais(pedido.valorCentavos)}.` : "") +
-    "\nEscaneie o QR Code oficial ou baixe o arquivo `.txt` do copia e cola.";
-
-  const arquivos = [];
-  if (qrAnexo) arquivos.push(qrAnexo);
-  if (pedido.pixCopiaECola) arquivos.push(arquivoPixTxt(pedido));
+    "\nEscaneie o QR ou toque em **Copiar Pix** (no celular abre um campo pra copiar, sem download).";
 
   await interaction.editReply({
     content: `⏳ Aguardando pagamento — valor final **${formatarReais(pedido.valorCentavos)}**`,
     embeds: [embedPedidoCliente(pedido, extra, { qrNome: pedido.pixQrAnexo })],
     components: botoesPix(pedido.id),
-    files: arquivos
+    files: qrAnexo ? [qrAnexo] : []
   });
 }
 
@@ -1045,6 +1183,7 @@ async function handleEstoque(interaction) {
       fila.push({ id: store.nextEstoqueItemId++, conteudo: texto, criadoEm: Date.now() });
     }
     salvarStore();
+    await atualizarLojaFixa();
     await interaction.reply({
       content: `✅ ${itens.length} item(ns) adicionado(s) ao estoque de **${produto.nome}**. Total agora: **${fila.length}**.`,
       ephemeral: true
@@ -1076,6 +1215,7 @@ async function handleEstoque(interaction) {
     }
     fila.splice(idx, 1);
     salvarStore();
+    await atualizarLojaFixa();
     await interaction.reply({ content: `🗑️ Item ${itemId} removido do estoque. Total: **${fila.length}**.`, ephemeral: true });
   }
 }
@@ -1184,16 +1324,35 @@ async function handleProduto(interaction) {
     const cargo = interaction.options.getRole("cargo");
     const cargoDias = interaction.options.getInteger("cargo-dias");
     const preco = interaction.options.getNumber("preco");
+    const precoOriginal = interaction.options.getNumber("preco-original");
     const disponivel = interaction.options.getBoolean("disponivel");
+    const imagem = interaction.options.getString("imagem");
+    const banner = interaction.options.getString("banner");
 
     if (modo) patch.modo = modo;
     if (cargo) patch.cargoId = cargo.id;
     if (cargoDias !== null && cargoDias !== undefined) patch.cargoDias = cargoDias;
     if (preco !== null && preco !== undefined) patch.precoCentavos = Math.round(preco * 100);
+    if (precoOriginal !== null && precoOriginal !== undefined) patch.precoOriginalCentavos = Math.round(precoOriginal * 100);
     if (disponivel !== null && disponivel !== undefined) patch.disponivel = disponivel;
+    if (imagem !== null && imagem !== undefined) {
+      if (imagem && !urlMidiaValida(imagem)) {
+        await interaction.reply({ content: "URL da imagem invalida.", ephemeral: true });
+        return;
+      }
+      patch.imagem = imagem || null;
+    }
+    if (banner !== null && banner !== undefined) {
+      if (banner && !urlMidiaValida(banner)) {
+        await interaction.reply({ content: "URL do banner invalida.", ephemeral: true });
+        return;
+      }
+      patch.banner = banner || null;
+    }
 
     store.produtoOverrides[produtoId] = patch;
     salvarStore();
+    await atualizarLojaFixa();
 
     const atual = getProduto(produtoId);
     await interaction.reply({
@@ -1216,6 +1375,8 @@ async function handleConfig(interaction) {
       `Canal de logs: ${store.config.logChannelId ? `<#${store.config.logChannelId}>` : "nao definido"}\n` +
       `Canal de feedbacks: ${store.config.feedbackChannelId ? `<#${store.config.feedbackChannelId}>` : "nao definido"}\n` +
       `Categoria de tickets: ${store.config.ticketCategoryId ? `<#${store.config.ticketCategoryId}>` : "nao definida"}\n` +
+      `Loja fixa: ${store.lojaFixa.channelId ? `<#${store.lojaFixa.channelId}>` : "nao publicada"}\n` +
+      `Banner da loja: ${urlMidiaValida(store.config.banner) ? "definido" : "nao definido"}\n` +
       `Cargos temporarios ativos: ${store.cargosTemporarios.length}\n` +
       `Pedidos registrados: ${Object.keys(store.pedidos).length}`;
     await interaction.reply({
@@ -1243,6 +1404,26 @@ async function handleConfig(interaction) {
     store.config.ticketCategoryId = interaction.options.getChannel("categoria").id;
     salvarStore();
     await interaction.reply({ content: `✅ Categoria de tickets definida em <#${store.config.ticketCategoryId}>.`, ephemeral: true });
+    return;
+  }
+
+  if (sub === "canal-loja") {
+    const canal = interaction.options.getChannel("canal");
+    await publicarLojaFixa(canal);
+    await interaction.reply({ content: `✅ Loja fixa publicada em <#${canal.id}>.`, ephemeral: true });
+    return;
+  }
+
+  if (sub === "banner-loja") {
+    const url = (interaction.options.getString("url") || "").trim();
+    if (url && !urlMidiaValida(url)) {
+      await interaction.reply({ content: "URL invalida. Use um link http/https (gif funciona).", ephemeral: true });
+      return;
+    }
+    store.config.banner = url || null;
+    salvarStore();
+    await atualizarLojaFixa();
+    await interaction.reply({ content: url ? "✅ Banner da loja atualizado." : "✅ Banner da loja removido.", ephemeral: true });
   }
 }
 
@@ -1446,7 +1627,10 @@ const commands = [
         .addRoleOption(o => o.setName("cargo").setDescription("Cargo temporario entregue na compra"))
         .addIntegerOption(o => o.setName("cargo-dias").setDescription("Duracao do cargo em dias").setMinValue(0))
         .addNumberOption(o => o.setName("preco").setDescription("Preco em reais").setMinValue(0))
+        .addNumberOption(o => o.setName("preco-original").setDescription("Preco riscado (de) em reais").setMinValue(0))
         .addBooleanOption(o => o.setName("disponivel").setDescription("Produto a venda?"))
+        .addStringOption(o => o.setName("imagem").setDescription("URL da foto do item (gif ok)"))
+        .addStringOption(o => o.setName("banner").setDescription("URL do banner/gif do produto"))
     ),
   new SlashCommandBuilder()
     .setName("config")
@@ -1464,6 +1648,14 @@ const commands = [
     .addSubcommand(sub =>
       sub.setName("categoria-ticket").setDescription("Define a categoria dos tickets.")
         .addChannelOption(o => o.setName("categoria").setDescription("Categoria").setRequired(true).addChannelTypes(ChannelType.GuildCategory))
+    )
+    .addSubcommand(sub =>
+      sub.setName("canal-loja").setDescription("Publica a loja fixa neste canal (sem precisar de /loja).")
+        .addChannelOption(o => o.setName("canal").setDescription("Canal da loja").setRequired(true).addChannelTypes(ChannelType.GuildText))
+    )
+    .addSubcommand(sub =>
+      sub.setName("banner-loja").setDescription("Define o banner/gif da loja inicial.")
+        .addStringOption(o => o.setName("url").setDescription("URL da imagem ou gif (vazio remove)").setRequired(false))
     ),
   new SlashCommandBuilder()
     .setName("feedback")
@@ -1601,17 +1793,18 @@ async function registerCommands() {
 async function handleCommand(interaction) {
   switch (interaction.commandName) {
     case "loja":
-      await interaction.reply({
-        embeds: [catalogoEmbed()],
-        components: botoesCatalogo(),
-        ephemeral: true
-      });
+      if (isStaff(interaction.member) && interaction.channel) {
+        await publicarLojaFixa(interaction.channel);
+        await interaction.reply({ content: `Loja fixa publicada neste canal. Nao precisa mais usar /loja pra comprar.`, ephemeral: true });
+      } else if (store.lojaFixa.channelId) {
+        await interaction.reply({ content: `A loja fica fixa em <#${store.lojaFixa.channelId}>.`, ephemeral: true });
+      } else {
+        await interaction.reply({ ...payloadLoja(), ephemeral: true });
+      }
       return;
     case "catalogo":
-      await interaction.reply({
-        embeds: [catalogoEmbed()],
-        components: botoesCatalogo()
-      });
+      await publicarLojaFixa(interaction.channel);
+      await interaction.reply({ content: `Loja fixa publicada em <#${interaction.channel.id}>.`, ephemeral: true });
       return;
     case "meuspedidos": {
       const meus = Object.values(store.pedidos)
@@ -1643,11 +1836,9 @@ async function handleCommand(interaction) {
       }
       await interaction.reply({
         embeds: [embedPedidoCliente(pedido)],
+        components: pedido.pixCopiaECola && pedido.status === STATUS.AGUARDANDO_PAGAMENTO ? botoesPix(pedido.id) : [],
         ephemeral: true
       });
-      if (pedido.pixCopiaECola && pedido.status === STATUS.AGUARDANDO_PAGAMENTO) {
-        await interaction.followUp({ content: pedido.pixCopiaECola, ephemeral: true }).catch(() => {});
-      }
       return;
     }
     case "estoque":
@@ -1709,7 +1900,159 @@ async function handleButton(interaction) {
     return;
   }
 
-  if (acao === "pix_txt") {
+  if (acao === "ver") {
+    const produto = getProduto(valor);
+    if (!produto) {
+      await interaction.reply({ content: "Produto nao encontrado.", ephemeral: true });
+      return;
+    }
+    const esgotado = produtoEsgotado(produto);
+    const row = new ActionRowBuilder().addComponents(
+      new ButtonBuilder()
+        .setCustomId(`comprar:${produto.id}`)
+        .setLabel(esgotado ? "Esgotado" : "Comprar")
+        .setStyle(esgotado ? ButtonStyle.Secondary : ButtonStyle.Success)
+        .setDisabled(!produtoPodeComprar(produto)),
+      new ButtonBuilder()
+        .setCustomId(`gear:${produto.id}`)
+        .setEmoji("⚙️")
+        .setStyle(ButtonStyle.Secondary)
+    );
+    await interaction.reply({ embeds: [embedProdutoVitrine(produto)], components: [row], ephemeral: true });
+    return;
+  }
+
+  if (acao === "gear") {
+    if (!isStaff(interaction.member)) {
+      await interaction.reply({ content: "So a staff pode configurar.", ephemeral: true });
+      return;
+    }
+    const produto = getProduto(valor);
+    if (!produto) {
+      await interaction.reply({ content: "Produto nao encontrado.", ephemeral: true });
+      return;
+    }
+    const qtd = estoqueDe(produto.id).length;
+    const embed = new EmbedBuilder()
+      .setTitle(`Config — ${produto.nome}`)
+      .setDescription(
+        `${precoVitrine(produto)}\n` +
+        `Modo: **${produto.modo === "auto" ? "automatico" : "staff"}**\n` +
+        `Disponivel: **${produto.disponivel ? "sim" : "nao"}**\n` +
+        `Estoque: **${qtd}**`
+      )
+      .setColor(0x95a5a6);
+    const row = new ActionRowBuilder().addComponents(
+      new ButtonBuilder().setCustomId(`editprod:${produto.id}`).setLabel("Editar item").setStyle(ButtonStyle.Primary),
+      new ButtonBuilder().setCustomId(`addstock:${produto.id}`).setLabel("Adicionar estoque").setStyle(ButtonStyle.Success),
+      new ButtonBuilder().setCustomId(`clearstock:${produto.id}`).setLabel("Limpar estoque").setStyle(ButtonStyle.Danger)
+    );
+    await interaction.reply({ embeds: [embed], components: [row], ephemeral: true });
+    return;
+  }
+
+  if (acao === "addstock") {
+    if (!isStaff(interaction.member)) {
+      await interaction.reply({ content: "So a staff pode gerenciar estoque.", ephemeral: true });
+      return;
+    }
+    const produto = getProduto(valor);
+    if (!produto) {
+      await interaction.reply({ content: "Produto nao encontrado.", ephemeral: true });
+      return;
+    }
+    const modal = new ModalBuilder().setCustomId(`addstock_modal:${valor}`).setTitle(`Estoque — ${produto.nome}`.slice(0, 45));
+    modal.addComponents(
+      new ActionRowBuilder().addComponents(
+        new TextInputBuilder()
+          .setCustomId("conteudo")
+          .setLabel("Itens (um por linha)")
+          .setStyle(TextInputStyle.Paragraph)
+          .setRequired(true)
+          .setMaxLength(4000)
+      )
+    );
+    await interaction.showModal(modal);
+    return;
+  }
+
+  if (acao === "clearstock") {
+    if (!isStaff(interaction.member)) {
+      await interaction.reply({ content: "So a staff pode limpar estoque.", ephemeral: true });
+      return;
+    }
+    const produto = getProduto(valor);
+    if (!produto) {
+      await interaction.reply({ content: "Produto nao encontrado.", ephemeral: true });
+      return;
+    }
+    const fila = estoqueDe(valor);
+    const total = fila.length;
+    store.estoque[valor] = [];
+    salvarStore();
+    await atualizarLojaFixa();
+    await interaction.reply({ content: `Estoque de **${produto.nome}** limpo (${total} item(ns) removidos).`, ephemeral: true });
+    return;
+  }
+
+  if (acao === "editprod") {
+    if (!isStaff(interaction.member)) {
+      await interaction.reply({ content: "So a staff pode editar.", ephemeral: true });
+      return;
+    }
+    const produto = getProduto(valor);
+    if (!produto) {
+      await interaction.reply({ content: "Produto nao encontrado.", ephemeral: true });
+      return;
+    }
+    const modal = new ModalBuilder().setCustomId(`editprod_modal:${valor}`).setTitle(`Editar ${produto.nome}`.slice(0, 45));
+    modal.addComponents(
+      new ActionRowBuilder().addComponents(
+        new TextInputBuilder()
+          .setCustomId("preco")
+          .setLabel("Preco atual (reais)")
+          .setStyle(TextInputStyle.Short)
+          .setRequired(false)
+          .setValue(String((produto.precoCentavos / 100).toFixed(2)))
+      ),
+      new ActionRowBuilder().addComponents(
+        new TextInputBuilder()
+          .setCustomId("preco_original")
+          .setLabel("Preco riscado / de (reais, 0 = sem)")
+          .setStyle(TextInputStyle.Short)
+          .setRequired(false)
+          .setValue(String(((produto.precoOriginalCentavos || 0) / 100).toFixed(2)))
+      ),
+      new ActionRowBuilder().addComponents(
+        new TextInputBuilder()
+          .setCustomId("imagem")
+          .setLabel("URL da foto do item (gif ok)")
+          .setStyle(TextInputStyle.Short)
+          .setRequired(false)
+          .setValue(produto.imagem || "")
+      ),
+      new ActionRowBuilder().addComponents(
+        new TextInputBuilder()
+          .setCustomId("banner")
+          .setLabel("URL do banner/gif do produto")
+          .setStyle(TextInputStyle.Short)
+          .setRequired(false)
+          .setValue(produto.banner || "")
+      ),
+      new ActionRowBuilder().addComponents(
+        new TextInputBuilder()
+          .setCustomId("descricao")
+          .setLabel("Descricao")
+          .setStyle(TextInputStyle.Paragraph)
+          .setRequired(false)
+          .setValue((produto.descricao || "").slice(0, 1000))
+      )
+    );
+    await interaction.showModal(modal);
+    return;
+  }
+
+  if (acao === "pix_copiar" || acao === "pix_txt") {
     const pedido = store.pedidos[String(valor)];
     if (!pedido || !pedido.pixCopiaECola) {
       await interaction.reply({ content: "Esse Pix nao esta mais disponivel.", ephemeral: true });
@@ -1719,11 +2062,7 @@ async function handleButton(interaction) {
       await interaction.reply({ content: "Esse Pix nao e seu.", ephemeral: true });
       return;
     }
-    await interaction.reply({
-      content: "Abra o arquivo e copie o codigo inteiro. Cole no app do banco.",
-      files: [arquivoPixTxt(pedido)],
-      ephemeral: true
-    });
+    await interaction.showModal(modalPix(pedido));
     return;
   }
 
@@ -1833,6 +2172,94 @@ async function handleModal(interaction) {
     return;
   }
 
+  if (acao === "pix_copiar_modal") {
+    await interaction.reply({ content: "Cole o Pix no app do banco.", ephemeral: true }).catch(() => {});
+    return;
+  }
+
+  if (acao === "addstock_modal") {
+    if (!isStaff(interaction.member)) {
+      await interaction.reply({ content: "So a staff pode gerenciar estoque.", ephemeral: true });
+      return;
+    }
+    const produto = getProduto(valor);
+    if (!produto) {
+      await interaction.reply({ content: "Produto nao encontrado.", ephemeral: true });
+      return;
+    }
+    const itens = interaction.fields.getTextInputValue("conteudo").split(/\r?\n/).map(l => l.trim()).filter(Boolean);
+    if (!itens.length) {
+      await interaction.reply({ content: "Envie ao menos um item (um por linha).", ephemeral: true });
+      return;
+    }
+    const fila = estoqueDe(valor);
+    for (const texto of itens) {
+      fila.push({ id: store.nextEstoqueItemId++, conteudo: texto, criadoEm: Date.now() });
+    }
+    salvarStore();
+    await atualizarLojaFixa();
+    await interaction.reply({
+      content: `✅ ${itens.length} item(ns) adicionado(s) ao estoque de **${produto.nome}**. Total agora: **${fila.length}**.`,
+      ephemeral: true
+    });
+    return;
+  }
+
+  if (acao === "editprod_modal") {
+    if (!isStaff(interaction.member)) {
+      await interaction.reply({ content: "So a staff pode editar.", ephemeral: true });
+      return;
+    }
+    const produto = getProduto(valor);
+    if (!produto) {
+      await interaction.reply({ content: "Produto nao encontrado.", ephemeral: true });
+      return;
+    }
+    const patch = store.produtoOverrides[valor] || {};
+    const precoTxt = interaction.fields.getTextInputValue("preco").trim();
+    const originalTxt = interaction.fields.getTextInputValue("preco_original").trim();
+    const imagem = interaction.fields.getTextInputValue("imagem").trim();
+    const banner = interaction.fields.getTextInputValue("banner").trim();
+    const descricao = interaction.fields.getTextInputValue("descricao").trim();
+
+    if (precoTxt) {
+      const n = Number(precoTxt.replace(",", "."));
+      if (!Number.isFinite(n) || n < 0) {
+        await interaction.reply({ content: "Preco invalido.", ephemeral: true });
+        return;
+      }
+      patch.precoCentavos = Math.round(n * 100);
+    }
+    if (originalTxt) {
+      const n = Number(originalTxt.replace(",", "."));
+      if (!Number.isFinite(n) || n < 0) {
+        await interaction.reply({ content: "Preco original invalido.", ephemeral: true });
+        return;
+      }
+      patch.precoOriginalCentavos = Math.round(n * 100);
+    }
+    if (imagem && !urlMidiaValida(imagem)) {
+      await interaction.reply({ content: "URL da imagem invalida.", ephemeral: true });
+      return;
+    }
+    if (banner && !urlMidiaValida(banner)) {
+      await interaction.reply({ content: "URL do banner invalida.", ephemeral: true });
+      return;
+    }
+    patch.imagem = imagem || null;
+    patch.banner = banner || null;
+    if (descricao) patch.descricao = descricao;
+    store.produtoOverrides[valor] = patch;
+    salvarStore();
+    await atualizarLojaFixa();
+    const atual = getProduto(valor);
+    await interaction.reply({
+      content: `✅ **${atual.nome}** atualizado.\nPreco: ${precoVitrine(atual)}`,
+      ephemeral: true
+    });
+    return;
+  }
+
   await interaction
     .reply({ content: "Esse formulario ficou desatualizado. Tente novamente.", ephemeral: interaction.inGuild() })
     .catch(() => {});
@@ -1896,6 +2323,19 @@ const server = http.createServer(async (req, res) => {
     return;
   }
 
+  if (req.method === "GET" && req.url.startsWith("/pix/")) {
+    const id = decodeURIComponent(req.url.slice("/pix/".length).split("?")[0] || "");
+    const pedido = store.pedidos[id];
+    if (!pedido || !pedido.pixCopiaECola || pedido.status !== STATUS.AGUARDANDO_PAGAMENTO) {
+      res.writeHead(404, { "Content-Type": "text/plain; charset=utf-8" });
+      res.end("Pix nao encontrado ou expirado.");
+      return;
+    }
+    res.writeHead(200, { "Content-Type": "text/html; charset=utf-8", "Cache-Control": "no-store" });
+    res.end(paginaCopiarPix(pedido));
+    return;
+  }
+
   if (req.method === "POST" && req.url.startsWith("/webhook/mercadopago")) {
     try {
       const raw = await lerBody(req);
@@ -1940,6 +2380,8 @@ client.once("ready", () => {
   } catch (err) {
     console.error("Erro em removerCargosExpirados:", err);
   }
+
+  atualizarLojaFixa().catch(err => console.error("Erro ao atualizar loja fixa:", err.message));
 });
 
 function verificarPrazos() {
