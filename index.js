@@ -200,7 +200,38 @@ function produtoPodeComprar(produto) {
 
 function limparPixCopiaECola(codigo) {
   if (!codigo) return "";
-  return String(codigo).replace(/[\s\u200b\u200c\u200d\ufeff`]/g, "").trim();
+  return String(codigo)
+    .replace(/^\uFEFF/, "")
+    .replace(/[\r\n\t]/g, "")
+    .trim();
+}
+
+function bufferDoQrMercadoPago(base64) {
+  if (!base64) return null;
+  try {
+    const limpo = String(base64).replace(/^data:image\/[a-zA-Z+]+;base64,/, "");
+    const buf = Buffer.from(limpo, "base64");
+    return buf.length > 100 ? buf : null;
+  } catch {
+    return null;
+  }
+}
+
+function arquivoPixTxt(pedido) {
+  return new AttachmentBuilder(Buffer.from(pedido.pixCopiaECola, "utf8"), {
+    name: `pix-${pedido.id}.txt`
+  });
+}
+
+function botoesPix(pedidoId) {
+  return [
+    new ActionRowBuilder().addComponents(
+      new ButtonBuilder()
+        .setCustomId(`pix_txt:${pedidoId}`)
+        .setLabel("Pix copia e cola")
+        .setStyle(ButtonStyle.Secondary)
+    )
+  ];
 }
 
 function valorPixReais(centavos) {
@@ -328,8 +359,8 @@ function embedPedidoCliente(pedido, extra, opcoes = {}) {
   }
   if (pedido.pixCopiaECola && pedido.status === STATUS.AGUARDANDO_PAGAMENTO) {
     embed.addFields({
-      name: "Pix copia e cola",
-      value: "O codigo limpo vai na mensagem seguinte. Copie ele inteiro, sem espaco extra."
+      name: "Como pagar",
+      value: "Escaneie o QR Code ou baixe o arquivo `.txt` e copie o codigo inteiro. Nao copie de mensagem do Discord — o app do banco recusa caractere extra."
     });
     if (opcoes.qrNome) {
       embed.setImage(`attachment://${opcoes.qrNome}`);
@@ -407,7 +438,7 @@ async function criarPix(pedido) {
   const notificationUrl = PUBLIC_URL ? `${PUBLIC_URL}/webhook/mercadopago` : undefined;
   const r = await mpRequest("POST", "/v1/payments", {
     transaction_amount: valorPixReais(pedido.valorCentavos),
-    description: `${pedido.produtoNome} #${pedido.id} — ${formatarReais(pedido.valorCentavos)}`,
+    description: `${pedido.produtoNome} #${pedido.id}`,
     payment_method_id: "pix",
     payer: { email: PAYER_EMAIL },
     external_reference: String(pedido.id),
@@ -422,6 +453,9 @@ async function criarPix(pedido) {
 
   const tx = r.json.point_of_interaction?.transaction_data || {};
   const pixCopiaECola = limparPixCopiaECola(tx.qr_code || "");
+  if (!pixCopiaECola) {
+    throw new Error("Mercado Pago nao devolveu o codigo Pix (qr_code).");
+  }
   return {
     paymentId: String(r.json.id),
     pixCopiaECola,
@@ -780,13 +814,16 @@ async function criarPedido(interaction, produtoId, cupomCodigo) {
       pedido.valorCentavos = Math.round(pix.valorCobranca * 100);
     }
 
-    if (pedido.pixCopiaECola) {
-      const qrBuffer = await QRCode.toBuffer(pedido.pixCopiaECola, {
+    let qrBuffer = bufferDoQrMercadoPago(pix.pixQrBase64);
+    if (!qrBuffer && pedido.pixCopiaECola) {
+      qrBuffer = await QRCode.toBuffer(pedido.pixCopiaECola, {
         type: "png",
         width: 512,
-        margin: 2,
+        margin: 1,
         errorCorrectionLevel: "M"
       });
+    }
+    if (qrBuffer) {
       pedido.pixQrAnexo = `pix-${id}.png`;
       qrAnexo = new AttachmentBuilder(qrBuffer, { name: pedido.pixQrAnexo });
     }
@@ -815,20 +852,18 @@ async function criarPedido(interaction, produtoId, cupomCodigo) {
   const extra =
     `💰 Pix gerado no valor de **${formatarReais(pedido.valorCentavos)}**.` +
     (descontoCentavos > 0 ? ` Cupom aplicado: de ${formatarReais(pedido.valorOriginalCentavos)} por ${formatarReais(pedido.valorCentavos)}.` : "") +
-    "\nEscaneie o QR Code ou copie o codigo da proxima mensagem.";
+    "\nEscaneie o QR Code oficial ou baixe o arquivo `.txt` do copia e cola.";
+
+  const arquivos = [];
+  if (qrAnexo) arquivos.push(qrAnexo);
+  if (pedido.pixCopiaECola) arquivos.push(arquivoPixTxt(pedido));
 
   await interaction.editReply({
     content: `⏳ Aguardando pagamento — valor final **${formatarReais(pedido.valorCentavos)}**`,
     embeds: [embedPedidoCliente(pedido, extra, { qrNome: pedido.pixQrAnexo })],
-    files: qrAnexo ? [qrAnexo] : []
+    components: botoesPix(pedido.id),
+    files: arquivos
   });
-
-  if (pedido.pixCopiaECola) {
-    await interaction.followUp({
-      content: pedido.pixCopiaECola,
-      ephemeral: true
-    }).catch(() => {});
-  }
 }
 
 async function handleEntregarModal(interaction, pedidoId) {
@@ -1671,6 +1706,24 @@ async function handleButton(interaction) {
       return;
     }
     await interaction.showModal(modalComprar(valor));
+    return;
+  }
+
+  if (acao === "pix_txt") {
+    const pedido = store.pedidos[String(valor)];
+    if (!pedido || !pedido.pixCopiaECola) {
+      await interaction.reply({ content: "Esse Pix nao esta mais disponivel.", ephemeral: true });
+      return;
+    }
+    if (pedido.userId !== interaction.user.id && !isStaff(interaction.member)) {
+      await interaction.reply({ content: "Esse Pix nao e seu.", ephemeral: true });
+      return;
+    }
+    await interaction.reply({
+      content: "Abra o arquivo e copie o codigo inteiro. Cole no app do banco.",
+      files: [arquivoPixTxt(pedido)],
+      ephemeral: true
+    });
     return;
   }
 
