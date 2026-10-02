@@ -82,26 +82,26 @@ const STATUS = {
 };
 
 const STATUS_LABEL = {
-  aguardando_pagamento: "⏳ Aguardando pagamento",
-  aguardando_entrega: "🟡 Aguardando entrega",
-  entregue: "✅ Entregue",
-  cancelado: "❌ Cancelado",
-  expirado: "⌛ Expirado"
+  aguardando_pagamento: "⏳ Aguardando pagamento ⏳",
+  aguardando_entrega: "🟡 Aguardando entrega 🟡",
+  entregue: "Entregue ✅",
+  cancelado: "❌ Cancelado ❌",
+  expirado: "Expirado"
 };
 
 const LOG_LABEL = {
   pedido_criado: "🧾 Pedido criado",
-  cupom_aplicado: "🎟️ Cupom aplicado",
-  pagamento_confirmado: "💳 Pagamento confirmado",
-  aguardando_entrega: "🟡 Aguardando entrega",
-  entregue: "✅ Entrega concluida",
-  cancelado: "❌ Pedido cancelado",
-  expirado: "⌛ Pedido expirado",
-  prazo_estourado: "⏰ Prazo de entrega estourado",
+  cupom_aplicado: "Cupom aplicado ✅",
+  pagamento_confirmado: "Pagamento confirmado ✅",
+  aguardando_entrega: "🟡 Aguardando entrega ",
+  entregue: "Entrega concluida ✅",
+  cancelado: "❌ Pedido cancelado ❌",
+  expirado: "Pedido expirado",
+  prazo_estourado: " Prazo de entrega estourado",
   cargo_concedido: "🛡️ Cargo temporario concedido",
   cargo_removido: "🛡️ Cargo temporario removido",
   cargo_erro: "⚠️ Falha ao aplicar cargo",
-  feedback: "⭐ Nova avaliacao",
+  feedback: "Nova avaliacao",
   ticket_aberto: "🎫 Ticket aberto",
   ticket_fechado: "🎫 Ticket fechado"
 };
@@ -1950,7 +1950,7 @@ function verificarPrazos() {
       pedido.status = STATUS.EXPIRADO;
       mudou = true;
       registrarLog("expirado", `Pedido #${pedido.id} expirou sem pagamento.`, { pedidoId: pedido.id, userId: pedido.userId });
-      avisarCliente(pedido, `⌛ Seu pedido #${pedido.id} expirou por falta de pagamento.`).catch(() => {});
+      avisarCliente(pedido, `⌛ Seu pedido #${pedido.id} foi fechado por falta de pagamento.`).catch(() => {});
     }
     if (
       pedido.status === STATUS.AGUARDANDO_ENTREGA &&
