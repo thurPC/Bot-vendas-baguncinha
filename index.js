@@ -12,12 +12,14 @@ const {
   ModalBuilder,
   TextInputBuilder,
   TextInputStyle,
-  ChannelType
+  ChannelType,
+  AttachmentBuilder
 } = require("discord.js");
 const http = require("http");
 const fs = require("fs");
 const path = require("path");
 const crypto = require("crypto");
+const QRCode = require("qrcode");
 
 const TOKEN = process.env.TOKEN;
 const CLIENT_ID = process.env.CLIENT_ID;
@@ -188,6 +190,23 @@ function estoqueDe(produtoId) {
   return store.estoque[produtoId];
 }
 
+function produtoEsgotado(produto) {
+  return !!(produto && produto.modo === "auto" && estoqueDe(produto.id).length === 0);
+}
+
+function produtoPodeComprar(produto) {
+  return !!(produto && produto.disponivel && !produtoEsgotado(produto));
+}
+
+function limparPixCopiaECola(codigo) {
+  if (!codigo) return "";
+  return String(codigo).replace(/[\s\u200b\u200c\u200d\ufeff`]/g, "").trim();
+}
+
+function valorPixReais(centavos) {
+  return Number((Math.max(1, Math.round(Number(centavos) || 0)) / 100).toFixed(2));
+}
+
 function consumirEstoque(produtoId) {
   const fila = estoqueDe(produtoId);
   const item = fila.shift();
@@ -251,8 +270,11 @@ function validarCupom(codigo, valorCentavos) {
 
 function catalogoEmbed() {
   const linhas = todosProdutos().map(p => {
-    const estoque = p.modo === "auto" ? ` — ${estoqueDe(p.id).length} em estoque` : "";
-    return `${p.emoji} **${p.nome}** — ${formatarReais(p.precoCentavos)}${estoque}\n${p.descricao}`;
+    const qtd = estoqueDe(p.id).length;
+    let extra = "";
+    if (p.modo === "auto") extra = qtd > 0 ? ` — ${qtd} em estoque` : " — **esgotado**";
+    else extra = p.disponivel ? "" : " — indisponivel";
+    return `${p.emoji} **${p.nome}** — ${formatarReais(p.precoCentavos)}${extra}\n${p.descricao}`;
   });
   return new EmbedBuilder()
     .setTitle("🛒 Loja Baguncinha")
@@ -267,18 +289,19 @@ function catalogoEmbed() {
 function botoesCatalogo() {
   const row = new ActionRowBuilder();
   for (const produto of todosProdutos()) {
+    const esgotado = produtoEsgotado(produto);
     row.addComponents(
       new ButtonBuilder()
         .setCustomId(`comprar:${produto.id}`)
-        .setLabel(`Comprar ${produto.nome}`)
-        .setStyle(ButtonStyle.Success)
-        .setDisabled(!produto.disponivel)
+        .setLabel(esgotado ? `Esgotado ${produto.nome}` : `Comprar ${produto.nome}`)
+        .setStyle(esgotado ? ButtonStyle.Secondary : ButtonStyle.Success)
+        .setDisabled(!produtoPodeComprar(produto))
     );
   }
   return [row];
 }
 
-function embedPedidoCliente(pedido, extra) {
+function embedPedidoCliente(pedido, extra, opcoes = {}) {
   const produto = getProduto(pedido.produtoId);
   const embed = new EmbedBuilder()
     .setTitle(`${STATUS_LABEL[pedido.status] || pedido.status}`)
@@ -286,7 +309,8 @@ function embedPedidoCliente(pedido, extra) {
       `${extra || ""}\n\n` +
       `🆔 Pedido: **#${pedido.id}**\n` +
       `${produto ? produto.emoji : "📦"} Produto: **${pedido.produtoNome}**\n` +
-      `💰 Valor: **${formatarReais(pedido.valorCentavos)}**\n` +
+      `💰 Valor a pagar: **${formatarReais(pedido.valorCentavos)}**\n` +
+      (pedido.descontoCentavos > 0 ? `🏷️ De ${formatarReais(pedido.valorOriginalCentavos)} com cupom ${pedido.cupom ? `\`${pedido.cupom}\`` : ""}\n` : "") +
       `📦 Prazo: ate **${PRAZO_ENTREGA_MIN} minutos** apos o Pix confirmado.`
     )
     .setColor(
@@ -299,11 +323,17 @@ function embedPedidoCliente(pedido, extra) {
   if (pedido.descontoCentavos > 0) {
     embed.addFields({
       name: "🎟️ Cupom",
-      value: `${pedido.cupom ? `\`${pedido.cupom}\`` : "aplicado"} — de ${formatarReais(pedido.valorOriginalCentavos)} por ${formatarReais(pedido.valorCentavos)}`
+      value: `${pedido.cupom ? `\`${pedido.cupom}\`` : "aplicado"} — desconto de ${formatarReais(pedido.descontoCentavos)}\nDe ${formatarReais(pedido.valorOriginalCentavos)} por **${formatarReais(pedido.valorCentavos)}**`
     });
   }
   if (pedido.pixCopiaECola && pedido.status === STATUS.AGUARDANDO_PAGAMENTO) {
-    embed.addFields({ name: "Pix copia e cola", value: `\`\`\`${pedido.pixCopiaECola.slice(0, 1000)}\`\`\`` });
+    embed.addFields({
+      name: "Pix copia e cola",
+      value: "O codigo limpo vai na mensagem seguinte. Copie ele inteiro, sem espaco extra."
+    });
+    if (opcoes.qrNome) {
+      embed.setImage(`attachment://${opcoes.qrNome}`);
+    }
   }
   return embed;
 }
@@ -376,8 +406,8 @@ async function criarPix(pedido) {
 
   const notificationUrl = PUBLIC_URL ? `${PUBLIC_URL}/webhook/mercadopago` : undefined;
   const r = await mpRequest("POST", "/v1/payments", {
-    transaction_amount: Number((pedido.valorCentavos / 100).toFixed(2)),
-    description: `${pedido.produtoNome} #${pedido.id}`,
+    transaction_amount: valorPixReais(pedido.valorCentavos),
+    description: `${pedido.produtoNome} #${pedido.id} — ${formatarReais(pedido.valorCentavos)}`,
     payment_method_id: "pix",
     payer: { email: PAYER_EMAIL },
     external_reference: String(pedido.id),
@@ -391,10 +421,12 @@ async function criarPix(pedido) {
   }
 
   const tx = r.json.point_of_interaction?.transaction_data || {};
+  const pixCopiaECola = limparPixCopiaECola(tx.qr_code || "");
   return {
     paymentId: String(r.json.id),
-    pixCopiaECola: tx.qr_code || "",
-    pixQrBase64: tx.qr_code_base64 || ""
+    pixCopiaECola,
+    pixQrBase64: tx.qr_code_base64 || "",
+    valorCobranca: Number(r.json.transaction_amount)
   };
 }
 
@@ -690,6 +722,13 @@ async function criarPedido(interaction, produtoId, cupomCodigo) {
     await interaction.reply({ content: "Esse produto nao esta disponivel.", ephemeral: true });
     return;
   }
+  if (produtoEsgotado(produto)) {
+    await interaction.reply({
+      content: `❌ **${produto.nome}** esta esgotado. Sem estoque no momento.`,
+      ephemeral: true
+    });
+    return;
+  }
   if (!MP_ACCESS_TOKEN) {
     await interaction.reply({
       content: "Pagamento Pix ainda nao esta configurado (falta MERCADOPAGO_ACCESS_TOKEN).",
@@ -727,19 +766,36 @@ async function criarPedido(interaction, produtoId, cupomCodigo) {
     status: STATUS.AGUARDANDO_PAGAMENTO,
     criadoEm: Date.now(),
     pixCopiaECola: "",
+    pixQrAnexo: "",
     paymentId: "",
     entrega: null
   };
 
+  let qrAnexo = null;
   try {
     const pix = await criarPix(pedido);
     pedido.paymentId = pix.paymentId;
     pedido.pixCopiaECola = pix.pixCopiaECola;
+    if (typeof pix.valorCobranca === "number" && Number.isFinite(pix.valorCobranca)) {
+      pedido.valorCentavos = Math.round(pix.valorCobranca * 100);
+    }
+
+    if (pedido.pixCopiaECola) {
+      const qrBuffer = await QRCode.toBuffer(pedido.pixCopiaECola, {
+        type: "png",
+        width: 512,
+        margin: 2,
+        errorCorrectionLevel: "M"
+      });
+      pedido.pixQrAnexo = `pix-${id}.png`;
+      qrAnexo = new AttachmentBuilder(qrBuffer, { name: pedido.pixQrAnexo });
+    }
+
     store.pedidos[String(id)] = pedido;
     store.pagamentos[pix.paymentId] = String(id);
     if (cupomAplicado) {
       cupomAplicado.usos += 1;
-      registrarLog("cupom_aplicado", `Cupom ${cupomAplicado.codigo} aplicado no pedido #${id} (-${formatarReais(descontoCentavos)}).`, {
+      registrarLog("cupom_aplicado", `Cupom ${cupomAplicado.codigo} aplicado no pedido #${id} (-${formatarReais(descontoCentavos)}). Valor final ${formatarReais(pedido.valorCentavos)}.`, {
         pedidoId: id,
         userId: pedido.userId
       });
@@ -751,15 +807,28 @@ async function criarPedido(interaction, produtoId, cupomCodigo) {
     return;
   }
 
-  registrarLog("pedido_criado", `Pedido #${id} de ${produto.nome} no valor de ${formatarReais(valorFinal)}.`, {
+  registrarLog("pedido_criado", `Pedido #${id} de ${produto.nome} no valor de ${formatarReais(pedido.valorCentavos)}.`, {
     pedidoId: id,
     userId: pedido.userId
   });
 
+  const extra =
+    `💰 Pix gerado no valor de **${formatarReais(pedido.valorCentavos)}**.` +
+    (descontoCentavos > 0 ? ` Cupom aplicado: de ${formatarReais(pedido.valorOriginalCentavos)} por ${formatarReais(pedido.valorCentavos)}.` : "") +
+    "\nEscaneie o QR Code ou copie o codigo da proxima mensagem.";
+
   await interaction.editReply({
-    content: "⏳ Aguardando pagamento",
-    embeds: [embedPedidoCliente(pedido, "💰 Pix gerado. Pague com o codigo abaixo.")]
+    content: `⏳ Aguardando pagamento — valor final **${formatarReais(pedido.valorCentavos)}**`,
+    embeds: [embedPedidoCliente(pedido, extra, { qrNome: pedido.pixQrAnexo })],
+    files: qrAnexo ? [qrAnexo] : []
   });
+
+  if (pedido.pixCopiaECola) {
+    await interaction.followUp({
+      content: pedido.pixCopiaECola,
+      ephemeral: true
+    }).catch(() => {});
+  }
 }
 
 async function handleEntregarModal(interaction, pedidoId) {
@@ -1537,7 +1606,13 @@ async function handleCommand(interaction) {
         await interaction.reply({ content: "Voce so pode ver os seus pedidos.", ephemeral: true });
         return;
       }
-      await interaction.reply({ embeds: [embedPedidoCliente(pedido)], ephemeral: true });
+      await interaction.reply({
+        embeds: [embedPedidoCliente(pedido)],
+        ephemeral: true
+      });
+      if (pedido.pixCopiaECola && pedido.status === STATUS.AGUARDANDO_PAGAMENTO) {
+        await interaction.followUp({ content: pedido.pixCopiaECola, ephemeral: true }).catch(() => {});
+      }
       return;
     }
     case "estoque":
@@ -1583,6 +1658,18 @@ async function handleButton(interaction) {
   const [acao, valor] = interaction.customId.split(":");
 
   if (acao === "comprar") {
+    const produto = getProduto(valor);
+    if (!produto || !produto.disponivel) {
+      await interaction.reply({ content: "Esse produto nao esta disponivel.", ephemeral: true });
+      return;
+    }
+    if (produtoEsgotado(produto)) {
+      await interaction.reply({
+        content: `❌ **${produto.nome}** esta esgotado. Sem estoque no momento.`,
+        ephemeral: true
+      });
+      return;
+    }
     await interaction.showModal(modalComprar(valor));
     return;
   }
