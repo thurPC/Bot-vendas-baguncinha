@@ -44,7 +44,6 @@ const CANAIS = {
 };
 
 const PRAZO_ENTREGA_MIN = 50;
-
 const DIA_MS = 24 * 60 * 60 * 1000;
 
 const PRODUTOS = {
