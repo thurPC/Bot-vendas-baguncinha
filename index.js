@@ -570,7 +570,8 @@ async function publicarLojaFixa(canal) {
 function payloadPainelTicket() {
   const embed = new EmbedBuilder()
     .setTitle("ATENDIMENTO AO CLIENTE")
-    .setDescription("Precisa de ajuda? Selecione o tipo de atendimento abaixo para abrir um ticket privado com a equipe.\n\n*(Podendo haver atrasos e lentidao no atendimento Sab/Dom)*")
+    .setDescription("Se você estiver enfrentando algum problema ou precisar de ajuda com nossos serviços, por favor, abra um ticket de suporte. Assim que recebermos seu ticket, nossa equipe de suporte entrará em contato com você para solucionar o problema o mais breve possível. Obrigado pela sua compreensão e cooperação.
+\n\n*(Podendo haver atrasos e lentidao no atendimento Sab/Dom)*")
     .setColor(0x5865f2);
   const components = [];
   const sel = selectCategorias("ticket_cat");
