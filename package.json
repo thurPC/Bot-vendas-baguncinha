@@ -12,6 +12,8 @@
   },
   "dependencies": {
     "discord.js": "^14.22.1",
+    "jimp": "^0.22.12",
+    "nodemailer": "^6.9.16",
     "qrcode": "^1.5.4"
   }
 }

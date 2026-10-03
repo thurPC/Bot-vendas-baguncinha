@@ -13,13 +13,15 @@ const {
   TextInputBuilder,
   TextInputStyle,
   ChannelType,
-  AttachmentBuilder
+  AttachmentBuilder,
+  StringSelectMenuBuilder
 } = require("discord.js");
 const http = require("http");
-const fs = require("fs");
-const path = require("path");
 const crypto = require("crypto");
-const QRCode = require("qrcode");
+const persist = require("./src/persist");
+const { ocultarNomePix } = require("./src/pixNome");
+const { gerarQrComLogo } = require("./src/qrLogo");
+const { enviarProdutoPorEmail } = require("./src/mailer");
 
 const TOKEN = process.env.TOKEN;
 const CLIENT_ID = process.env.CLIENT_ID;
@@ -41,8 +43,8 @@ const CANAIS = {
   ticket: "1555489336139579492"
 };
 
-const DATA_FILE = path.join(__dirname, "data", "store.json");
 const PRAZO_ENTREGA_MIN = 50;
+const QR_NOME_PUBLICO = "BAGUNCINHA";
 const DIA_MS = 24 * 60 * 60 * 1000;
 
 const PRODUTOS = {
@@ -58,6 +60,9 @@ const PRODUTOS = {
     cargoDias: 0,
     imagem: null,
     banner: null,
+    bannerPosicao: "bottom",
+    categoriaId: "nitro",
+    instrucoes: "Apos receber o codigo, abra discord.com/nitro e resgate.",
     precoOriginalCentavos: 0
   },
   nitro_3m: {
@@ -72,6 +77,9 @@ const PRODUTOS = {
     cargoDias: 0,
     imagem: null,
     banner: null,
+    bannerPosicao: "bottom",
+    categoriaId: "nitro",
+    instrucoes: "Apos receber o codigo, abra discord.com/nitro e resgate.",
     precoOriginalCentavos: 0
   },
   boost_2: {
@@ -86,6 +94,9 @@ const PRODUTOS = {
     cargoDias: 0,
     imagem: null,
     banner: null,
+    bannerPosicao: "bottom",
+    categoriaId: "boost",
+    instrucoes: "A staff envia o procedimento de boost apos o pagamento.",
     precoOriginalCentavos: 0
   }
 };
@@ -144,19 +155,11 @@ process.on("uncaughtException", error => {
 });
 
 function carregarStore() {
-  try {
-    if (fs.existsSync(DATA_FILE)) {
-      return JSON.parse(fs.readFileSync(DATA_FILE, "utf-8"));
-    }
-  } catch (error) {
-    console.error("Erro ao ler store.json:", error.message);
-  }
-  return {};
+  return persist.carregarStore();
 }
 
 function salvarStore() {
-  fs.mkdirSync(path.dirname(DATA_FILE), { recursive: true });
-  fs.writeFileSync(DATA_FILE, JSON.stringify(store, null, 2));
+  persist.salvarStore(store);
 }
 
 const store = carregarStore();
@@ -175,8 +178,23 @@ store.config.logChannelId = CANAIS.logs;
 store.config.feedbackChannelId = CANAIS.feedbacks;
 store.config.lojaChannelId = CANAIS.loja;
 if (!store.config.banner) store.config.banner = null;
+if (!store.config.bannerPosicao) store.config.bannerPosicao = "top";
+if (!store.config.pixNomePublico) store.config.pixNomePublico = QR_NOME_PUBLICO;
+if (store.config.ocultarNomePix === undefined) store.config.ocultarNomePix = true;
+if (!store.config.smtpHost) store.config.smtpHost = null;
+if (!store.config.smtpPort) store.config.smtpPort = 587;
+if (!store.config.smtpUser) store.config.smtpUser = null;
+if (!store.config.smtpPass) store.config.smtpPass = null;
+if (!store.config.smtpFrom) store.config.smtpFrom = null;
 if (!store.lojaFixa) store.lojaFixa = { channelId: null, messageId: null };
 if (!store.paineisFixos) store.paineisFixos = { ticket: null, cupons: null };
+if (!store.categorias) {
+  store.categorias = {
+    nitro: { id: "nitro", nome: "Nitro", emoji: "💎", descricao: "Discord Nitro", posicao: 0, ativo: true },
+    boost: { id: "boost", nome: "Boosts", emoji: "🚀", descricao: "Boosts de servidor", posicao: 1, ativo: true }
+  };
+}
+salvarStore();
 
 const escolhasProdutos = Object.values(PRODUTOS).map(p => ({ name: p.nome, value: p.id }));
 
@@ -221,6 +239,36 @@ function produtoPodeComprar(produto) {
   return !!(produto && produto.disponivel && !produtoEsgotado(produto));
 }
 
+function categoriasAtivas() {
+  return Object.values(store.categorias || {})
+    .filter(c => c && c.ativo !== false)
+    .sort((a, b) => (a.posicao || 0) - (b.posicao || 0));
+}
+
+function produtosDaCategoria(categoriaId) {
+  return todosProdutos().filter(p => (p.categoriaId || "geral") === categoriaId);
+}
+
+function aplicarBanner(embed, url, posicao, thumbnailUrl) {
+  const pos = String(posicao || "bottom").toLowerCase();
+  if (pos === "float" || pos === "flutuante") {
+    if (thumbnailUrl || url) embed.setThumbnail(thumbnailUrl || url);
+    if (urlMidiaValida(url)) embed.setImage(url);
+    return embed;
+  }
+  if (pos === "top" && urlMidiaValida(url)) embed.setImage(url);
+  else if (pos === "bottom" && urlMidiaValida(url)) embed.setImage(url);
+  else if (pos === "thumbnail" && urlMidiaValida(url)) embed.setThumbnail(url);
+  else if (pos === "author" && urlMidiaValida(url)) embed.setAuthor({ name: "\u200b", iconURL: url });
+  if (urlMidiaValida(thumbnailUrl) && pos !== "thumbnail") embed.setThumbnail(thumbnailUrl);
+  return embed;
+}
+
+function pixNomePublico() {
+  if (store.config.ocultarNomePix === false) return store.config.pixNomePublico || QR_NOME_PUBLICO;
+  return store.config.pixNomePublico || QR_NOME_PUBLICO;
+}
+
 function urlMidiaValida(url) {
   if (!url) return false;
   try {
@@ -255,17 +303,6 @@ function limparPixCopiaECola(codigo) {
     .replace(/^\uFEFF/, "")
     .replace(/[\r\n\t]/g, "")
     .trim();
-}
-
-function bufferDoQrMercadoPago(base64) {
-  if (!base64) return null;
-  try {
-    const limpo = String(base64).replace(/^data:image\/[a-zA-Z+]+;base64,/, "");
-    const buf = Buffer.from(limpo, "base64");
-    return buf.length > 100 ? buf : null;
-  } catch {
-    return null;
-  }
 }
 
 function botoesPix(pedidoId) {
@@ -381,8 +418,9 @@ function embedLog(entrada) {
 
 async function enviarLogCanal(entrada) {
   if (!store.config.logChannelId) return;
+  if (store.config.logChannelId === CANAIS.loja || store.config.logChannelId === store.config.lojaChannelId) return;
   const canal = await client.channels.fetch(store.config.logChannelId).catch(() => null);
-  if (!canal) return;
+  if (!canal || canalEhLoja(canal)) return;
   await canal.send({ embeds: [embedLog(entrada)] }).catch(() => {});
 }
 
@@ -400,17 +438,24 @@ function validarCupom(codigo, valorCentavos) {
   return { ok: true, cupom, descontoCentavos: desconto };
 }
 
-function catalogoEmbed() {
-  const linhas = todosProdutos().map(linhaPrecoProduto);
+function catalogoEmbed(categoriaId) {
+  const cats = categoriasAtivas();
+  const categoria = categoriaId ? store.categorias[categoriaId] : null;
+  const produtos = categoriaId ? produtosDaCategoria(categoriaId) : todosProdutos();
+  const linhas = produtos.map(linhaPrecoProduto);
+  const titulo = categoria ? `${categoria.emoji || "📁"} ${categoria.nome}` : "Loja Baguncinha";
+  const intro = categoria
+    ? (categoria.descricao || "Escolha um produto desta categoria.")
+    : "Selecione uma categoria para ver os produtos. O bot gera o Pix, confirma o pagamento e entrega.";
   const embed = new EmbedBuilder()
-    .setTitle("Loja Baguncinha")
+    .setTitle(titulo)
     .setDescription(
-      "Escolha um produto abaixo. O bot gera o Pix, confirma o pagamento e entrega.\n\n" +
-      linhas.join("\n\n") +
+      `${intro}\n\n` +
+      (linhas.length ? linhas.join("\n\n") : "Nenhum produto nesta categoria.") +
       `\n\nPrazo: ate **${PRAZO_ENTREGA_MIN} min** depois do Pix confirmado.`
     )
     .setColor(0x9b59b6);
-  if (urlMidiaValida(store.config.banner)) embed.setImage(store.config.banner);
+  aplicarBanner(embed, store.config.banner, store.config.bannerPosicao || "top");
   return embed;
 }
 
@@ -419,9 +464,10 @@ function embedProdutoVitrine(produto) {
     .setTitle(`${produto.emoji} ${produto.nome}`)
     .setDescription(`${produto.descricao}\n\n${precoVitrine(produto)}`)
     .setColor(0x9b59b6);
-  const midia = produto.banner || produto.imagem;
-  if (urlMidiaValida(midia)) embed.setImage(midia);
-  else if (urlMidiaValida(produto.imagem)) embed.setThumbnail(produto.imagem);
+  aplicarBanner(embed, produto.banner, produto.bannerPosicao || "bottom", produto.imagem);
+  if (produto.instrucoes) {
+    embed.addFields({ name: "Instrucoes", value: String(produto.instrucoes).slice(0, 1024) });
+  }
   if (produto.modo === "auto") {
     const qtd = estoqueDe(produto.id).length;
     embed.setFooter({ text: qtd > 0 ? `${qtd} em estoque` : "Esgotado" });
@@ -429,9 +475,28 @@ function embedProdutoVitrine(produto) {
   return embed;
 }
 
-function botoesCatalogo() {
+function selectCategorias(customId = "cat") {
+  const cats = categoriasAtivas();
+  if (!cats.length) return null;
+  return new ActionRowBuilder().addComponents(
+    new StringSelectMenuBuilder()
+      .setCustomId(customId)
+      .setPlaceholder("Selecione o tipo de atendimento / categoria")
+      .addOptions(
+        cats.slice(0, 25).map(c => ({
+          label: c.nome.slice(0, 100),
+          value: String(c.id),
+          description: (c.descricao || "Ver produtos").slice(0, 100),
+          emoji: c.emoji && String(c.emoji).length <= 8 ? c.emoji : undefined
+        }))
+      )
+  );
+}
+
+function botoesCatalogo(categoriaId) {
   const rows = [];
-  for (const produto of todosProdutos()) {
+  const produtos = categoriaId ? produtosDaCategoria(categoriaId) : todosProdutos();
+  for (const produto of produtos.slice(0, categoriaId ? 4 : 5)) {
     const esgotado = produtoEsgotado(produto);
     const row = new ActionRowBuilder().addComponents(
       new ButtonBuilder()
@@ -442,19 +507,30 @@ function botoesCatalogo() {
         .setCustomId(`comprar:${produto.id}`)
         .setLabel(esgotado ? "Esgotado" : "Comprar")
         .setStyle(esgotado ? ButtonStyle.Secondary : ButtonStyle.Success)
-        .setDisabled(!produtoPodeComprar(produto)),
-      new ButtonBuilder()
-        .setCustomId(`gear:${produto.id}`)
-        .setEmoji("⚙️")
-        .setStyle(ButtonStyle.Secondary)
+        .setDisabled(!produtoPodeComprar(produto))
     );
     rows.push(row);
+  }
+  if (categoriaId) {
+    rows.push(
+      new ActionRowBuilder().addComponents(
+        new ButtonBuilder().setCustomId("loja_home").setLabel("Voltar").setStyle(ButtonStyle.Secondary)
+      )
+    );
   }
   return rows.slice(0, 5);
 }
 
-function payloadLoja() {
-  return { content: null, embeds: [catalogoEmbed()], components: botoesCatalogo() };
+function payloadLoja(categoriaId) {
+  const components = [];
+  if (!categoriaId) {
+    const sel = selectCategorias("cat");
+    if (sel) components.push(sel);
+    else components.push(...botoesCatalogo());
+  } else {
+    components.push(...botoesCatalogo(categoriaId));
+  }
+  return { content: null, embeds: [catalogoEmbed(categoriaId)], components };
 }
 
 async function atualizarLojaFixa() {
@@ -493,13 +569,18 @@ async function publicarLojaFixa(canal) {
 
 function payloadPainelTicket() {
   const embed = new EmbedBuilder()
-    .setTitle("Central de atendimento")
-    .setDescription("Precisa de ajuda? Clique no botao abaixo para abrir um ticket privado com a equipe.")
+    .setTitle("ATENDIMENTO AO CLIENTE")
+    .setDescription("Precisa de ajuda? Selecione o tipo de atendimento abaixo para abrir um ticket privado com a equipe.\n\n*(Podendo haver atrasos e lentidao no atendimento Sab/Dom)*")
     .setColor(0x5865f2);
-  const row = new ActionRowBuilder().addComponents(
-    new ButtonBuilder().setCustomId("ticket_abrir").setLabel("Abrir ticket").setEmoji("🎫").setStyle(ButtonStyle.Primary)
+  const components = [];
+  const sel = selectCategorias("ticket_cat");
+  if (sel) components.push(sel);
+  components.push(
+    new ActionRowBuilder().addComponents(
+      new ButtonBuilder().setCustomId("ticket_abrir").setLabel("Abrir ticket").setEmoji("🎫").setStyle(ButtonStyle.Secondary)
+    )
   );
-  return { embeds: [embed], components: [row] };
+  return { embeds: [embed], components };
 }
 
 function payloadPainelCupons() {
@@ -580,9 +661,27 @@ function embedPedidoCliente(pedido, extra, opcoes = {}) {
       name: "Como pagar",
       value: "Escaneie o QR Code ou toque em **Copiar Pix**. No celular, o codigo abre num campo pra voce selecionar e copiar, sem download."
     });
+    embed.addFields({
+      name: "Recebedor PIX",
+      value: pixNomePublico(),
+      inline: true
+    });
     if (opcoes.qrNome) {
       embed.setImage(`attachment://${opcoes.qrNome}`);
     }
+  }
+  if (pedido.entregaMetodo) {
+    embed.addFields({
+      name: "Entrega",
+      value: pedido.entregaMetodo === "email"
+        ? `E-mail: ${pedido.entregaEmail || "-"}`
+        : "DM do Discord",
+      inline: true
+    });
+  }
+  const produtoInfo = getProduto(pedido.produtoId);
+  if (produtoInfo?.instrucoes) {
+    embed.addFields({ name: "Instrucoes", value: String(produtoInfo.instrucoes).slice(0, 1024) });
   }
   return embed;
 }
@@ -670,9 +769,12 @@ async function criarPix(pedido) {
   }
 
   const tx = r.json.point_of_interaction?.transaction_data || {};
-  const pixCopiaECola = limparPixCopiaECola(tx.qr_code || "");
+  let pixCopiaECola = limparPixCopiaECola(tx.qr_code || "");
   if (!pixCopiaECola) {
     throw new Error("Mercado Pago nao devolveu o codigo Pix (qr_code).");
+  }
+  if (store.config.ocultarNomePix !== false) {
+    pixCopiaECola = limparPixCopiaECola(ocultarNomePix(pixCopiaECola, pixNomePublico()));
   }
   return {
     paymentId: String(r.json.id),
@@ -696,12 +798,21 @@ async function canalAdmin(guild) {
   return guild.channels.cache.find(c => c.name === "pedidos-admin" && c.type === ChannelType.GuildText) || null;
 }
 
+function canalEhLoja(canal) {
+  if (!canal) return false;
+  return canal.id === CANAIS.loja || canal.id === store.config.lojaChannelId || canal.id === store.lojaFixa.channelId;
+}
+
 async function notificarAdmin(pedido, extra) {
   const guild = await client.guilds.fetch(GUILD_ID).catch(() => null);
   if (!guild) return;
   const canal = await canalAdmin(guild);
   if (!canal) {
     console.error("Canal admin de pedidos nao encontrado. Configure ADMIN_CHANNEL_ID.");
+    return;
+  }
+  if (canalEhLoja(canal)) {
+    console.error("Canal admin coincide com a lojinha; entrega/log nao sera enviado la.");
     return;
   }
 
@@ -833,6 +944,13 @@ async function removerCargosExpirados() {
   }
 }
 
+function botoesEntrega(pedidoId) {
+  return new ActionRowBuilder().addComponents(
+    new ButtonBuilder().setCustomId(`entregadm:${pedidoId}`).setLabel("Receber na DM").setStyle(ButtonStyle.Primary),
+    new ButtonBuilder().setCustomId(`entregaemail:${pedidoId}`).setLabel("Receber por e-mail").setStyle(ButtonStyle.Secondary)
+  );
+}
+
 async function entregarPedido(pedido, opcoes) {
   const { automatico, staffId, codigo, extra } = opcoes;
   pedido.status = STATUS.ENTREGUE;
@@ -846,11 +964,31 @@ async function entregarPedido(pedido, opcoes) {
   );
   embed.addFields({ name: "🔑 Entrega", value: `\`\`\`${String(codigo).slice(0, 1000)}\`\`\`${extra ? `\n📝 ${extra}` : ""}` });
 
-  await avisarCliente(
-    pedido,
-    automatico ? "✅ Pagamento confirmado! Aqui esta sua entrega automatica:" : "✅ Seu pedido foi entregue:",
-    embed
-  );
+  const metodo = pedido.entregaMetodo || "dm";
+  if (metodo === "email" && pedido.entregaEmail) {
+    const produto = getProduto(pedido.produtoId);
+    try {
+      await enviarProdutoPorEmail(store.config, pedido.entregaEmail, pedido, codigo, extra, produto?.instrucoes);
+      await avisarCliente(
+        pedido,
+        `✅ Pedido #${pedido.id} enviado para **${pedido.entregaEmail}**.`,
+        embed
+      );
+    } catch (error) {
+      console.error("Falha no e-mail, caindo para DM:", error.message);
+      await avisarCliente(
+        pedido,
+        automatico ? "✅ Pagamento confirmado! Aqui esta sua entrega automatica:" : "✅ Seu pedido foi entregue:",
+        embed
+      );
+    }
+  } else {
+    await avisarCliente(
+      pedido,
+      automatico ? "✅ Pagamento confirmado! Aqui esta sua entrega automatica:" : "✅ Seu pedido foi entregue:",
+      embed
+    );
+  }
   await pedirFeedback(pedido);
 
   const produto = getProduto(pedido.produtoId);
@@ -1034,15 +1172,7 @@ async function criarPedido(interaction, produtoId, cupomCodigo) {
       pedido.valorCentavos = Math.round(pix.valorCobranca * 100);
     }
 
-    let qrBuffer = bufferDoQrMercadoPago(pix.pixQrBase64);
-    if (!qrBuffer && pedido.pixCopiaECola) {
-      qrBuffer = await QRCode.toBuffer(pedido.pixCopiaECola, {
-        type: "png",
-        width: 512,
-        margin: 1,
-        errorCorrectionLevel: "M"
-      });
-    }
+    const qrBuffer = await gerarQrComLogo(pedido.pixCopiaECola);
     if (qrBuffer) {
       pedido.pixQrAnexo = `pix-${id}.png`;
       qrAnexo = new AttachmentBuilder(qrBuffer, { name: pedido.pixQrAnexo });
@@ -1074,12 +1204,49 @@ async function criarPedido(interaction, produtoId, cupomCodigo) {
     (descontoCentavos > 0 ? ` Cupom aplicado: de ${formatarReais(pedido.valorOriginalCentavos)} por ${formatarReais(pedido.valorCentavos)}.` : "") +
     "\nEscaneie o QR ou toque em **Copiar Pix** (no celular abre um campo pra copiar, sem download).";
 
+  const embedCarrinho = embedPedidoCliente(pedido, extra, { qrNome: pedido.pixQrAnexo });
+  const qrBuf = qrAnexo ? qrAnexo.attachment : null;
+  const pixFile = () => (qrBuf ? [new AttachmentBuilder(Buffer.from(qrBuf), { name: pedido.pixQrAnexo })] : []);
+  const componentes = [...botoesPix(pedido.id), botoesEntrega(pedido.id)];
+
   await interaction.editReply({
-    content: `⏳ Aguardando pagamento — valor final **${formatarReais(pedido.valorCentavos)}**`,
-    embeds: [embedPedidoCliente(pedido, extra, { qrNome: pedido.pixQrAnexo })],
-    components: botoesPix(pedido.id),
-    files: qrAnexo ? [qrAnexo] : []
+    content: `⏳ Carrinho gerado — valor final **${formatarReais(pedido.valorCentavos)}**. Escolha onde receber o produto (DM ou e-mail).`,
+    embeds: [embedCarrinho],
+    components: componentes,
+    files: pixFile()
   });
+
+  try {
+    const user = await client.users.fetch(interaction.user.id);
+    const dm = await user.send({
+      content: `Carrinho automatico — pedido **#${pedido.id}**`,
+      embeds: [embedCarrinho],
+      components: componentes,
+      files: pixFile()
+    });
+    pedido.cartDmMessageId = dm.id;
+  } catch {
+    console.log(`Nao consegui DM o carrinho do pedido #${pedido.id}.`);
+  }
+
+  try {
+    const ticket = await abrirTicket(
+      interaction.guild,
+      interaction.user,
+      `Compra ${produto.nome} #${pedido.id}`
+    );
+    pedido.ticketChannelId = ticket.id;
+    const serverMsg = await ticket.send({
+      content: `${interaction.user} seu carrinho automatico:`,
+      embeds: [embedCarrinho],
+      components: componentes,
+      files: pixFile()
+    });
+    pedido.cartServerMessageId = serverMsg.id;
+  } catch (error) {
+    console.error("Falha ao abrir ticket/carrinho no servidor:", error.message);
+  }
+  salvarStore();
 }
 
 async function handleEntregarModal(interaction, pedidoId) {
@@ -1234,7 +1401,10 @@ async function fecharTicket(interaction, canalId) {
     userId: ticket.userId,
     staffId: interaction.user.id
   });
-  await interaction.editReply({ content: "🔒 Ticket fechado." });
+  await interaction.editReply({ content: "🔒 Ticket fechado. Este canal sera removido em alguns segundos." });
+  setTimeout(() => {
+    canal.delete("Ticket fechado").catch(() => {});
+  }, 2500);
 }
 
 async function handleEstoque(interaction) {
@@ -1408,6 +1578,9 @@ async function handleProduto(interaction) {
     const disponivel = interaction.options.getBoolean("disponivel");
     const imagem = interaction.options.getString("imagem");
     const banner = interaction.options.getString("banner");
+    const bannerPosicao = interaction.options.getString("banner-posicao");
+    const instrucoes = interaction.options.getString("instrucoes");
+    const categoriaId = interaction.options.getString("categoria");
 
     if (modo) patch.modo = modo;
     if (cargo) patch.cargoId = cargo.id;
@@ -1429,6 +1602,9 @@ async function handleProduto(interaction) {
       }
       patch.banner = banner || null;
     }
+    if (bannerPosicao) patch.bannerPosicao = bannerPosicao;
+    if (instrucoes !== null && instrucoes !== undefined) patch.instrucoes = instrucoes;
+    if (categoriaId) patch.categoriaId = categoriaId;
 
     store.produtoOverrides[produtoId] = patch;
     salvarStore();
@@ -1456,7 +1632,9 @@ async function handleConfig(interaction) {
       `Canal de feedbacks: ${store.config.feedbackChannelId ? `<#${store.config.feedbackChannelId}>` : "nao definido"}\n` +
       `Categoria de tickets: ${store.config.ticketCategoryId ? `<#${store.config.ticketCategoryId}>` : "nao definida"}\n` +
       `Loja fixa: ${store.lojaFixa.channelId ? `<#${store.lojaFixa.channelId}>` : "nao publicada"}\n` +
-      `Banner da loja: ${urlMidiaValida(store.config.banner) ? "definido" : "nao definido"}\n` +
+      `Banner da loja: ${urlMidiaValida(store.config.banner) ? `definido (${store.config.bannerPosicao || "top"})` : "nao definido"}\n` +
+      `Nome PIX publico: **${pixNomePublico()}** (ocultar nome completo: ${store.config.ocultarNomePix !== false ? "sim" : "nao"})\n` +
+      `SMTP: ${store.config.smtpHost ? store.config.smtpHost : "nao configurado"}\n` +
       `Cargos temporarios ativos: ${store.cargosTemporarios.length}\n` +
       `Pedidos registrados: ${Object.keys(store.pedidos).length}`;
     await interaction.reply({
@@ -1503,6 +1681,84 @@ async function handleConfig(interaction) {
     salvarStore();
     await atualizarLojaFixa();
     await interaction.reply({ content: url ? "✅ Banner da loja atualizado." : "✅ Banner da loja removido.", ephemeral: true });
+    return;
+  }
+
+  if (sub === "banner-posicao") {
+    const pos = (interaction.options.getString("posicao") || "top").toLowerCase();
+    store.config.bannerPosicao = pos;
+    salvarStore();
+    await atualizarLojaFixa();
+    await interaction.reply({ content: `Posicao do banner da loja: **${pos}**.`, ephemeral: true });
+    return;
+  }
+
+  if (sub === "pix-nome") {
+    const nome = (interaction.options.getString("nome") || QR_NOME_PUBLICO).trim();
+    const ocultar = interaction.options.getBoolean("ocultar");
+    store.config.pixNomePublico = nome;
+    if (ocultar !== null && ocultar !== undefined) store.config.ocultarNomePix = ocultar;
+    salvarStore();
+    await interaction.reply({
+      content: `Nome no PIX: **${pixNomePublico()}**. Ocultar nome completo: **${store.config.ocultarNomePix !== false ? "sim" : "nao"}**.`,
+      ephemeral: true
+    });
+    return;
+  }
+
+  if (sub === "smtp") {
+    store.config.smtpHost = interaction.options.getString("host");
+    store.config.smtpPort = interaction.options.getInteger("porta") || 587;
+    store.config.smtpUser = interaction.options.getString("usuario");
+    store.config.smtpPass = interaction.options.getString("senha");
+    store.config.smtpFrom = interaction.options.getString("from");
+    salvarStore();
+    await interaction.reply({ content: "SMTP salvo no banco. Entregas por e-mail habilitadas.", ephemeral: true });
+  }
+}
+
+async function handleCategoria(interaction) {
+  const sub = interaction.options.getSubcommand();
+  if (sub === "criar") {
+    const id = interaction.options.getString("id").trim().toLowerCase().replace(/[^a-z0-9_-]/g, "").slice(0, 32);
+    const nome = interaction.options.getString("nome").trim();
+    if (!id || !nome) {
+      await interaction.reply({ content: "ID e nome sao obrigatorios.", ephemeral: true });
+      return;
+    }
+    store.categorias[id] = {
+      id,
+      nome,
+      emoji: interaction.options.getString("emoji") || "📁",
+      descricao: interaction.options.getString("descricao") || "",
+      posicao: Object.keys(store.categorias).length,
+      ativo: true
+    };
+    salvarStore();
+    await atualizarLojaFixa();
+    await interaction.reply({ content: `Categoria **${nome}** (\`${id}\`) criada.`, ephemeral: true });
+    return;
+  }
+  if (sub === "listar") {
+    const linhas = Object.values(store.categorias).map(c =>
+      `${c.emoji || "📁"} **${c.nome}** (\`${c.id}\`) — ${c.ativo === false ? "inativa" : "ativa"} — ${produtosDaCategoria(c.id).length} produto(s)`
+    );
+    await interaction.reply({
+      embeds: [new EmbedBuilder().setTitle("Categorias").setDescription(linhas.join("\n") || "Nenhuma.").setColor(0x9b59b6)],
+      ephemeral: true
+    });
+    return;
+  }
+  if (sub === "remover") {
+    const id = interaction.options.getString("id").trim();
+    if (!store.categorias[id]) {
+      await interaction.reply({ content: "Categoria nao encontrada.", ephemeral: true });
+      return;
+    }
+    store.categorias[id].ativo = false;
+    salvarStore();
+    await atualizarLojaFixa();
+    await interaction.reply({ content: `Categoria \`${id}\` desativada.`, ephemeral: true });
   }
 }
 
@@ -1703,6 +1959,17 @@ const commands = [
         .addBooleanOption(o => o.setName("disponivel").setDescription("Produto a venda?"))
         .addStringOption(o => o.setName("imagem").setDescription("URL da foto do item (gif ok)"))
         .addStringOption(o => o.setName("banner").setDescription("URL do banner/gif do produto"))
+        .addStringOption(o =>
+          o.setName("banner-posicao").setDescription("Posicao do banner")
+            .addChoices(
+              { name: "Em cima", value: "top" },
+              { name: "Em baixo", value: "bottom" },
+              { name: "Miniatura", value: "thumbnail" },
+              { name: "Flutuante", value: "float" }
+            )
+        )
+        .addStringOption(o => o.setName("instrucoes").setDescription("Instrucoes de uso do produto").setMaxLength(1000))
+        .addStringOption(o => o.setName("categoria").setDescription("ID da categoria (ex: nitro)").setMaxLength(32))
     ),
   new SlashCommandBuilder()
     .setName("config")
@@ -1728,6 +1995,48 @@ const commands = [
     .addSubcommand(sub =>
       sub.setName("banner-loja").setDescription("Define o banner/gif da loja inicial.")
         .addStringOption(o => o.setName("url").setDescription("URL da imagem ou gif (vazio remove)").setRequired(false))
+    )
+    .addSubcommand(sub =>
+      sub.setName("banner-posicao").setDescription("Posicao do banner da loja (top, bottom, thumbnail, float).")
+        .addStringOption(o =>
+          o.setName("posicao").setDescription("Posicao").setRequired(true)
+            .addChoices(
+              { name: "Em cima (imagem)", value: "top" },
+              { name: "Em baixo (imagem)", value: "bottom" },
+              { name: "Miniatura", value: "thumbnail" },
+              { name: "Flutuante", value: "float" },
+              { name: "Autor", value: "author" }
+            )
+        )
+    )
+    .addSubcommand(sub =>
+      sub.setName("pix-nome").setDescription("Nome que aparece no PIX (nao use seu nome completo).")
+        .addStringOption(o => o.setName("nome").setDescription("Nome da loja no QR").setRequired(true).setMaxLength(25))
+        .addBooleanOption(o => o.setName("ocultar").setDescription("Ocultar nome pessoal no PIX").setRequired(false))
+    )
+    .addSubcommand(sub =>
+      sub.setName("smtp").setDescription("Configura e-mail para entrega de produtos.")
+        .addStringOption(o => o.setName("host").setDescription("Host SMTP").setRequired(true))
+        .addStringOption(o => o.setName("usuario").setDescription("Usuario SMTP").setRequired(true))
+        .addStringOption(o => o.setName("senha").setDescription("Senha / app password").setRequired(true))
+        .addStringOption(o => o.setName("from").setDescription("From (ex: Loja <loja@email.com>)").setRequired(true))
+        .addIntegerOption(o => o.setName("porta").setDescription("Porta (587 ou 465)").setMinValue(1))
+    ),
+  new SlashCommandBuilder()
+    .setName("categoria")
+    .setDescription("Gerencia categorias da loja (staff).")
+    .setDefaultMemberPermissions(PermissionFlagsBits.ManageGuild)
+    .addSubcommand(sub =>
+      sub.setName("criar").setDescription("Cria uma categoria.")
+        .addStringOption(o => o.setName("id").setDescription("ID interno (ex: nitro)").setRequired(true).setMaxLength(32))
+        .addStringOption(o => o.setName("nome").setDescription("Nome visivel").setRequired(true).setMaxLength(80))
+        .addStringOption(o => o.setName("emoji").setDescription("Emoji").setMaxLength(8))
+        .addStringOption(o => o.setName("descricao").setDescription("Descricao").setMaxLength(200))
+    )
+    .addSubcommand(sub => sub.setName("listar").setDescription("Lista as categorias."))
+    .addSubcommand(sub =>
+      sub.setName("remover").setDescription("Desativa uma categoria.")
+        .addStringOption(o => o.setName("id").setDescription("ID da categoria").setRequired(true))
     ),
   new SlashCommandBuilder()
     .setName("feedback")
@@ -1923,6 +2232,9 @@ async function handleCommand(interaction) {
     case "config":
       await handleConfig(interaction);
       return;
+    case "categoria":
+      await handleCategoria(interaction);
+      return;
     case "feedback":
       await handleFeedback(interaction);
       return;
@@ -1982,12 +2294,16 @@ async function handleButton(interaction) {
         .setCustomId(`comprar:${produto.id}`)
         .setLabel(esgotado ? "Esgotado" : "Comprar")
         .setStyle(esgotado ? ButtonStyle.Secondary : ButtonStyle.Success)
-        .setDisabled(!produtoPodeComprar(produto)),
-      new ButtonBuilder()
-        .setCustomId(`gear:${produto.id}`)
-        .setEmoji("⚙️")
-        .setStyle(ButtonStyle.Secondary)
+        .setDisabled(!produtoPodeComprar(produto))
     );
+    if (isStaff(interaction.member)) {
+      row.addComponents(
+        new ButtonBuilder()
+          .setCustomId(`gear:${produto.id}`)
+          .setEmoji("⚙️")
+          .setStyle(ButtonStyle.Secondary)
+      );
+    }
     await interaction.reply({ embeds: [embedProdutoVitrine(produto)], components: [row], ephemeral: true });
     return;
   }
@@ -2014,6 +2330,7 @@ async function handleButton(interaction) {
       .setColor(0x95a5a6);
     const row = new ActionRowBuilder().addComponents(
       new ButtonBuilder().setCustomId(`editprod:${produto.id}`).setLabel("Editar item").setStyle(ButtonStyle.Primary),
+      new ButtonBuilder().setCustomId(`editextra:${produto.id}`).setLabel("Banner / instrucoes").setStyle(ButtonStyle.Secondary),
       new ButtonBuilder().setCustomId(`addstock:${produto.id}`).setLabel("Adicionar estoque").setStyle(ButtonStyle.Success),
       new ButtonBuilder().setCustomId(`clearstock:${produto.id}`).setLabel("Limpar estoque").setStyle(ButtonStyle.Danger)
     );
@@ -2122,6 +2439,50 @@ async function handleButton(interaction) {
     return;
   }
 
+  if (acao === "editextra") {
+    if (!isStaff(interaction.member)) {
+      await interaction.reply({ content: "So a staff pode editar.", ephemeral: true });
+      return;
+    }
+    const produto = getProduto(valor);
+    if (!produto) {
+      await interaction.reply({ content: "Produto nao encontrado.", ephemeral: true });
+      return;
+    }
+    const modal = new ModalBuilder().setCustomId(`editextra_modal:${valor}`).setTitle(`Extra ${produto.nome}`.slice(0, 45));
+    modal.addComponents(
+      new ActionRowBuilder().addComponents(
+        new TextInputBuilder()
+          .setCustomId("banner_posicao")
+          .setLabel("Banner: top, bottom, thumbnail, float")
+          .setStyle(TextInputStyle.Short)
+          .setRequired(false)
+          .setValue(produto.bannerPosicao || "bottom")
+          .setMaxLength(20)
+      ),
+      new ActionRowBuilder().addComponents(
+        new TextInputBuilder()
+          .setCustomId("instrucoes")
+          .setLabel("Instrucoes do produto")
+          .setStyle(TextInputStyle.Paragraph)
+          .setRequired(false)
+          .setValue((produto.instrucoes || "").slice(0, 1000))
+          .setMaxLength(1000)
+      ),
+      new ActionRowBuilder().addComponents(
+        new TextInputBuilder()
+          .setCustomId("categoria")
+          .setLabel("ID da categoria")
+          .setStyle(TextInputStyle.Short)
+          .setRequired(false)
+          .setValue(produto.categoriaId || "")
+          .setMaxLength(32)
+      )
+    );
+    await interaction.showModal(modal);
+    return;
+  }
+
   if (acao === "pix_copiar" || acao === "pix_txt") {
     const pedido = store.pedidos[String(valor)];
     if (!pedido || !pedido.pixCopiaECola) {
@@ -2213,9 +2574,70 @@ async function handleButton(interaction) {
     return;
   }
 
+  if (acao === "loja_home") {
+    await interaction.update(payloadLoja()).catch(() => {});
+    return;
+  }
+
+  if (acao === "entregadm") {
+    const pedido = store.pedidos[String(valor)];
+    if (!pedido || pedido.userId !== interaction.user.id) {
+      await interaction.reply({ content: "Pedido invalido.", ephemeral: true });
+      return;
+    }
+    pedido.entregaMetodo = "dm";
+    pedido.entregaEmail = null;
+    salvarStore();
+    await interaction.reply({ content: "Entrega definida: **DM**. Depois de pagar, o produto chega na sua DM.", ephemeral: true });
+    return;
+  }
+
+  if (acao === "entregaemail") {
+    const pedido = store.pedidos[String(valor)];
+    if (!pedido || pedido.userId !== interaction.user.id) {
+      await interaction.reply({ content: "Pedido invalido.", ephemeral: true });
+      return;
+    }
+    const modal = new ModalBuilder().setCustomId(`email_modal:${valor}`).setTitle("Receber por e-mail");
+    modal.addComponents(
+      new ActionRowBuilder().addComponents(
+        new TextInputBuilder()
+          .setCustomId("email")
+          .setLabel("Seu e-mail")
+          .setStyle(TextInputStyle.Short)
+          .setRequired(true)
+          .setPlaceholder("voce@email.com")
+          .setMaxLength(120)
+      )
+    );
+    await interaction.showModal(modal);
+    return;
+  }
+
   await interaction
     .reply({ content: "Esse botao ficou desatualizado. Use os comandos de novo.", ephemeral: true })
     .catch(() => {});
+}
+
+async function handleSelect(interaction) {
+  const id = interaction.customId;
+  const valor = interaction.values[0];
+
+  if (id === "cat") {
+    await interaction.reply({ ...payloadLoja(valor), ephemeral: true });
+    return;
+  }
+
+  if (id === "ticket_cat") {
+    const categoria = store.categorias[valor];
+    await interaction.deferReply({ ephemeral: true });
+    const canal = await abrirTicket(
+      interaction.guild,
+      interaction.user,
+      categoria ? `Atendimento: ${categoria.nome}` : "Atendimento"
+    );
+    await interaction.editReply(`Ticket aberto em <#${canal.id}> (${categoria ? categoria.nome : valor}).`);
+  }
 }
 
 async function handleModal(interaction) {
@@ -2270,6 +2692,27 @@ async function handleModal(interaction) {
     await atualizarLojaFixa();
     await interaction.reply({
       content: `✅ ${itens.length} item(ns) adicionado(s) ao estoque de **${produto.nome}**. Total agora: **${fila.length}**.`,
+      ephemeral: true
+    });
+    return;
+  }
+
+  if (acao === "email_modal") {
+    const pedido = store.pedidos[String(valor)];
+    if (!pedido || pedido.userId !== interaction.user.id) {
+      await interaction.reply({ content: "Pedido invalido.", ephemeral: true });
+      return;
+    }
+    const email = interaction.fields.getTextInputValue("email").trim();
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+      await interaction.reply({ content: "E-mail invalido.", ephemeral: true });
+      return;
+    }
+    pedido.entregaMetodo = "email";
+    pedido.entregaEmail = email;
+    salvarStore();
+    await interaction.reply({
+      content: `Entrega definida: **e-mail** (${email}). Depois de pagar, o produto chega nesse endereco.`,
       ephemeral: true
     });
     return;
@@ -2330,6 +2773,30 @@ async function handleModal(interaction) {
     return;
   }
 
+  if (acao === "editextra_modal") {
+    if (!isStaff(interaction.member)) {
+      await interaction.reply({ content: "So a staff pode editar.", ephemeral: true });
+      return;
+    }
+    const produto = getProduto(valor);
+    if (!produto) {
+      await interaction.reply({ content: "Produto nao encontrado.", ephemeral: true });
+      return;
+    }
+    const patch = store.produtoOverrides[valor] || {};
+    const posicao = interaction.fields.getTextInputValue("banner_posicao").trim().toLowerCase();
+    const instrucoes = interaction.fields.getTextInputValue("instrucoes").trim();
+    const categoriaId = interaction.fields.getTextInputValue("categoria").trim();
+    if (posicao) patch.bannerPosicao = posicao;
+    patch.instrucoes = instrucoes;
+    if (categoriaId) patch.categoriaId = categoriaId;
+    store.produtoOverrides[valor] = patch;
+    salvarStore();
+    await atualizarLojaFixa();
+    await interaction.reply({ content: `✅ Extra de **${produto.nome}** salvo (banner, instrucoes, categoria).`, ephemeral: true });
+    return;
+  }
+
   await interaction
     .reply({ content: "Esse formulario ficou desatualizado. Tente novamente.", ephemeral: interaction.inGuild() })
     .catch(() => {});
@@ -2339,6 +2806,10 @@ client.on("interactionCreate", async interaction => {
   try {
     if (interaction.isChatInputCommand()) {
       await handleCommand(interaction);
+      return;
+    }
+    if (interaction.isStringSelectMenu()) {
+      await handleSelect(interaction);
       return;
     }
     if (interaction.isButton()) {

@@ -50,7 +50,16 @@ Staff (exigem Gerenciar Servidor):
 - **Cargos temporarios**: defina `cargo` e `cargo-dias` no produto. O cargo e dado na entrega e removido automaticamente ao expirar (mesmo apos reiniciar, pois fica salvo).
 - **Feedbacks**: apos a entrega o cliente recebe um botao de avaliacao na DM. As avaliacoes vao para o canal de feedback e/ou sao vistas com `/avaliacoes`.
 - **Tickets**: use `/painel-ticket` num canal. O botao abre um canal privado com o cliente e a staff; o botao **Fechar ticket** trava o canal e o renomeia.
-- **Logs completos**: pedido criado, cupom aplicado, pagamento, entrega, cancelamento, expiracao, prazo estourado, cargos e tickets. Todos vao para o canal definido em `/config canal-logs` e ficam salvos no `data/store.json`.
+- **Logs completos**: pedido criado, cupom aplicado, pagamento, entrega, cancelamento, expiracao, prazo estourado, cargos e tickets. Todos vao para o canal definido em `/config canal-logs` (nunca para o canal da lojinha) e ficam salvos em `data/store.json` + `data/loja.db`.
+- **Engrenagem so para staff**: o botao ⚙️ nao aparece na vitrine publica; so a staff ve no painel efemero do produto.
+- **Carrinho automatico**: ao comprar, o bot envia o carrinho (QR Pix, copia-e-cola, produto e valor) na DM e no ticket do servidor.
+- **Fechar ticket apaga o canal**.
+- **Nome PIX publico**: `/config pix-nome` — o app do banco mostra o nome da loja, nao seu nome completo.
+- **Entrega DM ou e-mail**: o cliente escolhe onde receber. SMTP em `/config smtp`.
+- **Categorias**: `/categoria criar` e seletor na vitrine e no atendimento.
+- **Banner**: `top`, `bottom`, `thumbnail`, `float` (`/config banner-posicao` e `/produto editar`).
+- **Instrucoes do produto**: campo no extra do produto (ex: acesse o site X e cole o codigo).
+- **Logo no QR**: `assets/qr-logo.png` vai no centro do QR Code.
 
 ## Variaveis de ambiente
 
