@@ -173,6 +173,7 @@ if (!store.cargosTemporarios) store.cargosTemporarios = [];
 if (!store.logs) store.logs = [];
 if (!store.produtoOverrides) store.produtoOverrides = {};
 if (!store.tickets) store.tickets = {};
+if (!store.carrinhos) store.carrinhos = {};
 if (!store.config) store.config = { logChannelId: null, feedbackChannelId: null, ticketCategoryId: null, lojaChannelId: null, banner: null };
 store.config.logChannelId = CANAIS.logs;
 store.config.feedbackChannelId = CANAIS.feedbacks;
@@ -1225,21 +1226,17 @@ async function criarPedido(interaction, produtoId, cupomCodigo) {
   }
 
   try {
-    const ticket = await abrirTicket(
-      interaction.guild,
-      interaction.user,
-      `Compra ${produto.nome} #${pedido.id}`
-    );
-    pedido.ticketChannelId = ticket.id;
-    const serverMsg = await ticket.send({
-      content: `${interaction.user} seu carrinho automatico:`,
+    const carrinho = await abrirCarrinho(interaction.guild, interaction.user, pedido);
+    pedido.cartChannelId = carrinho.id;
+    const serverMsg = await carrinho.send({
+      content: `${interaction.user} seu carrinho:`,
       embeds: [embedCarrinho],
       components: componentes,
       files: pixFile()
     });
     pedido.cartServerMessageId = serverMsg.id;
   } catch (error) {
-    console.error("Falha ao abrir ticket/carrinho no servidor:", error.message);
+    console.error("Falha ao abrir canal de carrinho no servidor:", error.message);
   }
   salvarStore();
 }
@@ -1293,12 +1290,11 @@ async function handleAvaliarModal(interaction, pedidoId) {
   await interaction.editReply({ content: `${estrelas(nota)} Valeu pela avaliacao!` });
 }
 
-async function abrirTicket(guild, user, assunto) {
-  const base = `ticket-${user.username}`.toLowerCase().replace(/[^a-z0-9-]/g, "").slice(0, 80) || `ticket-${user.id}`;
-  const overwrites = [
+async function overwritesPrivado(guild, userId) {
+  return [
     { id: guild.roles.everyone.id, deny: [PermissionFlagsBits.ViewChannel] },
     {
-      id: user.id,
+      id: userId,
       allow: [
         PermissionFlagsBits.ViewChannel,
         PermissionFlagsBits.SendMessages,
@@ -1316,6 +1312,91 @@ async function abrirTicket(guild, user, assunto) {
       ]
     }
   ];
+}
+
+async function abrirCarrinho(guild, user, pedido) {
+  const aberto = Object.entries(store.carrinhos).find(([, c]) => c.userId === user.id && c.status === "aberto");
+  if (aberto) {
+    const existente = guild.channels.cache.get(aberto[0]) || await guild.channels.fetch(aberto[0]).catch(() => null);
+    if (existente) {
+      store.carrinhos[existente.id].pedidoId = pedido.id;
+      salvarStore();
+      return existente;
+    }
+  }
+
+  const canal = await guild.channels.create({
+    name: "seu-carrinho",
+    type: ChannelType.GuildText,
+    topic: `Carrinho de ${user.tag} — pedido #${pedido.id}`,
+    permissionOverwrites: await overwritesPrivado(guild, user.id)
+  });
+
+  store.carrinhos[canal.id] = {
+    userId: user.id,
+    pedidoId: pedido.id,
+    abertoEm: Date.now(),
+    status: "aberto"
+  };
+  salvarStore();
+
+  const embed = new EmbedBuilder()
+    .setTitle("Seu carrinho")
+    .setDescription(`Ola <@${user.id}>, este canal e so seu. O Pix, o QR e o status do pedido ficam aqui.`)
+    .addFields({ name: "Pedido", value: `#${pedido.id}` })
+    .setColor(0x9b59b6);
+
+  const row = new ActionRowBuilder().addComponents(
+    new ButtonBuilder().setCustomId(`carrinho_fechar:${canal.id}`).setLabel("Fechar carrinho").setStyle(ButtonStyle.Danger)
+  );
+
+  await canal.send({
+    content: `<@${user.id}>`,
+    embeds: [embed],
+    components: [row]
+  });
+
+  return canal;
+}
+
+async function fecharCarrinho(interaction, canalId) {
+  const efemero = interaction.inGuild();
+  await interaction.deferReply({ ephemeral: efemero });
+
+  const guild = interaction.guild;
+  if (!guild) {
+    await interaction.editReply({ content: "Use esse botao dentro do servidor." });
+    return;
+  }
+
+  const carrinho = store.carrinhos[canalId];
+  const canal = guild.channels.cache.get(canalId) || await guild.channels.fetch(canalId).catch(() => null);
+  if (!canal || !carrinho) {
+    await interaction.editReply({ content: "Carrinho nao encontrado." });
+    return;
+  }
+  if (carrinho.userId !== interaction.user.id && !isStaff(interaction.member)) {
+    await interaction.editReply({ content: "So o dono do carrinho pode fechar." });
+    return;
+  }
+  if (carrinho.status === "fechado") {
+    await interaction.editReply({ content: "Esse carrinho ja esta fechado." });
+    return;
+  }
+
+  carrinho.status = "fechado";
+  carrinho.fechadoEm = Date.now();
+  salvarStore();
+
+  await interaction.editReply({ content: "Carrinho fechado. Este canal sera removido em alguns segundos." });
+  setTimeout(() => {
+    canal.delete("Carrinho fechado").catch(() => {});
+  }, 2500);
+}
+
+async function abrirTicket(guild, user, assunto) {
+  const base = `ticket-${user.username}`.toLowerCase().replace(/[^a-z0-9-]/g, "").slice(0, 80) || `ticket-${user.id}`;
+  const overwrites = await overwritesPrivado(guild, user.id);
   if (ADMIN_ROLE_ID) {
     overwrites.push({
       id: ADMIN_ROLE_ID,
@@ -1341,7 +1422,7 @@ async function abrirTicket(guild, user, assunto) {
   salvarStore();
 
   const embed = new EmbedBuilder()
-    .setTitle("🎫 Ticket aberto")
+    .setTitle("Ticket aberto")
     .setDescription(`Ola <@${user.id}>, descreva sua duvida com o maximo de detalhes. A equipe respondera em breve.`)
     .addFields({ name: "Assunto", value: assunto })
     .setColor(0x5865f2);
@@ -1396,7 +1477,7 @@ async function fecharTicket(interaction, canalId) {
     userId: ticket.userId,
     staffId: interaction.user.id
   });
-  await interaction.editReply({ content: "🔒 Ticket fechado. Este canal sera removido em alguns segundos." });
+  await interaction.editReply({ content: "Ticket fechado. Este canal sera removido em alguns segundos." });
   setTimeout(() => {
     canal.delete("Ticket fechado").catch(() => {});
   }, 2500);
@@ -2566,6 +2647,11 @@ async function handleButton(interaction) {
 
   if (acao === "ticket_fechar") {
     await fecharTicket(interaction, valor);
+    return;
+  }
+
+  if (acao === "carrinho_fechar") {
+    await fecharCarrinho(interaction, valor);
     return;
   }
 

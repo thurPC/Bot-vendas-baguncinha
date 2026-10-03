@@ -52,7 +52,7 @@ Staff (exigem Gerenciar Servidor):
 - **Tickets**: use `/painel-ticket` num canal. O botao abre um canal privado com o cliente e a staff; o botao **Fechar ticket** trava o canal e o renomeia.
 - **Logs completos**: pedido criado, cupom aplicado, pagamento, entrega, cancelamento, expiracao, prazo estourado, cargos e tickets. Todos vao para o canal definido em `/config canal-logs` (nunca para o canal da lojinha) e ficam salvos em `data/store.json` + `data/loja.db`.
 - **Engrenagem so para staff**: o botao ⚙️ nao aparece na vitrine publica; so a staff ve no painel efemero do produto.
-- **Carrinho automatico**: ao comprar, o bot envia o carrinho (QR Pix, copia-e-cola, produto e valor) na DM e no ticket do servidor.
+- **Carrinho automatico**: ao gerar o Pix, o bot envia o QR na DM e abre um canal privado **seu-carrinho** visivel so para o comprador (nao e um ticket).
 - **Fechar ticket apaga o canal**.
 - **Nome PIX publico**: `/config pix-nome` — o app do banco mostra o nome da loja, nao seu nome completo.
 - **Entrega DM ou e-mail**: o cliente escolhe onde receber. SMTP em `/config smtp`.
