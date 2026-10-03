@@ -44,7 +44,6 @@ const CANAIS = {
 };
 
 const PRAZO_ENTREGA_MIN = 50;
-const QR_NOME_PUBLICO = "BAGUNCINHA";
 const DIA_MS = 24 * 60 * 60 * 1000;
 const PRODUTOS = {
   nitro_1m: {
