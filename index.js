@@ -371,7 +371,7 @@ function embedLog(entrada) {
   const linhas = [];
   if (entrada.pedidoId) linhas.push(`Pedido: **#${entrada.pedidoId}**`);
   if (entrada.userId) linhas.push(`Usuario: <@${entrada.userId}>`);
-  if (entrada.staffId) linhas.push(`Staff: <@${entrada.staffId}>`);
+  if (entrada.staffId) linhas.push(`Fechado por: <@${entrada.staffId}>`);
   return new EmbedBuilder()
     .setTitle(LOG_LABEL[entrada.tipo] || entrada.tipo)
     .setDescription(`${entrada.detalhe}${linhas.length ? `\n\n${linhas.join("\n")}` : ""}`)
