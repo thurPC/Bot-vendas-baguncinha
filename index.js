@@ -44,7 +44,9 @@ const CANAIS = {
 };
 
 const PRAZO_ENTREGA_MIN = 50;
+const QR_NOME_PUBLICO = "BAGUNCINHA";
 const DIA_MS = 24 * 60 * 60 * 1000;
+
 const PRODUTOS = {
   nitro_1m: {
     id: "nitro_1m",
@@ -658,8 +660,6 @@ function embedPedidoCliente(pedido, extra, opcoes = {}) {
     embed.addFields({
       name: "Como pagar",
       value: "Escaneie o QR Code ou toque em **Copiar Pix**. No celular, o codigo abre num campo pra voce selecionar e copiar."
-    });
-    
     });
     if (opcoes.qrNome) {
       embed.setImage(`attachment://${opcoes.qrNome}`);
