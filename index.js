@@ -14,7 +14,8 @@ const {
   TextInputStyle,
   ChannelType,
   AttachmentBuilder,
-  StringSelectMenuBuilder
+  StringSelectMenuBuilder,
+  ChannelSelectMenuBuilder
 } = require("discord.js");
 const http = require("http");
 const crypto = require("crypto");
@@ -174,19 +175,20 @@ if (!store.logs) store.logs = [];
 if (!store.produtoOverrides) store.produtoOverrides = {};
 if (!store.tickets) store.tickets = {};
 if (!store.carrinhos) store.carrinhos = {};
-if (!store.config) store.config = { logChannelId: null, feedbackChannelId: null, ticketCategoryId: null, lojaChannelId: null, banner: null };
+if (!store.config || typeof store.config !== "object") store.config = {};
 store.config.logChannelId = CANAIS.logs;
 store.config.feedbackChannelId = CANAIS.feedbacks;
 store.config.lojaChannelId = CANAIS.loja;
-if (!store.config.banner) store.config.banner = null;
-if (!store.config.bannerPosicao) store.config.bannerPosicao = "top";
-if (!store.config.pixNomePublico) store.config.pixNomePublico = QR_NOME_PUBLICO;
+if (store.config.banner === undefined) store.config.banner = null;
+if (store.config.bannerPosicao == null || store.config.bannerPosicao === "") store.config.bannerPosicao = "top";
+if (store.config.pixNomePublico == null || store.config.pixNomePublico === "") store.config.pixNomePublico = QR_NOME_PUBLICO;
 if (store.config.ocultarNomePix === undefined) store.config.ocultarNomePix = true;
-if (!store.config.smtpHost) store.config.smtpHost = null;
-if (!store.config.smtpPort) store.config.smtpPort = 587;
-if (!store.config.smtpUser) store.config.smtpUser = null;
-if (!store.config.smtpPass) store.config.smtpPass = null;
-if (!store.config.smtpFrom) store.config.smtpFrom = null;
+if (store.config.ticketCategoryId === undefined) store.config.ticketCategoryId = null;
+if (store.config.smtpHost === undefined) store.config.smtpHost = null;
+if (store.config.smtpPort == null) store.config.smtpPort = 587;
+if (store.config.smtpUser === undefined) store.config.smtpUser = null;
+if (store.config.smtpPass === undefined) store.config.smtpPass = null;
+if (store.config.smtpFrom === undefined) store.config.smtpFrom = null;
 if (!store.lojaFixa) store.lojaFixa = { channelId: null, messageId: null };
 if (!store.paineisFixos) store.paineisFixos = { ticket: null, cupons: null };
 if (!store.categorias) {
@@ -195,7 +197,6 @@ if (!store.categorias) {
     boost: { id: "boost", nome: "Boosts", emoji: "🚀", descricao: "Boosts de servidor", posicao: 1, ativo: true }
   };
 }
-salvarStore();
 
 const escolhasProdutos = Object.values(PRODUTOS).map(p => ({ name: p.nome, value: p.id }));
 
@@ -270,10 +271,14 @@ function pixNomePublico() {
   return store.config.pixNomePublico || QR_NOME_PUBLICO;
 }
 
+function limparUrl(url) {
+  return String(url || "").trim().replace(/^<|>$/g, "").trim();
+}
+
 function urlMidiaValida(url) {
   if (!url) return false;
   try {
-    const u = new URL(String(url).trim());
+    const u = new URL(limparUrl(url));
     return u.protocol === "http:" || u.protocol === "https:";
   } catch {
     return false;
@@ -535,14 +540,19 @@ function payloadLoja(categoriaId) {
 }
 
 async function atualizarLojaFixa() {
-  const canalId = store.lojaFixa.channelId || store.config.lojaChannelId;
+  const canalId = store.lojaFixa.channelId || store.config.lojaChannelId || CANAIS.loja;
   const messageId = store.lojaFixa.messageId;
-  if (!canalId || !messageId) return;
+  if (!canalId) return;
   const canal = await client.channels.fetch(canalId).catch(() => null);
   if (!canal) return;
-  const msg = await canal.messages.fetch(messageId).catch(() => null);
-  if (!msg) return;
-  await msg.edit(payloadLoja()).catch(() => {});
+  if (messageId) {
+    const msg = await canal.messages.fetch(messageId).catch(() => null);
+    if (msg) {
+      await msg.edit(payloadLoja()).catch(() => {});
+      return;
+    }
+  }
+  await publicarLojaFixa(canal);
 }
 
 async function publicarLojaFixa(canal) {
@@ -1404,9 +1414,9 @@ async function abrirTicket(guild, user, assunto) {
     });
   }
 
-  let parent;
-  if (store.config.ticketCategoryId) {
-    const cat = await guild.channels.fetch(store.config.ticketCategoryId).catch(() => null);
+  let parent = store.config.ticketCategoryId || undefined;
+  if (parent) {
+    const cat = await guild.channels.fetch(parent).catch(() => null);
     if (cat) parent = cat.id;
   }
 
@@ -1699,6 +1709,80 @@ async function handleProduto(interaction) {
   }
 }
 
+function resumoConfig() {
+  return (
+    `Canal de logs: ${store.config.logChannelId ? `<#${store.config.logChannelId}>` : "nao definido"}\n` +
+    `Canal de feedbacks: ${store.config.feedbackChannelId ? `<#${store.config.feedbackChannelId}>` : "nao definido"}\n` +
+    `Categoria de tickets: ${store.config.ticketCategoryId ? `<#${store.config.ticketCategoryId}>` : "nao definida"}\n` +
+    `Loja fixa: ${store.lojaFixa.channelId ? `<#${store.lojaFixa.channelId}>` : "nao publicada"}\n` +
+    `Banner da loja: ${urlMidiaValida(store.config.banner) ? `definido (${store.config.bannerPosicao || "top"})` : "nao definido"}\n` +
+    `Nome PIX publico: **${pixNomePublico()}** (ocultar nome completo: ${store.config.ocultarNomePix !== false ? "sim" : "nao"})\n` +
+    `SMTP: ${store.config.smtpHost ? `**${store.config.smtpHost}** porta ${store.config.smtpPort || 587}` : "nao configurado"}`
+  );
+}
+
+function campoTexto(customId, label, style, valor, extra = {}) {
+  const input = new TextInputBuilder()
+    .setCustomId(customId)
+    .setLabel(label)
+    .setStyle(style)
+    .setRequired(extra.required === true);
+  if (extra.placeholder) input.setPlaceholder(extra.placeholder);
+  if (extra.maxLength) input.setMaxLength(extra.maxLength);
+  const v = String(valor || "").slice(0, extra.maxLength || 4000);
+  if (v) input.setValue(v);
+  return input;
+}
+
+function payloadPainelConfig() {
+  const embed = new EmbedBuilder()
+    .setTitle("Configuracao da loja")
+    .setDescription(resumoConfig() + "\n\nUse os botoes e o seletor abaixo. Tudo e salvo na hora.")
+    .setColor(0x9b59b6);
+
+  return {
+    embeds: [embed],
+    components: [
+      new ActionRowBuilder().addComponents(
+        new ButtonBuilder().setCustomId("cfg_banner").setLabel("Banner").setStyle(ButtonStyle.Primary),
+        new ButtonBuilder().setCustomId("cfg_smtp").setLabel("SMTP").setStyle(ButtonStyle.Primary),
+        new ButtonBuilder().setCustomId("cfg_pix").setLabel("Nome PIX").setStyle(ButtonStyle.Primary),
+        new ButtonBuilder().setCustomId("cfg_publicar").setLabel("Publicar loja").setStyle(ButtonStyle.Success)
+      ),
+      new ActionRowBuilder().addComponents(
+        new ChannelSelectMenuBuilder()
+          .setCustomId("cfg_cat_ticket")
+          .setPlaceholder("Categoria dos tickets")
+          .setMinValues(1)
+          .setMaxValues(1)
+          .addChannelTypes(ChannelType.GuildCategory)
+      )
+    ]
+  };
+}
+
+async function enviarPainelConfig(interaction) {
+  const payload = { ...payloadPainelConfig(), ephemeral: true };
+  if (interaction.replied || interaction.deferred) {
+    await interaction.editReply(payload);
+    return;
+  }
+  if (interaction.isMessageComponent()) {
+    await interaction.update({ embeds: payload.embeds, components: payload.components });
+    return;
+  }
+  await interaction.reply(payload);
+}
+
+async function handleConfiguracao(interaction) {
+  const sub = interaction.options.getSubcommand();
+  if (sub !== "loja") {
+    await interaction.reply({ content: "Use `/configuracao loja`.", ephemeral: true });
+    return;
+  }
+  await enviarPainelConfig(interaction);
+}
+
 async function handleConfig(interaction) {
   const sub = interaction.options.getSubcommand();
 
@@ -1735,9 +1819,10 @@ async function handleConfig(interaction) {
   }
 
   if (sub === "categoria-ticket") {
-    store.config.ticketCategoryId = interaction.options.getChannel("categoria").id;
+    const categoria = interaction.options.getChannel("categoria", true);
+    store.config.ticketCategoryId = categoria.id;
     salvarStore();
-    await interaction.reply({ content: `✅ Categoria de tickets definida em <#${store.config.ticketCategoryId}>.`, ephemeral: true });
+    await interaction.reply({ content: `Categoria de tickets definida em <#${store.config.ticketCategoryId}>.`, ephemeral: true });
     return;
   }
 
@@ -1748,15 +1833,15 @@ async function handleConfig(interaction) {
   }
 
   if (sub === "banner-loja") {
-    const url = (interaction.options.getString("url") || "").trim();
+    const url = limparUrl(interaction.options.getString("url") || "");
     if (url && !urlMidiaValida(url)) {
       await interaction.reply({ content: "URL invalida. Use um link http/https (gif funciona).", ephemeral: true });
       return;
     }
     store.config.banner = url || null;
     salvarStore();
-    await atualizarLojaFixa();
-    await interaction.reply({ content: url ? "✅ Banner da loja atualizado." : "✅ Banner da loja removido.", ephemeral: true });
+    await atualizarLojaFixa().catch(error => console.error("Falha ao atualizar loja fixa:", error.message));
+    await interaction.reply({ content: url ? "Banner da loja salvo." : "Banner da loja removido.", ephemeral: true });
     return;
   }
 
@@ -1783,14 +1868,20 @@ async function handleConfig(interaction) {
   }
 
   if (sub === "smtp") {
-    store.config.smtpHost = interaction.options.getString("host");
+    store.config.smtpHost = (interaction.options.getString("host", true) || "").trim();
     store.config.smtpPort = interaction.options.getInteger("porta") || 587;
-    store.config.smtpUser = interaction.options.getString("usuario");
-    store.config.smtpPass = interaction.options.getString("senha");
-    store.config.smtpFrom = interaction.options.getString("from");
+    store.config.smtpUser = (interaction.options.getString("usuario", true) || "").trim();
+    store.config.smtpPass = interaction.options.getString("senha", true) || "";
+    store.config.smtpFrom = (interaction.options.getString("from", true) || "").trim();
     salvarStore();
-    await interaction.reply({ content: "SMTP salvo no banco. Entregas por e-mail habilitadas.", ephemeral: true });
+    await interaction.reply({
+      content: `SMTP salvo: **${store.config.smtpHost}** (porta ${store.config.smtpPort}). From: ${store.config.smtpFrom}.`,
+      ephemeral: true
+    });
+    return;
   }
+
+  await interaction.reply({ content: "Subcomando de config desconhecido. Use /config ver.", ephemeral: true }).catch(() => {});
 }
 
 async function handleCategoria(interaction) {
@@ -2099,6 +2190,13 @@ const commands = [
         .addIntegerOption(o => o.setName("porta").setDescription("Porta (587 ou 465)").setMinValue(1))
     ),
   new SlashCommandBuilder()
+    .setName("configuracao")
+    .setDescription("Painel unico para configurar a loja (staff).")
+    .setDefaultMemberPermissions(PermissionFlagsBits.ManageGuild)
+    .addSubcommand(sub =>
+      sub.setName("loja").setDescription("Abre o painel: banner, SMTP, PIX, categoria de tickets e publicar loja.")
+    ),
+  new SlashCommandBuilder()
     .setName("categoria")
     .setDescription("Gerencia categorias da loja (staff).")
     .setDefaultMemberPermissions(PermissionFlagsBits.ManageGuild)
@@ -2307,6 +2405,9 @@ async function handleCommand(interaction) {
       return;
     case "config":
       await handleConfig(interaction);
+      return;
+    case "configuracao":
+      await handleConfiguracao(interaction);
       return;
     case "categoria":
       await handleCategoria(interaction);
@@ -2695,6 +2796,109 @@ async function handleButton(interaction) {
     return;
   }
 
+  if (acao === "cfg_banner") {
+    if (!isStaff(interaction.member)) {
+      await interaction.reply({ content: "So a staff pode configurar.", ephemeral: true });
+      return;
+    }
+    const modal = new ModalBuilder().setCustomId("cfg_banner_modal").setTitle("Banner da loja");
+    modal.addComponents(
+      new ActionRowBuilder().addComponents(
+        campoTexto("url", "URL do banner/gif (vazio remove)", TextInputStyle.Short, store.config.banner, {
+          required: false,
+          placeholder: "https://...",
+          maxLength: 400
+        })
+      ),
+      new ActionRowBuilder().addComponents(
+        campoTexto("posicao", "Posicao: top, bottom, thumbnail, float", TextInputStyle.Short, store.config.bannerPosicao || "top", {
+          required: false,
+          maxLength: 20
+        })
+      )
+    );
+    await interaction.showModal(modal);
+    return;
+  }
+
+  if (acao === "cfg_smtp") {
+    if (!isStaff(interaction.member)) {
+      await interaction.reply({ content: "So a staff pode configurar.", ephemeral: true });
+      return;
+    }
+    const modal = new ModalBuilder().setCustomId("cfg_smtp_modal").setTitle("SMTP da loja");
+    modal.addComponents(
+      new ActionRowBuilder().addComponents(
+        campoTexto("host", "Host SMTP", TextInputStyle.Short, store.config.smtpHost, {
+          required: true,
+          placeholder: "smtp.gmail.com",
+          maxLength: 120
+        })
+      ),
+      new ActionRowBuilder().addComponents(
+        campoTexto("porta", "Porta (587 ou 465)", TextInputStyle.Short, store.config.smtpPort || 587, {
+          required: false,
+          maxLength: 5
+        })
+      ),
+      new ActionRowBuilder().addComponents(
+        campoTexto("usuario", "Usuario", TextInputStyle.Short, store.config.smtpUser, {
+          required: true,
+          maxLength: 120
+        })
+      ),
+      new ActionRowBuilder().addComponents(
+        campoTexto("senha", "Senha / app password", TextInputStyle.Short, "", {
+          required: true,
+          maxLength: 200
+        })
+      ),
+      new ActionRowBuilder().addComponents(
+        campoTexto("from", "From (ex: Loja <loja@email.com>)", TextInputStyle.Short, store.config.smtpFrom, {
+          required: true,
+          maxLength: 120
+        })
+      )
+    );
+    await interaction.showModal(modal);
+    return;
+  }
+
+  if (acao === "cfg_pix") {
+    if (!isStaff(interaction.member)) {
+      await interaction.reply({ content: "So a staff pode configurar.", ephemeral: true });
+      return;
+    }
+    const modal = new ModalBuilder().setCustomId("cfg_pix_modal").setTitle("Nome no PIX");
+    modal.addComponents(
+      new ActionRowBuilder().addComponents(
+        campoTexto("nome", "Nome publico no PIX", TextInputStyle.Short, store.config.pixNomePublico || QR_NOME_PUBLICO, {
+          required: true,
+          maxLength: 25
+        })
+      ),
+      new ActionRowBuilder().addComponents(
+        campoTexto("ocultar", "Ocultar nome pessoal? sim ou nao", TextInputStyle.Short, store.config.ocultarNomePix !== false ? "sim" : "nao", {
+          required: false,
+          maxLength: 3
+        })
+      )
+    );
+    await interaction.showModal(modal);
+    return;
+  }
+
+  if (acao === "cfg_publicar") {
+    if (!isStaff(interaction.member)) {
+      await interaction.reply({ content: "So a staff pode configurar.", ephemeral: true });
+      return;
+    }
+    await interaction.deferUpdate();
+    await publicarLojaFixa();
+    await interaction.editReply(payloadPainelConfig());
+    return;
+  }
+
   await interaction
     .reply({ content: "Esse botao ficou desatualizado. Use os comandos de novo.", ephemeral: true })
     .catch(() => {});
@@ -2718,6 +2922,17 @@ async function handleSelect(interaction) {
       categoria ? `Atendimento: ${categoria.nome}` : "Atendimento"
     );
     await interaction.editReply(`Ticket aberto em <#${canal.id}> (${categoria ? categoria.nome : valor}).`);
+    return;
+  }
+
+  if (id === "cfg_cat_ticket") {
+    if (!isStaff(interaction.member)) {
+      await interaction.reply({ content: "So a staff pode configurar.", ephemeral: true });
+      return;
+    }
+    store.config.ticketCategoryId = valor;
+    salvarStore();
+    await enviarPainelConfig(interaction);
   }
 }
 
@@ -2878,6 +3093,53 @@ async function handleModal(interaction) {
     return;
   }
 
+  if (acao === "cfg_banner_modal") {
+    if (!isStaff(interaction.member)) {
+      await interaction.reply({ content: "So a staff pode configurar.", ephemeral: true });
+      return;
+    }
+    const url = limparUrl(interaction.fields.getTextInputValue("url"));
+    const posicao = (interaction.fields.getTextInputValue("posicao") || "top").trim().toLowerCase();
+    if (url && !urlMidiaValida(url)) {
+      await interaction.reply({ content: "URL invalida. Use um link http/https (gif funciona).", ephemeral: true });
+      return;
+    }
+    store.config.banner = url || null;
+    if (posicao) store.config.bannerPosicao = posicao;
+    salvarStore();
+    await atualizarLojaFixa().catch(error => console.error("Falha ao atualizar loja fixa:", error.message));
+    await interaction.reply({ ...payloadPainelConfig(), ephemeral: true });
+    return;
+  }
+
+  if (acao === "cfg_smtp_modal") {
+    if (!isStaff(interaction.member)) {
+      await interaction.reply({ content: "So a staff pode configurar.", ephemeral: true });
+      return;
+    }
+    store.config.smtpHost = (interaction.fields.getTextInputValue("host") || "").trim();
+    store.config.smtpPort = Number.parseInt(interaction.fields.getTextInputValue("porta") || "587", 10) || 587;
+    store.config.smtpUser = (interaction.fields.getTextInputValue("usuario") || "").trim();
+    store.config.smtpPass = interaction.fields.getTextInputValue("senha") || "";
+    store.config.smtpFrom = (interaction.fields.getTextInputValue("from") || "").trim();
+    salvarStore();
+    await interaction.reply({ ...payloadPainelConfig(), ephemeral: true });
+    return;
+  }
+
+  if (acao === "cfg_pix_modal") {
+    if (!isStaff(interaction.member)) {
+      await interaction.reply({ content: "So a staff pode configurar.", ephemeral: true });
+      return;
+    }
+    store.config.pixNomePublico = (interaction.fields.getTextInputValue("nome") || QR_NOME_PUBLICO).trim();
+    const ocultar = (interaction.fields.getTextInputValue("ocultar") || "sim").trim().toLowerCase();
+    store.config.ocultarNomePix = !["nao", "não", "no", "n", "false", "0"].includes(ocultar);
+    salvarStore();
+    await interaction.reply({ ...payloadPainelConfig(), ephemeral: true });
+    return;
+  }
+
   await interaction
     .reply({ content: "Esse formulario ficou desatualizado. Tente novamente.", ephemeral: interaction.inGuild() })
     .catch(() => {});
@@ -2889,7 +3151,7 @@ client.on("interactionCreate", async interaction => {
       await handleCommand(interaction);
       return;
     }
-    if (interaction.isStringSelectMenu()) {
+    if (interaction.isStringSelectMenu() || interaction.isChannelSelectMenu()) {
       await handleSelect(interaction);
       return;
     }

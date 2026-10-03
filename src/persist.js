@@ -67,18 +67,44 @@ function saveSqlite(store) {
   }
 }
 
-function carregarStore() {
-  const fromDb = loadSqlite();
-  if (fromDb && typeof fromDb === "object") return fromDb;
-  const fromJson = loadJson();
-  if (fromJson && typeof fromJson === "object") {
-    saveSqlite(fromJson);
-    return fromJson;
+function configScore(store) {
+  const c = store && store.config && typeof store.config === "object" ? store.config : {};
+  return ["smtpHost", "smtpUser", "smtpPass", "smtpFrom", "ticketCategoryId", "banner"]
+    .filter(k => c[k] != null && c[k] !== "")
+    .length;
+}
+
+function mergeStores(a, b) {
+  if (!a) return b || {};
+  if (!b) return a;
+  const base = (Number(a.savedAt || 0) >= Number(b.savedAt || 0) ? a : b) || {};
+  const other = base === a ? b : a;
+  const merged = { ...other, ...base };
+  const cfgA = a.config && typeof a.config === "object" ? a.config : {};
+  const cfgB = b.config && typeof b.config === "object" ? b.config : {};
+  const prefer = configScore(a) >= configScore(b) ? cfgA : cfgB;
+  const fallback = prefer === cfgA ? cfgB : cfgA;
+  merged.config = { ...fallback, ...prefer };
+  for (const key of new Set([...Object.keys(cfgA), ...Object.keys(cfgB)])) {
+    if (merged.config[key] == null || merged.config[key] === "") {
+      merged.config[key] = prefer[key] != null && prefer[key] !== "" ? prefer[key] : fallback[key];
+    }
   }
-  return {};
+  return merged;
+}
+
+function carregarStore() {
+  const fromJson = loadJson();
+  const fromDb = loadSqlite();
+  const loaded = mergeStores(
+    fromJson && typeof fromJson === "object" ? fromJson : null,
+    fromDb && typeof fromDb === "object" ? fromDb : null
+  );
+  return loaded && typeof loaded === "object" ? loaded : {};
 }
 
 function salvarStore(store) {
+  if (store && typeof store === "object") store.savedAt = Date.now();
   saveJson(store);
   saveSqlite(store);
 }
