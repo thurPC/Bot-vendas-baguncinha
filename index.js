@@ -31,22 +31,50 @@ const { enviarProdutoPorEmail } = require("./src/mailer");
 const TOKEN = process.env.TOKEN;
 const CLIENT_ID = process.env.CLIENT_ID;
 const GUILD_ID = process.env.GUILD_ID;
+const GUILD_ID_2 = process.env.GUILD_ID_2;
 const OWNER_ID = process.env.OWNER_ID;
-const ADMIN_CHANNEL_ID = process.env.ADMIN_CHANNEL_ID;
-const ADMIN_ROLE_ID = process.env.ADMIN_ROLE_ID;
 const PORT = Number(process.env.PORT || 10000);
 const PUBLIC_URL = (process.env.PUBLIC_URL || "").replace(/\/$/, "");
 const MP_ACCESS_TOKEN = process.env.MERCADOPAGO_ACCESS_TOKEN;
 const MP_WEBHOOK_SECRET = process.env.MERCADOPAGO_WEBHOOK_SECRET;
 const PAYER_EMAIL = process.env.PAYER_EMAIL || "pagamentos@baguncinha.local";
 
-const CANAIS = {
+// ===== Multi-servidor: o bot funciona somente nestes 2 servidores =====
+const CANAIS_1 = {
   loja: "1554894024849104926",
   feedbacks: "1555479807926468639",
   logs: "1555479669082427412",
   cupons: "1555484389754798161",
   ticket: "1555489336139579492"
 };
+const CANAIS_2 = {
+  loja: process.env.CANAL_LOJA_2,
+  feedbacks: process.env.CANAL_FEEDBACKS_2,
+  logs: process.env.CANAL_LOGS_2,
+  cupons: process.env.CANAL_CUPONS_2,
+  ticket: process.env.CANAL_TICKET_2
+};
+
+const GUILDS = {};
+if (GUILD_ID) {
+  GUILDS[GUILD_ID] = {
+    id: GUILD_ID,
+    canais: CANAIS_1,
+    adminChannelId: process.env.ADMIN_CHANNEL_ID,
+    adminRoleId: process.env.ADMIN_ROLE_ID
+  };
+}
+if (GUILD_ID_2) {
+  GUILDS[GUILD_ID_2] = {
+    id: GUILD_ID_2,
+    canais: CANAIS_2,
+    adminChannelId: process.env.ADMIN_CHANNEL_ID_2,
+    adminRoleId: process.env.ADMIN_ROLE_ID_2
+  };
+}
+const GUILD_IDS = Object.keys(GUILDS);
+const guildPermitida = id => !!GUILDS[id];
+const guildCfg = id => GUILDS[id] || GUILDS[GUILD_ID];
 
 const PRAZO_ENTREGA_MIN = 120;
 const PRAZO_ENTREGA_LABEL = "2 horas";
@@ -183,9 +211,6 @@ if (!store.produtos) store.produtos = {};
 if (!store.tickets) store.tickets = {};
 if (!store.carrinhos) store.carrinhos = {};
 if (!store.config || typeof store.config !== "object") store.config = {};
-store.config.logChannelId = CANAIS.logs;
-store.config.feedbackChannelId = CANAIS.feedbacks;
-store.config.lojaChannelId = CANAIS.loja;
 if (store.config.banner === undefined) store.config.banner = null;
 if (store.config.bannerPosicao == null || store.config.bannerPosicao === "") store.config.bannerPosicao = "top";
 if (store.config.pixNomePublico == null || store.config.pixNomePublico === "") store.config.pixNomePublico = QR_NOME_PUBLICO;
@@ -198,6 +223,20 @@ if (store.config.smtpPass === undefined) store.config.smtpPass = null;
 if (store.config.smtpFrom === undefined) store.config.smtpFrom = null;
 if (!store.lojaFixa) store.lojaFixa = { channelId: null, messageId: null };
 if (!store.paineisFixos) store.paineisFixos = { ticket: null, cupons: null };
+if (!store.guilds) store.guilds = {};
+for (const gid of GUILD_IDS) {
+  const g = store.guilds[gid] || (store.guilds[gid] = {});
+  if (!g.lojaFixa) g.lojaFixa = { channelId: null, messageId: null };
+  if (!g.paineisFixos) g.paineisFixos = { ticket: null, cupons: null };
+  if (g.ticketCategoryId === undefined) g.ticketCategoryId = null;
+}
+// migra os dados antigos (servidor unico) para o servidor 1
+if (GUILD_ID && store.guilds[GUILD_ID]) {
+  const g1 = store.guilds[GUILD_ID];
+  if (store.lojaFixa && store.lojaFixa.messageId && !g1.lojaFixa.messageId) g1.lojaFixa = { ...store.lojaFixa };
+  if (store.paineisFixos && !g1.paineisFixos.ticket && !g1.paineisFixos.cupons) g1.paineisFixos = { ...store.paineisFixos };
+  if (store.config.ticketCategoryId && !g1.ticketCategoryId) g1.ticketCategoryId = store.config.ticketCategoryId;
+}
 if (!store.config.ticketPainel || typeof store.config.ticketPainel !== "object") store.config.ticketPainel = {};
 if (!store.config.ticketPainel.titulo) store.config.ticketPainel.titulo = "ATENDIMENTO AO CLIENTE";
 if (!store.config.ticketPainel.descricao) {
@@ -350,7 +389,7 @@ function limparPixCopiaECola(codigo) {
     .trim();
 }
 
-function botoesPix(pedidoId, canalCarrinhoId) {
+function botoesPix(pedidoId, canalCarrinhoId, guildId = GUILD_ID) {
   const row = new ActionRowBuilder().addComponents(
     new ButtonBuilder()
       .setCustomId(`pix_copiar:${pedidoId}`)
@@ -365,25 +404,25 @@ function botoesPix(pedidoId, canalCarrinhoId) {
         .setURL(`${PUBLIC_URL}/pix/${pedidoId}`)
     );
   }
-  if (canalCarrinhoId && GUILD_ID) {
+  if (canalCarrinhoId && guildId) {
     row.addComponents(
       new ButtonBuilder()
         .setLabel("Ir ao carrinho")
         .setStyle(ButtonStyle.Link)
-        .setURL(`https://discord.com/channels/${GUILD_ID}/${canalCarrinhoId}`)
+        .setURL(`https://discord.com/channels/${guildId}/${canalCarrinhoId}`)
     );
   }
   return [row];
 }
 
-function botaoIrCarrinho(canalId) {
-  if (!canalId || !GUILD_ID) return [];
+function botaoIrCarrinho(canalId, guildId = GUILD_ID) {
+  if (!canalId || !guildId) return [];
   return [
     new ActionRowBuilder().addComponents(
       new ButtonBuilder()
         .setLabel("Ir ao carrinho")
         .setStyle(ButtonStyle.Link)
-        .setURL(`https://discord.com/channels/${GUILD_ID}/${canalId}`)
+        .setURL(`https://discord.com/channels/${guildId}/${canalId}`)
     )
   ];
 }
@@ -450,7 +489,8 @@ function consumirEstoque(produtoId) {
 function isStaff(member) {
   if (!member) return false;
   if (OWNER_ID && member.id === OWNER_ID) return true;
-  if (ADMIN_ROLE_ID && member.roles.cache.has(ADMIN_ROLE_ID)) return true;
+  const adminRoleId = guildCfg(member.guild && member.guild.id).adminRoleId;
+  if (adminRoleId && member.roles.cache.has(adminRoleId)) return true;
   return member.permissions.has(PermissionFlagsBits.ManageGuild);
 }
 
@@ -465,7 +505,8 @@ function registrarLog(tipo, detalhe, dados = {}) {
     detalhe: detalhe || "",
     pedidoId: dados.pedidoId || null,
     userId: dados.userId || null,
-    staffId: dados.staffId || null
+    staffId: dados.staffId || null,
+    guildId: dados.guildId || (store.pedidos[String(dados.pedidoId)] || {}).guildId || GUILD_ID
   };
   store.logs.push(entrada);
   if (store.logs.length > 2000) store.logs.splice(0, store.logs.length - 2000);
@@ -486,9 +527,10 @@ function embedLog(entrada) {
 }
 
 async function enviarLogCanal(entrada) {
-  if (!store.config.logChannelId) return;
-  if (store.config.logChannelId === CANAIS.loja || store.config.logChannelId === store.config.lojaChannelId) return;
-  const canal = await client.channels.fetch(store.config.logChannelId).catch(() => null);
+  const cfg = guildCfg(entrada.guildId);
+  const logId = cfg.canais.logs;
+  if (!logId || logId === cfg.canais.loja) return;
+  const canal = await client.channels.fetch(logId).catch(() => null);
   if (!canal || canalEhLoja(canal)) return;
   await canal.send({ embeds: [embedLog(entrada)] }).catch(() => {});
 }
@@ -606,31 +648,40 @@ function payloadLoja(categoriaId) {
 }
 
 async function atualizarLojaFixa() {
-  const canalId = store.lojaFixa.channelId || store.config.lojaChannelId || CANAIS.loja;
-  const messageId = store.lojaFixa.messageId;
+  // atualiza a vitrine nos 2 servidores
+  for (const gid of GUILD_IDS) {
+    await atualizarLojaFixaGuild(gid).catch(error => console.error(`Falha ao atualizar loja (${gid}):`, error.message));
+  }
+}
+
+async function atualizarLojaFixaGuild(gid) {
+  const st = store.guilds[gid];
+  const canalId = st.lojaFixa.channelId || guildCfg(gid).canais.loja;
   if (!canalId) return;
   const canal = await client.channels.fetch(canalId).catch(() => null);
   if (!canal) return;
-  if (messageId) {
-    const msg = await canal.messages.fetch(messageId).catch(() => null);
+  if (st.lojaFixa.messageId) {
+    const msg = await canal.messages.fetch(st.lojaFixa.messageId).catch(() => null);
     if (msg) {
       await msg.edit(payloadLoja()).catch(() => {});
       return;
     }
   }
-  await publicarLojaFixa(canal);
+  await publicarLojaFixa(gid);
 }
 
-async function publicarLojaFixa(canal) {
-  const destino = canal && canal.id === CANAIS.loja ? canal : await client.channels.fetch(CANAIS.loja).catch(() => null);
+async function publicarLojaFixa(gid = GUILD_ID) {
+  const st = store.guilds[gid] || store.guilds[GUILD_ID];
+  const lojaId = guildCfg(gid).canais.loja;
+  const destino = lojaId ? await client.channels.fetch(lojaId).catch(() => null) : null;
   if (!destino) {
-    console.error("Canal da lojinha nao encontrado.");
+    console.error(`Canal da lojinha nao encontrado (servidor ${gid}).`);
     return null;
   }
-  if (store.lojaFixa.channelId && store.lojaFixa.messageId) {
-    const antigo = await client.channels.fetch(store.lojaFixa.channelId).catch(() => null);
+  if (st.lojaFixa.channelId && st.lojaFixa.messageId) {
+    const antigo = await client.channels.fetch(st.lojaFixa.channelId).catch(() => null);
     if (antigo) {
-      const msg = await antigo.messages.fetch(store.lojaFixa.messageId).catch(() => null);
+      const msg = await antigo.messages.fetch(st.lojaFixa.messageId).catch(() => null);
       if (msg) {
         await msg.edit(payloadLoja()).catch(() => {});
         return msg;
@@ -638,8 +689,7 @@ async function publicarLojaFixa(canal) {
     }
   }
   const enviada = await destino.send(payloadLoja());
-  store.lojaFixa = { channelId: destino.id, messageId: enviada.id };
-  store.config.lojaChannelId = destino.id;
+  st.lojaFixa = { channelId: destino.id, messageId: enviada.id };
   salvarStore();
   return enviada;
 }
@@ -703,13 +753,14 @@ function payloadPainelCupons() {
   return { embeds: [embed], components: [] };
 }
 
-async function publicarOuAtualizarPainel(chave, canalId, payload) {
-  const canal = await client.channels.fetch(canalId).catch(() => null);
+async function publicarOuAtualizarPainel(gid, chave, canalId, payload) {
+  const canal = canalId ? await client.channels.fetch(canalId).catch(() => null) : null;
   if (!canal) {
-    console.error(`Canal ${chave} (${canalId}) nao encontrado.`);
+    console.error(`Canal ${chave} (${canalId}) nao encontrado no servidor ${gid}.`);
     return;
   }
-  const salvo = store.paineisFixos[chave];
+  const pf = store.guilds[gid].paineisFixos;
+  const salvo = pf[chave];
   if (salvo) {
     const msg = await canal.messages.fetch(salvo).catch(() => null);
     if (msg) {
@@ -718,13 +769,21 @@ async function publicarOuAtualizarPainel(chave, canalId, payload) {
     }
   }
   const enviada = await canal.send(payload);
-  store.paineisFixos[chave] = enviada.id;
+  pf[chave] = enviada.id;
   salvarStore();
   return enviada;
 }
 
 async function atualizarPainelCupons() {
-  await publicarOuAtualizarPainel("cupons", CANAIS.cupons, payloadPainelCupons());
+  for (const gid of GUILD_IDS) {
+    await publicarOuAtualizarPainel(gid, "cupons", guildCfg(gid).canais.cupons, payloadPainelCupons()).catch(() => {});
+  }
+}
+
+async function atualizarPaineisTicket() {
+  for (const gid of GUILD_IDS) {
+    await publicarOuAtualizarPainel(gid, "ticket", guildCfg(gid).canais.ticket, payloadPainelTicket()).catch(() => {});
+  }
 }
 
 async function responderMesmaMensagem(interaction, payload) {
@@ -850,10 +909,10 @@ async function aplicarSnapshotCanais(guild, snapshot) {
 }
 
 async function publicarCanaisFixos() {
-  const loja = await client.channels.fetch(CANAIS.loja).catch(() => null);
-  if (loja) await publicarLojaFixa(loja);
-  else console.error("Canal da lojinha nao encontrado.");
-  await publicarOuAtualizarPainel("ticket", CANAIS.ticket, payloadPainelTicket());
+  for (const gid of GUILD_IDS) {
+    await publicarLojaFixa(gid).catch(err => console.error(`Loja (${gid}):`, err.message));
+  }
+  await atualizarPaineisTicket();
   await atualizarPainelCupons();
 }
 
@@ -1012,8 +1071,9 @@ async function consultarPagamento(paymentId) {
 }
 
 async function canalAdmin(guild) {
-  if (ADMIN_CHANNEL_ID) {
-    const canal = await guild.channels.fetch(ADMIN_CHANNEL_ID).catch(() => null);
+  const adminChannelId = guildCfg(guild.id).adminChannelId;
+  if (adminChannelId) {
+    const canal = await guild.channels.fetch(adminChannelId).catch(() => null);
     if (canal) return canal;
   }
   return guild.channels.cache.find(c => c.name === "pedidos-admin" && c.type === ChannelType.GuildText) || null;
@@ -1021,11 +1081,13 @@ async function canalAdmin(guild) {
 
 function canalEhLoja(canal) {
   if (!canal) return false;
-  return canal.id === CANAIS.loja || canal.id === store.config.lojaChannelId || canal.id === store.lojaFixa.channelId;
+  return Object.values(GUILDS).some(g => g.canais.loja === canal.id) ||
+    Object.values(store.guilds).some(st => st.lojaFixa.channelId === canal.id);
 }
 
 async function notificarAdmin(pedido, extra) {
-  const guild = await client.guilds.fetch(GUILD_ID).catch(() => null);
+  const gid = pedido.guildId || GUILD_ID;
+  const guild = await client.guilds.fetch(gid).catch(() => null);
   if (!guild) return;
   const canal = await canalAdmin(guild);
   if (!canal) {
@@ -1043,7 +1105,7 @@ async function notificarAdmin(pedido, extra) {
   }
 
   const payload = {
-    content: ADMIN_ROLE_ID && pedido.status === STATUS.AGUARDANDO_ENTREGA ? `<@&${ADMIN_ROLE_ID}>` : null,
+    content: guildCfg(gid).adminRoleId && pedido.status === STATUS.AGUARDANDO_ENTREGA ? `<@&${guildCfg(gid).adminRoleId}>` : null,
     embeds: [embed],
     components: pedido.status === STATUS.AGUARDANDO_ENTREGA ? botoesAdmin(pedido.id) : []
   };
@@ -1103,8 +1165,9 @@ async function registrarFeedback(pedido, nota, comentario) {
   pedido.feedback = { nota, comentario: comentario || "", em: Date.now() };
   salvarStore();
 
-  if (store.config.feedbackChannelId) {
-    const canal = await client.channels.fetch(store.config.feedbackChannelId).catch(() => null);
+  const feedbackChannelId = guildCfg(pedido.guildId).canais.feedbacks;
+  if (feedbackChannelId) {
+    const canal = await client.channels.fetch(feedbackChannelId).catch(() => null);
     if (canal) {
       await canal.send({ embeds: [embedFeedback(pedido, nota, comentario)] }).catch(() => {});
     }
@@ -1117,7 +1180,7 @@ async function registrarFeedback(pedido, nota, comentario) {
 
 async function concederCargo(pedido, produto) {
   if (!produto || !produto.cargoId || !produto.cargoDias) return;
-  const guild = await client.guilds.fetch(GUILD_ID).catch(() => null);
+  const guild = await client.guilds.fetch(pedido.guildId || GUILD_ID).catch(() => null);
   if (!guild) return;
   const membro = await guild.members.fetch(pedido.userId).catch(() => null);
   if (!membro) {
@@ -1137,7 +1200,8 @@ async function concederCargo(pedido, produto) {
     userId: pedido.userId,
     roleId: produto.cargoId,
     expiraEm,
-    pedidoId: pedido.id
+    pedidoId: pedido.id,
+    guildId: pedido.guildId || GUILD_ID
   });
   salvarStore();
   registrarLog("cargo_concedido", `Cargo <@&${produto.cargoId}> para <@${pedido.userId}> por ${produto.cargoDias} dia(s).`, {
@@ -1153,9 +1217,9 @@ async function removerCargosExpirados() {
   store.cargosTemporarios = store.cargosTemporarios.filter(c => c.expiraEm > agora);
   salvarStore();
 
-  const guild = await client.guilds.fetch(GUILD_ID).catch(() => null);
-  if (!guild) return;
   for (const item of expirados) {
+    const guild = await client.guilds.fetch(item.guildId || GUILD_ID).catch(() => null);
+    if (!guild) continue;
     const membro = await guild.members.fetch(item.userId).catch(() => null);
     if (membro) await membro.roles.remove(item.roleId).catch(() => {});
     registrarLog("cargo_removido", `Cargo <@&${item.roleId}> removido de <@${item.userId}>.`, {
@@ -1393,6 +1457,7 @@ async function criarPedido(interaction, produtoId, cupomCodigo) {
   const id = proximoPedidoId();
   const pedido = {
     id,
+    guildId: interaction.guildId || GUILD_ID,
     userId: interaction.user.id,
     produtoId: produto.id,
     produtoNome: produto.nome,
@@ -1460,7 +1525,7 @@ async function criarPedido(interaction, produtoId, cupomCodigo) {
     const serverMsg = await carrinho.send({
       content: `${interaction.user} seu carrinho:`,
       embeds: [embedCarrinho],
-      components: [...botoesPix(pedido.id), botoesEntrega(pedido.id)],
+      components: [...botoesPix(pedido.id, undefined, pedido.guildId), botoesEntrega(pedido.id)],
       files: pixFile()
     });
     pedido.cartServerMessageId = serverMsg.id;
@@ -1468,7 +1533,7 @@ async function criarPedido(interaction, produtoId, cupomCodigo) {
     console.error("Falha ao abrir canal de carrinho no servidor:", error.message);
   }
 
-  const componentes = [...botoesPix(pedido.id, pedido.cartChannelId), botoesEntrega(pedido.id)];
+  const componentes = [...botoesPix(pedido.id, pedido.cartChannelId, pedido.guildId), botoesEntrega(pedido.id)];
 
   await interaction.editReply({
     content:
@@ -1569,7 +1634,8 @@ async function overwritesPrivado(guild, userId) {
 }
 
 async function abrirCarrinho(guild, user, pedido) {
-  const aberto = Object.entries(store.carrinhos).find(([, c]) => c.userId === user.id && c.status === "aberto");
+  const aberto = Object.entries(store.carrinhos).find(([, c]) =>
+    c.userId === user.id && c.status === "aberto" && (c.guildId || GUILD_ID) === guild.id);
   if (aberto) {
     const existente = guild.channels.cache.get(aberto[0]) || await guild.channels.fetch(aberto[0]).catch(() => null);
     if (existente) {
@@ -1590,7 +1656,8 @@ async function abrirCarrinho(guild, user, pedido) {
     userId: user.id,
     pedidoId: pedido.id,
     abertoEm: Date.now(),
-    status: "aberto"
+    status: "aberto",
+    guildId: guild.id
   };
   salvarStore();
 
@@ -1651,14 +1718,15 @@ async function fecharCarrinho(interaction, canalId) {
 async function abrirTicket(guild, user, assunto) {
   const base = `ticket-${user.username}`.toLowerCase().replace(/[^a-z0-9-]/g, "").slice(0, 80) || `ticket-${user.id}`;
   const overwrites = await overwritesPrivado(guild, user.id);
-  if (ADMIN_ROLE_ID) {
+  const adminRoleId = guildCfg(guild.id).adminRoleId;
+  if (adminRoleId) {
     overwrites.push({
-      id: ADMIN_ROLE_ID,
+      id: adminRoleId,
       allow: [PermissionFlagsBits.ViewChannel, PermissionFlagsBits.SendMessages, PermissionFlagsBits.ReadMessageHistory]
     });
   }
 
-  let parent = store.config.ticketCategoryId || undefined;
+  let parent = (store.guilds[guild.id] && store.guilds[guild.id].ticketCategoryId) || undefined;
   if (parent) {
     const cat = await guild.channels.fetch(parent).catch(() => null);
     if (cat) parent = cat.id;
@@ -1686,7 +1754,7 @@ async function abrirTicket(guild, user, assunto) {
   );
 
   await canal.send({
-    content: ADMIN_ROLE_ID ? `<@${user.id}> <@&${ADMIN_ROLE_ID}>` : `<@${user.id}>`,
+    content: adminRoleId ? `<@${user.id}> <@&${adminRoleId}>` : `<@${user.id}>`,
     embeds: [embed],
     components: [row]
   });
@@ -1880,7 +1948,7 @@ async function handleCupom(interaction) {
 
   if (sub === "publicar") {
     await atualizarPainelCupons().catch(() => {});
-    await interaction.reply({ content: `Painel de cupons publicado em <#${CANAIS.cupons}>.`, ephemeral: true });
+    await interaction.reply({ content: `Painel de cupons publicado em <#${guildCfg(interaction.guildId).canais.cupons}>.`, ephemeral: true });
   }
 }
 
@@ -2083,24 +2151,26 @@ async function handleGerenciar(interaction) {
   await enviarPainelProduto(interaction, produto);
 }
 
-function resumoConfig() {
+function resumoConfig(gid = GUILD_ID) {
+  const st = store.guilds[gid] || store.guilds[GUILD_ID];
+  const c = guildCfg(gid).canais;
   return (
-    `Canal de logs: ${store.config.logChannelId ? `<#${store.config.logChannelId}>` : "nao definido"}\n` +
-    `Canal de feedbacks: ${store.config.feedbackChannelId ? `<#${store.config.feedbackChannelId}>` : "nao definido"}\n` +
-    `Categoria de tickets: ${store.config.ticketCategoryId ? `<#${store.config.ticketCategoryId}>` : "nao definida"}\n` +
-    `Loja fixa: ${store.lojaFixa.channelId ? `<#${store.lojaFixa.channelId}>` : "nao publicada"}\n` +
+    `Canal de logs: ${c.logs ? `<#${c.logs}>` : "nao definido"}\n` +
+    `Canal de feedbacks: ${c.feedbacks ? `<#${c.feedbacks}>` : "nao definido"}\n` +
+    `Categoria de tickets: ${st.ticketCategoryId ? `<#${st.ticketCategoryId}>` : "nao definida"}\n` +
+    `Loja fixa: ${st.lojaFixa.channelId ? `<#${st.lojaFixa.channelId}>` : "nao publicada"}\n` +
     `Banner da loja: ${urlMidiaValida(store.config.banner) ? `definido (${store.config.bannerPosicao || "top"})` : "nao definido"}\n` +
     `Nome PIX publico: **${pixNomePublico()}** (ocultar nome completo: ${store.config.ocultarNomePix !== false ? "sim" : "nao"})\n` +
     `SMTP: ${store.config.smtpHost ? `**${store.config.smtpHost}** porta ${store.config.smtpPort || 587}` : "nao configurado"}`
   );
 }
 
-function payloadPainelConfig() {
+function payloadPainelConfig(gid = GUILD_ID) {
   const cfg = ticketPainel();
   const embed = new EmbedBuilder()
     .setTitle("Configuracao da loja")
     .setDescription(
-      resumoConfig() +
+      resumoConfig(gid) +
       `\n\n**Painel de ticket**\nTitulo: ${cfg.titulo}\nBotao: ${cfg.botaoLabel}` +
       "\n\nUse os botoes abaixo. Tudo e salvo na hora."
     )
@@ -2265,7 +2335,7 @@ async function enviarPainelEphemeral(interaction, payload) {
 }
 
 async function enviarPainelConfig(interaction) {
-  const payload = { ...payloadPainelConfig(), ephemeral: true };
+  const payload = { ...payloadPainelConfig(interaction.guildId), ephemeral: true };
   if (interaction.replied || interaction.deferred) {
     await interaction.editReply(payload);
     return;
@@ -2290,11 +2360,13 @@ async function handleConfig(interaction) {
   const sub = interaction.options.getSubcommand();
 
   if (sub === "ver") {
+    const stv = store.guilds[interaction.guildId] || store.guilds[GUILD_ID];
+    const cv = guildCfg(interaction.guildId).canais;
     const desc =
-      `Canal de logs: ${store.config.logChannelId ? `<#${store.config.logChannelId}>` : "nao definido"}\n` +
-      `Canal de feedbacks: ${store.config.feedbackChannelId ? `<#${store.config.feedbackChannelId}>` : "nao definido"}\n` +
-      `Categoria de tickets: ${store.config.ticketCategoryId ? `<#${store.config.ticketCategoryId}>` : "nao definida"}\n` +
-      `Loja fixa: ${store.lojaFixa.channelId ? `<#${store.lojaFixa.channelId}>` : "nao publicada"}\n` +
+      `Canal de logs: ${cv.logs ? `<#${cv.logs}>` : "nao definido"}\n` +
+      `Canal de feedbacks: ${cv.feedbacks ? `<#${cv.feedbacks}>` : "nao definido"}\n` +
+      `Categoria de tickets: ${stv.ticketCategoryId ? `<#${stv.ticketCategoryId}>` : "nao definida"}\n` +
+      `Loja fixa: ${stv.lojaFixa.channelId ? `<#${stv.lojaFixa.channelId}>` : "nao publicada"}\n` +
       `Banner da loja: ${urlMidiaValida(store.config.banner) ? `definido (${store.config.bannerPosicao || "top"})` : "nao definido"}\n` +
       `Nome PIX publico: **${pixNomePublico()}** (ocultar nome completo: ${store.config.ocultarNomePix !== false ? "sim" : "nao"})\n` +
       `SMTP: ${store.config.smtpHost ? store.config.smtpHost : "nao configurado"}\n` +
@@ -2308,30 +2380,26 @@ async function handleConfig(interaction) {
   }
 
   if (sub === "canal-logs") {
-    store.config.logChannelId = CANAIS.logs;
-    salvarStore();
-    await interaction.reply({ content: `Logs ficam em <#${CANAIS.logs}>.`, ephemeral: true });
+    await interaction.reply({ content: `Logs ficam em <#${guildCfg(interaction.guildId).canais.logs}>.`, ephemeral: true });
     return;
   }
 
   if (sub === "canal-feedback") {
-    store.config.feedbackChannelId = CANAIS.feedbacks;
-    salvarStore();
-    await interaction.reply({ content: `Feedbacks ficam em <#${CANAIS.feedbacks}>.`, ephemeral: true });
+    await interaction.reply({ content: `Feedbacks ficam em <#${guildCfg(interaction.guildId).canais.feedbacks}>.`, ephemeral: true });
     return;
   }
 
   if (sub === "categoria-ticket") {
     const categoria = interaction.options.getChannel("categoria", true);
-    store.config.ticketCategoryId = categoria.id;
+    store.guilds[interaction.guildId].ticketCategoryId = categoria.id;
     salvarStore();
-    await interaction.reply({ content: `Categoria de tickets definida em <#${store.config.ticketCategoryId}>.`, ephemeral: true });
+    await interaction.reply({ content: `Categoria de tickets definida em <#${categoria.id}>.`, ephemeral: true });
     return;
   }
 
   if (sub === "canal-loja") {
-    await publicarLojaFixa();
-    await interaction.reply({ content: `✅ Loja fixa publicada em <#${CANAIS.loja}>.`, ephemeral: true });
+    await publicarLojaFixa(interaction.guildId);
+    await interaction.reply({ content: `✅ Loja fixa publicada em <#${guildCfg(interaction.guildId).canais.loja}>.`, ephemeral: true });
     return;
   }
 
@@ -2566,8 +2634,8 @@ async function handleAvaliacoes(interaction) {
 
 async function handlePainelTicket(interaction) {
   await interaction.deferReply({ ephemeral: true });
-  await publicarOuAtualizarPainel("ticket", CANAIS.ticket, payloadPainelTicket());
-  await interaction.editReply({ content: `Painel de tickets publicado em <#${CANAIS.ticket}>.` });
+  await atualizarPaineisTicket();
+  await interaction.editReply({ content: `Painel de tickets publicado em <#${guildCfg(interaction.guildId).canais.ticket}>.` });
 }
 
 async function handleTicket(interaction) {
@@ -2898,16 +2966,18 @@ async function diagnosticoInicial() {
       console.error("O bot NAO esta em nenhum servidor. Convide ele primeiro.");
     }
     for (const g of guilds.json) {
-      const marca = g.id === GUILD_ID ? "  <== GUILD_ID configurado" : "";
+      const marca = guildPermitida(g.id) ? "  <== servidor autorizado" : "  (NAO autorizado: o bot vai sair)";
       console.log(`Servidor: ${g.name} (id ${g.id})${marca}`);
     }
-    if (GUILD_ID && !guilds.json.some(g => g.id === GUILD_ID)) {
-      console.error(
-        `PROBLEMA: o bot nao esta no servidor GUILD_ID=${GUILD_ID}. ` +
-        "Confirme o id do servidor e reconvide com o escopo applications.commands."
-      );
-    } else if (GUILD_ID) {
-      console.log("OK: o bot esta no servidor configurado.");
+    for (const gid of GUILD_IDS) {
+      if (!guilds.json.some(g => g.id === gid)) {
+        console.error(
+          `PROBLEMA: o bot nao esta no servidor ${gid}. ` +
+          "Confirme o id do servidor e reconvide com o escopo applications.commands."
+        );
+      } else {
+        console.log(`OK: o bot esta no servidor ${gid}.`);
+      }
     }
   } else {
     console.error("Nao consegui listar os servidores do bot.");
@@ -2920,18 +2990,17 @@ async function registerCommands() {
   // Registra a lista atual no servidor. Isso sobrescreve os comandos do servidor
   // a cada start, entao qualquer comando removido/renomeado some na hora.
   let registradoNoServidor = false;
-  try {
-    await rest.put(Routes.applicationGuildCommands(CLIENT_ID, GUILD_ID), { body: commands });
-    console.log(`Comandos slash registrados no servidor (${commands.length}).`);
-    registradoNoServidor = true;
-  } catch (error) {
-    if (error.code === 50001 || error.status === 403) {
-      console.error(
-        "Missing Access ao registrar no servidor. Veja o diagnostico acima. " +
-        "Vou tentar registrar os comandos globais como fallback."
-      );
-    } else {
-      console.error("Erro ao registrar no servidor:", error.message);
+  for (const gid of GUILD_IDS) {
+    try {
+      await rest.put(Routes.applicationGuildCommands(CLIENT_ID, gid), { body: commands });
+      console.log(`Comandos slash registrados no servidor ${gid} (${commands.length}).`);
+      registradoNoServidor = true;
+    } catch (error) {
+      if (error.code === 50001 || error.status === 403) {
+        console.error(`Missing Access ao registrar no servidor ${gid}. Veja o diagnostico acima.`);
+      } else {
+        console.error(`Erro ao registrar no servidor ${gid}:`, error.message);
+      }
     }
   }
 
@@ -2960,15 +3029,15 @@ async function handleCommand(interaction) {
   switch (interaction.commandName) {
     case "loja":
       if (isStaff(interaction.member)) {
-        await publicarLojaFixa();
-        await interaction.reply({ content: `Loja fixa publicada em <#${CANAIS.loja}>.`, ephemeral: true });
+        await publicarLojaFixa(interaction.guildId);
+        await interaction.reply({ content: `Loja fixa publicada em <#${guildCfg(interaction.guildId).canais.loja}>.`, ephemeral: true });
       } else {
-        await interaction.reply({ content: `A loja fica em <#${CANAIS.loja}>.`, ephemeral: true });
+        await interaction.reply({ content: `A loja fica em <#${guildCfg(interaction.guildId).canais.loja}>.`, ephemeral: true });
       }
       return;
     case "catalogo":
-      await publicarLojaFixa();
-      await interaction.reply({ content: `Loja fixa publicada em <#${CANAIS.loja}>.`, ephemeral: true });
+      await publicarLojaFixa(interaction.guildId);
+      await interaction.reply({ content: `Loja fixa publicada em <#${guildCfg(interaction.guildId).canais.loja}>.`, ephemeral: true });
       return;
     case "meuspedidos": {
       const meus = Object.values(store.pedidos)
@@ -3001,8 +3070,8 @@ async function handleCommand(interaction) {
       await interaction.reply({
         embeds: [embedPedidoCliente(pedido)],
         components: pedido.pixCopiaECola && pedido.status === STATUS.AGUARDANDO_PAGAMENTO
-          ? botoesPix(pedido.id, pedido.cartChannelId)
-          : botaoIrCarrinho(pedido.cartChannelId),
+          ? botoesPix(pedido.id, pedido.cartChannelId, pedido.guildId)
+          : botaoIrCarrinho(pedido.cartChannelId, pedido.guildId),
         ephemeral: true
       });
       return;
@@ -3506,8 +3575,8 @@ async function handleButton(interaction) {
       return;
     }
     await interaction.deferUpdate();
-    await publicarLojaFixa();
-    await interaction.editReply(payloadPainelConfig());
+    await publicarLojaFixa(interaction.guildId);
+    await interaction.editReply(payloadPainelConfig(interaction.guildId));
     return;
   }
 
@@ -3551,8 +3620,8 @@ async function handleButton(interaction) {
       return;
     }
     await interaction.deferUpdate();
-    await publicarOuAtualizarPainel("ticket", CANAIS.ticket, payloadPainelTicket());
-    await interaction.editReply(payloadPainelConfig());
+    await atualizarPaineisTicket();
+    await interaction.editReply(payloadPainelConfig(interaction.guildId));
     return;
   }
 
@@ -3570,7 +3639,7 @@ async function handleButton(interaction) {
       await interaction.reply({ content: "So a staff pode usar o painel.", ephemeral: true });
       return;
     }
-    await enviarPainelEphemeral(interaction, payloadPainelConfig());
+    await enviarPainelEphemeral(interaction, payloadPainelConfig(interaction.guildId));
     return;
   }
 
@@ -3634,7 +3703,7 @@ async function handleButton(interaction) {
       return;
     }
     await atualizarPainelCupons().catch(() => {});
-    await interaction.reply({ content: `Painel de cupons publicado em <#${CANAIS.cupons}>.`, ephemeral: true });
+    await interaction.reply({ content: `Painel de cupons publicado em <#${guildCfg(interaction.guildId).canais.cupons}>.`, ephemeral: true });
     return;
   }
 
@@ -3843,7 +3912,7 @@ async function handleSelect(interaction) {
       await interaction.reply({ content: "So a staff pode configurar.", ephemeral: true });
       return;
     }
-    store.config.ticketCategoryId = valor;
+    store.guilds[interaction.guildId].ticketCategoryId = valor;
     salvarStore();
     await enviarPainelConfig(interaction);
     return;
@@ -4146,8 +4215,8 @@ async function handleModal(interaction) {
     store.config.ticketPainel.cor = (interaction.fields.getTextInputValue("cor") || "5865F2").trim().replace(/^#/, "");
     store.config.ticketPainel.botaoEmoji = (interaction.fields.getTextInputValue("emoji") || "").trim() || null;
     salvarStore();
-    await publicarOuAtualizarPainel("ticket", CANAIS.ticket, payloadPainelTicket()).catch(() => {});
-    await interaction.reply({ ...payloadPainelConfig(), ephemeral: true });
+    await atualizarPaineisTicket().catch(() => {});
+    await interaction.reply({ ...payloadPainelConfig(interaction.guildId), ephemeral: true });
     return;
   }
 
@@ -4171,8 +4240,8 @@ async function handleModal(interaction) {
     store.config.ticketPainel.banner = banner || null;
     store.config.ticketPainel.rodape = rodape || null;
     salvarStore();
-    await publicarOuAtualizarPainel("ticket", CANAIS.ticket, payloadPainelTicket()).catch(() => {});
-    await interaction.reply({ ...payloadPainelConfig(), ephemeral: true });
+    await atualizarPaineisTicket().catch(() => {});
+    await interaction.reply({ ...payloadPainelConfig(interaction.guildId), ephemeral: true });
     return;
   }
 
@@ -4191,7 +4260,7 @@ async function handleModal(interaction) {
     if (posicao) store.config.bannerPosicao = posicao;
     salvarStore();
     await atualizarLojaFixa().catch(error => console.error("Falha ao atualizar loja fixa:", error.message));
-    await interaction.reply({ ...payloadPainelConfig(), ephemeral: true });
+    await interaction.reply({ ...payloadPainelConfig(interaction.guildId), ephemeral: true });
     return;
   }
 
@@ -4206,7 +4275,7 @@ async function handleModal(interaction) {
     store.config.smtpPass = interaction.fields.getTextInputValue("senha") || "";
     store.config.smtpFrom = (interaction.fields.getTextInputValue("from") || "").trim();
     salvarStore();
-    await interaction.reply({ ...payloadPainelConfig(), ephemeral: true });
+    await interaction.reply({ ...payloadPainelConfig(interaction.guildId), ephemeral: true });
     return;
   }
 
@@ -4219,7 +4288,7 @@ async function handleModal(interaction) {
     const ocultar = (interaction.fields.getTextInputValue("ocultar") || "sim").trim().toLowerCase();
     store.config.ocultarNomePix = !["nao", "não", "no", "n", "false", "0"].includes(ocultar);
     salvarStore();
-    await interaction.reply({ ...payloadPainelConfig(), ephemeral: true });
+    await interaction.reply({ ...payloadPainelConfig(interaction.guildId), ephemeral: true });
     return;
   }
 
@@ -4396,7 +4465,20 @@ async function handleModal(interaction) {
     .catch(() => {});
 }
 
+client.on("guildCreate", async guild => {
+  if (!guildPermitida(guild.id)) {
+    console.warn(`Servidor nao autorizado: ${guild.name} (${guild.id}). Saindo.`);
+    await guild.leave().catch(() => {});
+  }
+});
+
 client.on("interactionCreate", async interaction => {
+  if (interaction.guildId && !guildPermitida(interaction.guildId)) {
+    if (typeof interaction.isRepliable === "function" && interaction.isRepliable()) {
+      await interaction.reply({ content: "Este bot nao esta autorizado neste servidor.", ephemeral: true }).catch(() => {});
+    }
+    return;
+  }
   try {
     if (interaction.isChatInputCommand()) {
       await handleCommand(interaction);
@@ -4504,6 +4586,13 @@ const server = http.createServer(async (req, res) => {
 client.once("ready", () => {
   console.log(`Bot conectado como ${client.user.tag}`);
 
+  for (const g of client.guilds.cache.values()) {
+    if (!guildPermitida(g.id)) {
+      console.warn(`Saindo do servidor nao autorizado: ${g.name} (${g.id}).`);
+      g.leave().catch(() => {});
+    }
+  }
+
   try {
     verificarPrazos();
   } catch (err) {
@@ -4548,7 +4637,7 @@ server.listen(PORT, "0.0.0.0", () => {
 });
 
 async function start() {
-  if (!TOKEN || !CLIENT_ID || !GUILD_ID) {
+  if (!TOKEN || !CLIENT_ID || !GUILD_IDS.length) {
     console.error("Faltam TOKEN, CLIENT_ID ou GUILD_ID.");
     return;
   }
