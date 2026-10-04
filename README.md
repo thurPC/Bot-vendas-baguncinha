@@ -37,6 +37,7 @@ Staff (exigem Gerenciar Servidor):
 - `/produto listar`
 - `/produto editar produto: modo: cargo: cargo-dias: preco: disponivel:`
 - `/configuracao loja` — painel unico (banner, SMTP, PIX, categoria de tickets, publicar loja)
+- `/gerenciar produto` — painel do produto (nome, preco, estoque, cargo, cupons, variante, apagar)
 - `/config ver`
 - `/config canal-logs canal:` / `/config canal-feedback canal:` / `/config categoria-ticket categoria:`
 - `/painel-ticket` — publica o painel de abertura de tickets

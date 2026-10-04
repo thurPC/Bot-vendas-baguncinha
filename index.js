@@ -15,7 +15,8 @@ const {
   ChannelType,
   AttachmentBuilder,
   StringSelectMenuBuilder,
-  ChannelSelectMenuBuilder
+  ChannelSelectMenuBuilder,
+  RoleSelectMenuBuilder
 } = require("discord.js");
 const http = require("http");
 const crypto = require("crypto");
@@ -173,6 +174,7 @@ if (!store.nextEstoqueItemId) store.nextEstoqueItemId = 1;
 if (!store.cargosTemporarios) store.cargosTemporarios = [];
 if (!store.logs) store.logs = [];
 if (!store.produtoOverrides) store.produtoOverrides = {};
+if (!store.produtos) store.produtos = {};
 if (!store.tickets) store.tickets = {};
 if (!store.carrinhos) store.carrinhos = {};
 if (!store.config || typeof store.config !== "object") store.config = {};
@@ -198,7 +200,11 @@ if (!store.categorias) {
   };
 }
 
-const escolhasProdutos = Object.values(PRODUTOS).map(p => ({ name: p.nome, value: p.id }));
+function escolhasProdutos() {
+  return todosProdutos()
+    .slice(0, 25)
+    .map(p => ({ name: String(p.nome).slice(0, 100), value: p.id }));
+}
 
 function formatarReais(centavos) {
   return (Number(centavos) / 100).toLocaleString("pt-BR", {
@@ -219,13 +225,29 @@ function proximoPedidoId() {
 }
 
 function getProduto(id) {
-  const base = PRODUTOS[id];
+  if (!id) return null;
+  const custom = (store.produtos || {})[id];
+  const base = PRODUTOS[id] || custom;
   if (!base) return null;
-  return { ...base, ...(store.produtoOverrides[id] || {}) };
+  const merged = { ...base, ...(store.produtoOverrides[id] || {}) };
+  if (merged.apagado) return null;
+  return merged;
 }
 
 function todosProdutos() {
-  return Object.keys(PRODUTOS).map(getProduto);
+  const ids = [...new Set([...Object.keys(PRODUTOS), ...Object.keys(store.produtos || {})])];
+  return ids.map(getProduto).filter(Boolean);
+}
+
+function parseCor(cor) {
+  const s = String(cor || "").trim().replace(/^#/, "");
+  if (!/^[0-9a-fA-F]{6}$/.test(s)) return null;
+  return Number.parseInt(s, 16);
+}
+
+function patchProduto(id, fields) {
+  store.produtoOverrides[id] = { ...(store.produtoOverrides[id] || {}), ...fields };
+  salvarStore();
 }
 
 function estoqueDe(produtoId) {
@@ -467,17 +489,20 @@ function catalogoEmbed(categoriaId) {
 
 function embedProdutoVitrine(produto) {
   const embed = new EmbedBuilder()
-    .setTitle(`${produto.emoji} ${produto.nome}`)
+    .setTitle(`${produto.emoji || ""} ${produto.nome}`.trim())
     .setDescription(`${produto.descricao}\n\n${precoVitrine(produto)}`)
-    .setColor(0x9b59b6);
+    .setColor(parseCor(produto.cor) || 0x9b59b6);
   aplicarBanner(embed, produto.banner, produto.bannerPosicao || "bottom", produto.imagem);
   if (produto.instrucoes) {
     embed.addFields({ name: "Instrucoes", value: String(produto.instrucoes).slice(0, 1024) });
   }
+  const rodape = [];
+  if (produto.rodape) rodape.push(String(produto.rodape).slice(0, 80));
   if (produto.modo === "auto") {
     const qtd = estoqueDe(produto.id).length;
-    embed.setFooter({ text: qtd > 0 ? `${qtd} em estoque` : "Esgotado" });
+    rodape.push(qtd > 0 ? `${qtd} em estoque` : "Esgotado");
   }
+  if (rodape.length) embed.setFooter({ text: rodape.join(" • ").slice(0, 2048) });
   return embed;
 }
 
@@ -1709,6 +1734,114 @@ async function handleProduto(interaction) {
   }
 }
 
+function embedPainelProduto(produto) {
+  const qtd = estoqueDe(produto.id).length;
+  return new EmbedBuilder()
+    .setTitle(`Gerenciar — ${produto.nome}`)
+    .setDescription(
+      `ID: \`${produto.id}\`\n` +
+      `${precoVitrine(produto)}\n` +
+      `Modo: **${produto.modo === "auto" ? "automatico" : "staff"}**\n` +
+      `Disponivel: **${produto.disponivel ? "sim" : "nao"}**\n` +
+      `Estoque: **${qtd}**\n` +
+      `Cargo: ${produto.cargoId ? `<@&${produto.cargoId}> ${produto.cargoDias || 0} dia(s)` : "nenhum"}\n` +
+      `Cor: ${produto.cor || "#9b59b6"}\n` +
+      `Botao config: **${produto.ocultarBotaoConfig ? "oculto" : "visivel"}**`
+    )
+    .setColor(parseCor(produto.cor) || 0x9b59b6);
+}
+
+function payloadPainelProduto(produto, pagina = 1) {
+  const embed = embedPainelProduto(produto);
+  if (pagina === 2) {
+    return {
+      embeds: [embed],
+      components: [
+        new ActionRowBuilder().addComponents(
+          new ButtonBuilder().setCustomId(`gp_variante:${produto.id}`).setLabel("Criar variante").setStyle(ButtonStyle.Secondary),
+          new ButtonBuilder().setCustomId(`gp_ocultar:${produto.id}`).setLabel("Ocultar botao de configuracao").setStyle(ButtonStyle.Secondary),
+          new ButtonBuilder().setCustomId(`gp_apagar:${produto.id}`).setLabel("Apagar Produto").setStyle(ButtonStyle.Danger)
+        ),
+        new ActionRowBuilder().addComponents(
+          new ButtonBuilder().setCustomId(`gp_salvar:${produto.id}`).setLabel("Salvar Produto").setStyle(ButtonStyle.Success),
+          new ButtonBuilder().setCustomId(`gp_pagina:1:${produto.id}`).setLabel("Voltar").setStyle(ButtonStyle.Primary)
+        )
+      ]
+    };
+  }
+  return {
+    embeds: [embed],
+    components: [
+      new ActionRowBuilder().addComponents(
+        new ButtonBuilder().setCustomId(`gp_nome:${produto.id}`).setLabel("Alterar Nome").setStyle(ButtonStyle.Secondary),
+        new ButtonBuilder().setCustomId(`gp_desc:${produto.id}`).setLabel("Alterar Descricao").setStyle(ButtonStyle.Secondary),
+        new ButtonBuilder().setCustomId(`gp_preco:${produto.id}`).setLabel("Alterar Preco").setStyle(ButtonStyle.Secondary)
+      ),
+      new ActionRowBuilder().addComponents(
+        new ButtonBuilder().setCustomId(`gp_miniatura:${produto.id}`).setLabel("Alterar Miniatura").setStyle(ButtonStyle.Secondary),
+        new ButtonBuilder().setCustomId(`gp_banner:${produto.id}`).setLabel("Alterar Banner").setStyle(ButtonStyle.Secondary)
+      ),
+      new ActionRowBuilder().addComponents(
+        new ButtonBuilder().setCustomId(`addstock:${produto.id}`).setLabel("Adicionar Estoque").setStyle(ButtonStyle.Secondary),
+        new ButtonBuilder().setCustomId(`clearstock:${produto.id}`).setLabel("Limpar Estoque").setStyle(ButtonStyle.Secondary),
+        new ButtonBuilder().setCustomId(`gp_backup:${produto.id}`).setLabel("Backup Estoque").setStyle(ButtonStyle.Secondary)
+      ),
+      new ActionRowBuilder().addComponents(
+        new ButtonBuilder().setCustomId(`gp_rodape:${produto.id}`).setLabel("Editar Rodape").setStyle(ButtonStyle.Secondary),
+        new ButtonBuilder().setCustomId(`gp_cor:${produto.id}`).setLabel("Alterar Cor").setStyle(ButtonStyle.Secondary),
+        new ButtonBuilder().setCustomId(`gp_cargo:${produto.id}`).setLabel("Gerenciar Cargo").setStyle(ButtonStyle.Secondary)
+      ),
+      new ActionRowBuilder().addComponents(
+        new ButtonBuilder().setCustomId(`gp_cupons:${produto.id}`).setLabel("Gerenciar Cupons").setStyle(ButtonStyle.Secondary),
+        new ButtonBuilder().setCustomId(`gp_export:${produto.id}`).setLabel("Exportar Config").setStyle(ButtonStyle.Secondary),
+        new ButtonBuilder().setCustomId(`gp_import:${produto.id}`).setLabel("Importar Config").setStyle(ButtonStyle.Secondary),
+        new ButtonBuilder().setCustomId(`gp_pagina:2:${produto.id}`).setLabel("Mais opcoes").setStyle(ButtonStyle.Primary)
+      )
+    ]
+  };
+}
+
+async function enviarPainelProduto(interaction, produto, pagina = 1) {
+  const payload = { ...payloadPainelProduto(produto, pagina), ephemeral: true };
+  if (interaction.replied || interaction.deferred) {
+    await interaction.followUp(payload);
+    return;
+  }
+  if (interaction.isMessageComponent() && interaction.customId.startsWith("gp_")) {
+    await interaction.update({ embeds: payload.embeds, components: payload.components });
+    return;
+  }
+  if (interaction.isModalSubmit()) {
+    await interaction.reply(payload);
+    return;
+  }
+  await interaction.reply(payload);
+}
+
+function modalCampoProduto(customId, titulo, campoId, label, valor, style = TextInputStyle.Short, extra = {}) {
+  const modal = new ModalBuilder().setCustomId(customId).setTitle(titulo.slice(0, 45));
+  modal.addComponents(
+    new ActionRowBuilder().addComponents(
+      campoTexto(campoId, label, style, valor, extra)
+    )
+  );
+  return modal;
+}
+
+async function handleGerenciar(interaction) {
+  const sub = interaction.options.getSubcommand();
+  if (sub !== "produto") {
+    await interaction.reply({ content: "Use `/gerenciar produto`.", ephemeral: true });
+    return;
+  }
+  const produto = getProduto(interaction.options.getString("produto", true));
+  if (!produto) {
+    await interaction.reply({ content: "Produto nao encontrado.", ephemeral: true });
+    return;
+  }
+  await enviarPainelProduto(interaction, produto);
+}
+
 function resumoConfig() {
   return (
     `Canal de logs: ${store.config.logChannelId ? `<#${store.config.logChannelId}>` : "nao definido"}\n` +
@@ -2077,13 +2210,13 @@ const commands = [
     .setDefaultMemberPermissions(PermissionFlagsBits.ManageGuild)
     .addSubcommand(sub =>
       sub.setName("adicionar").setDescription("Adiciona itens ao estoque (um por linha).")
-        .addStringOption(o => o.setName("produto").setDescription("Produto").setRequired(true).addChoices(...escolhasProdutos))
+        .addStringOption(o => o.setName("produto").setDescription("Produto").setRequired(true).addChoices(...escolhasProdutos()))
         .addStringOption(o => o.setName("conteudo").setDescription("Segredo/codigo. Um item por linha.").setRequired(true))
     )
     .addSubcommand(sub => sub.setName("listar").setDescription("Mostra o estoque."))
     .addSubcommand(sub =>
       sub.setName("remover").setDescription("Remove um item pelo id.")
-        .addStringOption(o => o.setName("produto").setDescription("Produto").setRequired(true).addChoices(...escolhasProdutos))
+        .addStringOption(o => o.setName("produto").setDescription("Produto").setRequired(true).addChoices(...escolhasProdutos()))
         .addIntegerOption(o => o.setName("id").setDescription("Id do item").setRequired(true).setMinValue(1))
     ),
   new SlashCommandBuilder()
@@ -2114,7 +2247,7 @@ const commands = [
     .addSubcommand(sub => sub.setName("listar").setDescription("Lista os produtos."))
     .addSubcommand(sub =>
       sub.setName("editar").setDescription("Edita um produto.")
-        .addStringOption(o => o.setName("produto").setDescription("Produto").setRequired(true).addChoices(...escolhasProdutos))
+        .addStringOption(o => o.setName("produto").setDescription("Produto").setRequired(true).addChoices(...escolhasProdutos()))
         .addStringOption(o =>
           o.setName("modo").setDescription("Entrega automatica (se houver estoque) ou pela staff")
             .addChoices({ name: "Automatico", value: "auto" }, { name: "Staff", value: "semi" })
@@ -2197,6 +2330,14 @@ const commands = [
       sub.setName("loja").setDescription("Abre o painel: banner, SMTP, PIX, categoria de tickets e publicar loja.")
     ),
   new SlashCommandBuilder()
+    .setName("gerenciar")
+    .setDescription("Painel completo de produto (staff).")
+    .setDefaultMemberPermissions(PermissionFlagsBits.ManageGuild)
+    .addSubcommand(sub =>
+      sub.setName("produto").setDescription("Abre o painel: nome, preco, estoque, cargo, cupons, variante e mais.")
+        .addStringOption(o => o.setName("produto").setDescription("Produto").setRequired(true).addChoices(...escolhasProdutos()))
+    ),
+  new SlashCommandBuilder()
     .setName("categoria")
     .setDescription("Gerencia categorias da loja (staff).")
     .setDefaultMemberPermissions(PermissionFlagsBits.ManageGuild)
@@ -2221,7 +2362,7 @@ const commands = [
   new SlashCommandBuilder()
     .setName("avaliacoes")
     .setDescription("Mostra as avaliacoes de um produto.")
-    .addStringOption(o => o.setName("produto").setDescription("Produto").setRequired(true).addChoices(...escolhasProdutos)),
+    .addStringOption(o => o.setName("produto").setDescription("Produto").setRequired(true).addChoices(...escolhasProdutos())),
   new SlashCommandBuilder()
     .setName("painel-ticket")
     .setDescription("Publica o painel de abertura de tickets (staff).")
@@ -2409,6 +2550,9 @@ async function handleCommand(interaction) {
     case "configuracao":
       await handleConfiguracao(interaction);
       return;
+    case "gerenciar":
+      await handleGerenciar(interaction);
+      return;
     case "categoria":
       await handleCategoria(interaction);
       return;
@@ -2473,7 +2617,7 @@ async function handleButton(interaction) {
         .setStyle(esgotado ? ButtonStyle.Secondary : ButtonStyle.Success)
         .setDisabled(!produtoPodeComprar(produto))
     );
-    if (isStaff(interaction.member)) {
+    if (isStaff(interaction.member) && !produto.ocultarBotaoConfig) {
       row.addComponents(
         new ButtonBuilder()
           .setCustomId(`gear:${produto.id}`)
@@ -2495,23 +2639,7 @@ async function handleButton(interaction) {
       await interaction.reply({ content: "Produto nao encontrado.", ephemeral: true });
       return;
     }
-    const qtd = estoqueDe(produto.id).length;
-    const embed = new EmbedBuilder()
-      .setTitle(`Config — ${produto.nome}`)
-      .setDescription(
-        `${precoVitrine(produto)}\n` +
-        `Modo: **${produto.modo === "auto" ? "automatico" : "staff"}**\n` +
-        `Disponivel: **${produto.disponivel ? "sim" : "nao"}**\n` +
-        `Estoque: **${qtd}**`
-      )
-      .setColor(0x95a5a6);
-    const row = new ActionRowBuilder().addComponents(
-      new ButtonBuilder().setCustomId(`editprod:${produto.id}`).setLabel("Editar item").setStyle(ButtonStyle.Primary),
-      new ButtonBuilder().setCustomId(`editextra:${produto.id}`).setLabel("Banner / instrucoes").setStyle(ButtonStyle.Secondary),
-      new ButtonBuilder().setCustomId(`addstock:${produto.id}`).setLabel("Adicionar estoque").setStyle(ButtonStyle.Success),
-      new ButtonBuilder().setCustomId(`clearstock:${produto.id}`).setLabel("Limpar estoque").setStyle(ButtonStyle.Danger)
-    );
-    await interaction.reply({ embeds: [embed], components: [row], ephemeral: true });
+    await enviarPainelProduto(interaction, produto);
     return;
   }
 
@@ -2899,6 +3027,149 @@ async function handleButton(interaction) {
     return;
   }
 
+  if (acao.startsWith("gp_")) {
+    if (!isStaff(interaction.member)) {
+      await interaction.reply({ content: "So a staff pode configurar.", ephemeral: true });
+      return;
+    }
+    if (acao === "gp_pagina") {
+      const partes = interaction.customId.split(":");
+      const pagina = Number(partes[1]) === 2 ? 2 : 1;
+      const produto = getProduto(partes[2]);
+      if (!produto) {
+        await interaction.reply({ content: "Produto nao encontrado.", ephemeral: true });
+        return;
+      }
+      await enviarPainelProduto(interaction, produto, pagina);
+      return;
+    }
+    const produto = getProduto(valor);
+    if (!produto && acao !== "gp_import") {
+      await interaction.reply({ content: "Produto nao encontrado.", ephemeral: true });
+      return;
+    }
+
+    if (acao === "gp_nome") {
+      await interaction.showModal(modalCampoProduto(`gp_nome_modal:${valor}`, "Alterar nome", "nome", "Nome do produto", produto.nome, TextInputStyle.Short, { required: true, maxLength: 80 }));
+      return;
+    }
+    if (acao === "gp_desc") {
+      await interaction.showModal(modalCampoProduto(`gp_desc_modal:${valor}`, "Alterar descricao", "descricao", "Descricao", produto.descricao, TextInputStyle.Paragraph, { required: true, maxLength: 1000 }));
+      return;
+    }
+    if (acao === "gp_preco") {
+      const modal = new ModalBuilder().setCustomId(`gp_preco_modal:${valor}`).setTitle("Alterar preco");
+      modal.addComponents(
+        new ActionRowBuilder().addComponents(campoTexto("preco", "Preco atual (reais)", TextInputStyle.Short, (produto.precoCentavos / 100).toFixed(2), { required: true, maxLength: 12 })),
+        new ActionRowBuilder().addComponents(campoTexto("preco_original", "Preco riscado (0 = sem)", TextInputStyle.Short, ((produto.precoOriginalCentavos || 0) / 100).toFixed(2), { required: false, maxLength: 12 }))
+      );
+      await interaction.showModal(modal);
+      return;
+    }
+    if (acao === "gp_miniatura") {
+      await interaction.showModal(modalCampoProduto(`gp_miniatura_modal:${valor}`, "Alterar miniatura", "url", "URL da miniatura (vazio remove)", produto.imagem, TextInputStyle.Short, { required: false, maxLength: 400 }));
+      return;
+    }
+    if (acao === "gp_banner") {
+      const modal = new ModalBuilder().setCustomId(`gp_banner_modal:${valor}`).setTitle("Alterar banner");
+      modal.addComponents(
+        new ActionRowBuilder().addComponents(campoTexto("url", "URL do banner (vazio remove)", TextInputStyle.Short, produto.banner, { required: false, maxLength: 400 })),
+        new ActionRowBuilder().addComponents(campoTexto("posicao", "Posicao: top, bottom, thumbnail, float", TextInputStyle.Short, produto.bannerPosicao || "bottom", { required: false, maxLength: 20 }))
+      );
+      await interaction.showModal(modal);
+      return;
+    }
+    if (acao === "gp_backup") {
+      const fila = estoqueDe(valor);
+      const texto = fila.map(i => `#${i.id} ${i.conteudo}`).join("\n") || "(estoque vazio)";
+      await interaction.reply({
+        content: `Backup do estoque de **${produto.nome}** (${fila.length} item(ns)).`,
+        files: [new AttachmentBuilder(Buffer.from(texto, "utf8"), { name: `estoque-${valor}.txt` })],
+        ephemeral: true
+      });
+      return;
+    }
+    if (acao === "gp_rodape") {
+      await interaction.showModal(modalCampoProduto(`gp_rodape_modal:${valor}`, "Editar rodape", "rodape", "Texto do rodape", produto.rodape, TextInputStyle.Short, { required: false, maxLength: 80 }));
+      return;
+    }
+    if (acao === "gp_cor") {
+      await interaction.showModal(modalCampoProduto(`gp_cor_modal:${valor}`, "Alterar cor", "cor", "Cor hex (ex: 9b59b6)", produto.cor || "9b59b6", TextInputStyle.Short, { required: true, maxLength: 7 }));
+      return;
+    }
+    if (acao === "gp_cargo") {
+      await interaction.reply({
+        content: `Cargo atual: ${produto.cargoId ? `<@&${produto.cargoId}> por ${produto.cargoDias || 0} dia(s)` : "nenhum"}. Escolha o cargo:`,
+        components: [
+          new ActionRowBuilder().addComponents(
+            new RoleSelectMenuBuilder().setCustomId(`gp_cargo_sel:${valor}`).setPlaceholder("Cargo temporario")
+          )
+        ],
+        ephemeral: true
+      });
+      return;
+    }
+    if (acao === "gp_cupons") {
+      const modal = new ModalBuilder().setCustomId(`gp_cupom_modal:${valor}`).setTitle("Criar cupom");
+      modal.addComponents(
+        new ActionRowBuilder().addComponents(campoTexto("codigo", "Codigo", TextInputStyle.Short, "", { required: true, maxLength: 32 })),
+        new ActionRowBuilder().addComponents(campoTexto("tipo", "percent ou fixo", TextInputStyle.Short, "percent", { required: true, maxLength: 10 })),
+        new ActionRowBuilder().addComponents(campoTexto("valor", "Valor (% ou reais)", TextInputStyle.Short, "10", { required: true, maxLength: 10 })),
+        new ActionRowBuilder().addComponents(campoTexto("usos", "Usos (0 = ilimitado)", TextInputStyle.Short, "0", { required: false, maxLength: 6 })),
+        new ActionRowBuilder().addComponents(campoTexto("dias", "Validade em dias (0 = sem)", TextInputStyle.Short, "0", { required: false, maxLength: 4 }))
+      );
+      await interaction.showModal(modal);
+      return;
+    }
+    if (acao === "gp_export") {
+      const dados = {
+        produto,
+        override: store.produtoOverrides[valor] || {},
+        estoque: estoqueDe(valor).length
+      };
+      await interaction.reply({
+        content: `Exportacao de **${produto.nome}**.`,
+        files: [new AttachmentBuilder(Buffer.from(JSON.stringify(dados, null, 2), "utf8"), { name: `produto-${valor}.json` })],
+        ephemeral: true
+      });
+      return;
+    }
+    if (acao === "gp_import") {
+      await interaction.showModal(modalCampoProduto(`gp_import_modal:${valor}`, "Importar config", "json", "JSON do produto", "", TextInputStyle.Paragraph, { required: true, maxLength: 4000 }));
+      return;
+    }
+    if (acao === "gp_variante") {
+      const modal = new ModalBuilder().setCustomId(`gp_variante_modal:${valor}`).setTitle("Criar variante");
+      modal.addComponents(
+        new ActionRowBuilder().addComponents(campoTexto("id", "ID interno (ex: nitro_1m_promo)", TextInputStyle.Short, `${valor}_var`, { required: true, maxLength: 32 })),
+        new ActionRowBuilder().addComponents(campoTexto("nome", "Nome da variante", TextInputStyle.Short, `${produto.nome} variante`, { required: true, maxLength: 80 })),
+        new ActionRowBuilder().addComponents(campoTexto("preco", "Preco em reais", TextInputStyle.Short, (produto.precoCentavos / 100).toFixed(2), { required: true, maxLength: 12 }))
+      );
+      await interaction.showModal(modal);
+      return;
+    }
+    if (acao === "gp_ocultar") {
+      patchProduto(valor, { ocultarBotaoConfig: !produto.ocultarBotaoConfig });
+      await atualizarLojaFixa();
+      await enviarPainelProduto(interaction, getProduto(valor), 2);
+      return;
+    }
+    if (acao === "gp_apagar") {
+      patchProduto(valor, { apagado: true, disponivel: false });
+      await atualizarLojaFixa();
+      await interaction.update({ content: `Produto **${produto.nome}** apagado da vitrine.`, embeds: [], components: [] }).catch(async () => {
+        await interaction.reply({ content: `Produto **${produto.nome}** apagado da vitrine.`, ephemeral: true });
+      });
+      return;
+    }
+    if (acao === "gp_salvar") {
+      salvarStore();
+      await atualizarLojaFixa();
+      await interaction.reply({ content: `Produto **${produto.nome}** salvo e vitrine atualizada.`, ephemeral: true });
+      return;
+    }
+  }
+
   await interaction
     .reply({ content: "Esse botao ficou desatualizado. Use os comandos de novo.", ephemeral: true })
     .catch(() => {});
@@ -2933,6 +3204,26 @@ async function handleSelect(interaction) {
     store.config.ticketCategoryId = valor;
     salvarStore();
     await enviarPainelConfig(interaction);
+    return;
+  }
+
+  const [selAcao, selValor] = id.split(":");
+  if (selAcao === "gp_cargo_sel") {
+    if (!isStaff(interaction.member)) {
+      await interaction.reply({ content: "So a staff pode configurar.", ephemeral: true });
+      return;
+    }
+    const produto = getProduto(selValor);
+    if (!produto) {
+      await interaction.reply({ content: "Produto nao encontrado.", ephemeral: true });
+      return;
+    }
+    patchProduto(selValor, { cargoId: valor });
+    const modal = new ModalBuilder().setCustomId(`gp_cargo_modal:${selValor}`).setTitle("Duracao do cargo");
+    modal.addComponents(
+      new ActionRowBuilder().addComponents(campoTexto("dias", "Duracao em dias (0 = permanente)", TextInputStyle.Short, produto.cargoDias || 0, { required: true, maxLength: 4 }))
+    );
+    await interaction.showModal(modal);
   }
 }
 
@@ -3140,6 +3431,165 @@ async function handleModal(interaction) {
     return;
   }
 
+  if (acao.startsWith("gp_") && acao.endsWith("_modal")) {
+    if (!isStaff(interaction.member)) {
+      await interaction.reply({ content: "So a staff pode configurar.", ephemeral: true });
+      return;
+    }
+    const produto = getProduto(valor);
+    if (!produto && acao !== "gp_import_modal") {
+      await interaction.reply({ content: "Produto nao encontrado.", ephemeral: true });
+      return;
+    }
+
+    const recarregar = async () => {
+      await atualizarLojaFixa().catch(() => {});
+      const atual = getProduto(valor);
+      if (atual) await enviarPainelProduto(interaction, atual);
+      else await interaction.reply({ content: "Salvo.", ephemeral: true });
+    };
+
+    if (acao === "gp_nome_modal") {
+      patchProduto(valor, { nome: interaction.fields.getTextInputValue("nome").trim() });
+      await recarregar();
+      return;
+    }
+    if (acao === "gp_desc_modal") {
+      patchProduto(valor, { descricao: interaction.fields.getTextInputValue("descricao").trim() });
+      await recarregar();
+      return;
+    }
+    if (acao === "gp_preco_modal") {
+      const n = Number(interaction.fields.getTextInputValue("preco").replace(",", "."));
+      const o = Number((interaction.fields.getTextInputValue("preco_original") || "0").replace(",", "."));
+      if (!Number.isFinite(n) || n < 0 || !Number.isFinite(o) || o < 0) {
+        await interaction.reply({ content: "Preco invalido.", ephemeral: true });
+        return;
+      }
+      patchProduto(valor, { precoCentavos: Math.round(n * 100), precoOriginalCentavos: Math.round(o * 100) });
+      await recarregar();
+      return;
+    }
+    if (acao === "gp_miniatura_modal") {
+      const url = limparUrl(interaction.fields.getTextInputValue("url"));
+      if (url && !urlMidiaValida(url)) {
+        await interaction.reply({ content: "URL invalida.", ephemeral: true });
+        return;
+      }
+      patchProduto(valor, { imagem: url || null });
+      await recarregar();
+      return;
+    }
+    if (acao === "gp_banner_modal") {
+      const url = limparUrl(interaction.fields.getTextInputValue("url"));
+      if (url && !urlMidiaValida(url)) {
+        await interaction.reply({ content: "URL invalida.", ephemeral: true });
+        return;
+      }
+      patchProduto(valor, { banner: url || null, bannerPosicao: (interaction.fields.getTextInputValue("posicao") || "bottom").trim().toLowerCase() });
+      await recarregar();
+      return;
+    }
+    if (acao === "gp_rodape_modal") {
+      patchProduto(valor, { rodape: interaction.fields.getTextInputValue("rodape").trim() || null });
+      await recarregar();
+      return;
+    }
+    if (acao === "gp_cor_modal") {
+      const cor = interaction.fields.getTextInputValue("cor").trim();
+      if (!parseCor(cor)) {
+        await interaction.reply({ content: "Cor invalida. Use hex, ex: 9b59b6.", ephemeral: true });
+        return;
+      }
+      patchProduto(valor, { cor: cor.replace(/^#/, "") });
+      await recarregar();
+      return;
+    }
+    if (acao === "gp_cargo_modal") {
+      const dias = Number.parseInt(interaction.fields.getTextInputValue("dias") || "0", 10);
+      if (!Number.isFinite(dias) || dias < 0) {
+        await interaction.reply({ content: "Dias invalidos.", ephemeral: true });
+        return;
+      }
+      patchProduto(valor, { cargoDias: dias });
+      await recarregar();
+      return;
+    }
+    if (acao === "gp_cupom_modal") {
+      const codigo = interaction.fields.getTextInputValue("codigo").trim().toUpperCase();
+      const tipo = interaction.fields.getTextInputValue("tipo").trim().toLowerCase() === "fixo" ? "fixo" : "percent";
+      const valorCupom = Number(interaction.fields.getTextInputValue("valor").replace(",", "."));
+      const usos = Number.parseInt(interaction.fields.getTextInputValue("usos") || "0", 10) || 0;
+      const dias = Number.parseInt(interaction.fields.getTextInputValue("dias") || "0", 10) || 0;
+      if (!codigo || !Number.isFinite(valorCupom) || valorCupom <= 0) {
+        await interaction.reply({ content: "Cupom invalido.", ephemeral: true });
+        return;
+      }
+      store.cupons[codigo] = {
+        codigo,
+        tipo,
+        valor: tipo === "percent" ? valorCupom : Math.round(valorCupom * 100),
+        usosMax: Math.max(0, usos),
+        usos: 0,
+        minCentavos: 0,
+        expiraEm: dias > 0 ? Date.now() + dias * DIA_MS : null,
+        ativo: true,
+        criadoEm: Date.now(),
+        produtoId: valor
+      };
+      salvarStore();
+      await atualizarPainelCupons().catch(() => {});
+      await interaction.reply({ content: `Cupom **${codigo}** criado.`, ephemeral: true });
+      return;
+    }
+    if (acao === "gp_import_modal") {
+      let dados;
+      try {
+        dados = JSON.parse(interaction.fields.getTextInputValue("json"));
+      } catch {
+        await interaction.reply({ content: "JSON invalido.", ephemeral: true });
+        return;
+      }
+      const src = dados.override || dados.produto || dados;
+      if (!src || typeof src !== "object") {
+        await interaction.reply({ content: "JSON sem dados de produto.", ephemeral: true });
+        return;
+      }
+      const keep = ["nome", "descricao", "precoCentavos", "precoOriginalCentavos", "imagem", "banner", "bannerPosicao", "rodape", "cor", "cargoId", "cargoDias", "instrucoes", "emoji", "modo", "disponivel", "categoriaId"];
+      const patch = {};
+      for (const k of keep) {
+        if (src[k] !== undefined) patch[k] = src[k];
+      }
+      patchProduto(valor, patch);
+      await recarregar();
+      return;
+    }
+    if (acao === "gp_variante_modal") {
+      const id = interaction.fields.getTextInputValue("id").trim().toLowerCase().replace(/[^a-z0-9_-]/g, "").slice(0, 32);
+      const nome = interaction.fields.getTextInputValue("nome").trim();
+      const preco = Number(interaction.fields.getTextInputValue("preco").replace(",", "."));
+      if (!id || !nome || !Number.isFinite(preco) || preco < 0) {
+        await interaction.reply({ content: "Dados da variante invalidos.", ephemeral: true });
+        return;
+      }
+      if (getProduto(id)) {
+        await interaction.reply({ content: "Ja existe um produto com esse ID.", ephemeral: true });
+        return;
+      }
+      store.produtos[id] = {
+        ...produto,
+        id,
+        nome,
+        precoCentavos: Math.round(preco * 100),
+        varianteDe: valor
+      };
+      salvarStore();
+      await atualizarLojaFixa();
+      await interaction.reply({ content: `Variante **${nome}** (\`${id}\`) criada.`, ephemeral: true });
+      return;
+    }
+  }
+
   await interaction
     .reply({ content: "Esse formulario ficou desatualizado. Tente novamente.", ephemeral: interaction.inGuild() })
     .catch(() => {});
@@ -3151,7 +3601,7 @@ client.on("interactionCreate", async interaction => {
       await handleCommand(interaction);
       return;
     }
-    if (interaction.isStringSelectMenu() || interaction.isChannelSelectMenu()) {
+    if (interaction.isStringSelectMenu() || interaction.isChannelSelectMenu() || interaction.isRoleSelectMenu()) {
       await handleSelect(interaction);
       return;
     }
