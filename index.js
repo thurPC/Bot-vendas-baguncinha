@@ -198,6 +198,18 @@ if (store.config.smtpPass === undefined) store.config.smtpPass = null;
 if (store.config.smtpFrom === undefined) store.config.smtpFrom = null;
 if (!store.lojaFixa) store.lojaFixa = { channelId: null, messageId: null };
 if (!store.paineisFixos) store.paineisFixos = { ticket: null, cupons: null };
+if (!store.config.ticketPainel || typeof store.config.ticketPainel !== "object") store.config.ticketPainel = {};
+if (!store.config.ticketPainel.titulo) store.config.ticketPainel.titulo = "ATENDIMENTO AO CLIENTE";
+if (!store.config.ticketPainel.descricao) {
+  store.config.ticketPainel.descricao =
+    "Se voce estiver enfrentando algum problema ou precisar de ajuda com nossos servicos, abra um ticket. Nossa equipe responde o mais breve possivel.\n\n*(Podendo haver atrasos e lentidao no atendimento Sab/Dom)*";
+}
+if (!store.config.ticketPainel.botaoLabel) store.config.ticketPainel.botaoLabel = "Abrir ticket";
+if (store.config.ticketPainel.botaoEmoji === undefined) store.config.ticketPainel.botaoEmoji = "🎫";
+if (!store.config.ticketPainel.cor) store.config.ticketPainel.cor = "5865F2";
+if (store.config.ticketPainel.miniatura === undefined) store.config.ticketPainel.miniatura = null;
+if (store.config.ticketPainel.banner === undefined) store.config.ticketPainel.banner = null;
+if (store.config.ticketPainel.rodape === undefined) store.config.ticketPainel.rodape = null;
 if (!store.categorias) {
   store.categorias = {
     nitro: { id: "nitro", nome: "Nitro", emoji: "💎", descricao: "Discord Nitro", posicao: 0, ativo: true },
@@ -442,6 +454,10 @@ function isStaff(member) {
   return member.permissions.has(PermissionFlagsBits.ManageGuild);
 }
 
+function logCanalPublico(tipo) {
+  return tipo === "entregue";
+}
+
 function registrarLog(tipo, detalhe, dados = {}) {
   const entrada = {
     em: Date.now(),
@@ -454,7 +470,7 @@ function registrarLog(tipo, detalhe, dados = {}) {
   store.logs.push(entrada);
   if (store.logs.length > 2000) store.logs.splice(0, store.logs.length - 2000);
   salvarStore();
-  enviarLogCanal(entrada).catch(() => {});
+  if (logCanalPublico(tipo)) enviarLogCanal(entrada).catch(() => {});
 }
 
 function embedLog(entrada) {
@@ -628,20 +644,47 @@ async function publicarLojaFixa(canal) {
   return enviada;
 }
 
+function ticketPainel() {
+  return store.config.ticketPainel || {};
+}
+
 function payloadPainelTicket() {
+  const cfg = ticketPainel();
   const embed = new EmbedBuilder()
-    .setTitle("ATENDIMENTO AO CLIENTE")
-    .setDescription("Se você estiver enfrentando algum problema ou precisar de ajuda com nossos serviços, por favor, abra um ticket de suporte. Assim que recebermos seu ticket, nossa equipe de suporte entrará em contato com você para solucionar o problema o mais breve possível. Obrigado pela sua compreensão e cooperação.\n\n*(Podendo haver atrasos e lentidao no atendimento Sab/Dom)*")
-    .setColor(0x5865f2);
+    .setTitle(String(cfg.titulo || "ATENDIMENTO AO CLIENTE").slice(0, 256))
+    .setDescription(String(cfg.descricao || "Abra um ticket para falar com a equipe.").slice(0, 4096))
+    .setColor(parseCor(cfg.cor) || 0x5865f2);
+  if (urlMidiaValida(cfg.miniatura)) embed.setThumbnail(cfg.miniatura);
+  if (urlMidiaValida(cfg.banner)) embed.setImage(cfg.banner);
+  if (cfg.rodape) embed.setFooter({ text: String(cfg.rodape).slice(0, 2048) });
   const components = [];
   const sel = selectCategorias("ticket_cat");
   if (sel) components.push(sel);
-  components.push(
+  const botao = new ButtonBuilder()
+    .setCustomId("ticket_abrir")
+    .setLabel(String(cfg.botaoLabel || "Abrir ticket").slice(0, 80))
+    .setStyle(ButtonStyle.Secondary);
+  if (cfg.botaoEmoji) {
+    try { botao.setEmoji(cfg.botaoEmoji); } catch { /* emoji invalido */ }
+  }
+  components.push(new ActionRowBuilder().addComponents(botao));
+  return { embeds: [embed], components };
+}
+
+function modalMotivoTicket(categoriaId) {
+  const modal = new ModalBuilder()
+    .setCustomId(categoriaId ? `ticket_motivo_modal:${categoriaId}` : "ticket_motivo_modal")
+    .setTitle("Abrir ticket");
+  modal.addComponents(
     new ActionRowBuilder().addComponents(
-      new ButtonBuilder().setCustomId("ticket_abrir").setLabel("Abrir ticket").setEmoji("🎫").setStyle(ButtonStyle.Secondary)
+      campoTexto("motivo", "Qual o motivo do ticket?", TextInputStyle.Paragraph, "", {
+        required: true,
+        maxLength: 400,
+        placeholder: "Descreva o motivo com o maximo de detalhes"
+      })
     )
   );
-  return { embeds: [embed], components };
+  return modal;
 }
 
 function payloadPainelCupons() {
@@ -1635,8 +1678,8 @@ async function abrirTicket(guild, user, assunto) {
   const embed = new EmbedBuilder()
     .setTitle("Ticket aberto")
     .setDescription(`Ola <@${user.id}>, descreva sua duvida com o maximo de detalhes. A equipe respondera em breve.`)
-    .addFields({ name: "Assunto", value: assunto })
-    .setColor(0x5865f2);
+    .addFields({ name: "Motivo", value: String(assunto || "Atendimento").slice(0, 1024) })
+    .setColor(parseCor(ticketPainel().cor) || 0x5865f2);
 
   const row = new ActionRowBuilder().addComponents(
     new ButtonBuilder().setCustomId(`ticket_fechar:${canal.id}`).setLabel("Fechar ticket").setStyle(ButtonStyle.Danger)
@@ -2005,7 +2048,7 @@ async function enviarPainelProduto(interaction, produto, pagina = 1) {
     await interaction.followUp(payload);
     return;
   }
-  if (interaction.isMessageComponent() && interaction.customId.startsWith("gp_")) {
+  if (interaction.isMessageComponent() && (interaction.customId.startsWith("gp_") || interaction.customId === "hub_prod_sel")) {
     await interaction.update({ embeds: payload.embeds, components: payload.components });
     return;
   }
@@ -2053,19 +2096,29 @@ function resumoConfig() {
 }
 
 function payloadPainelConfig() {
+  const cfg = ticketPainel();
   const embed = new EmbedBuilder()
     .setTitle("Configuracao da loja")
-    .setDescription(resumoConfig() + "\n\nUse os botoes e o seletor abaixo. Tudo e salvo na hora.")
+    .setDescription(
+      resumoConfig() +
+      `\n\n**Painel de ticket**\nTitulo: ${cfg.titulo}\nBotao: ${cfg.botaoLabel}` +
+      "\n\nUse os botoes abaixo. Tudo e salvo na hora."
+    )
     .setColor(0x9b59b6);
 
   return {
     embeds: [embed],
     components: [
       new ActionRowBuilder().addComponents(
-        new ButtonBuilder().setCustomId("cfg_banner").setLabel("Banner").setStyle(ButtonStyle.Primary),
+        new ButtonBuilder().setCustomId("cfg_banner").setLabel("Banner loja").setStyle(ButtonStyle.Primary),
         new ButtonBuilder().setCustomId("cfg_smtp").setLabel("SMTP").setStyle(ButtonStyle.Primary),
         new ButtonBuilder().setCustomId("cfg_pix").setLabel("Nome PIX").setStyle(ButtonStyle.Primary),
         new ButtonBuilder().setCustomId("cfg_publicar").setLabel("Publicar loja").setStyle(ButtonStyle.Success)
+      ),
+      new ActionRowBuilder().addComponents(
+        new ButtonBuilder().setCustomId("cfg_ticket_painel").setLabel("Texto do ticket").setStyle(ButtonStyle.Secondary),
+        new ButtonBuilder().setCustomId("cfg_ticket_midia").setLabel("Midia do ticket").setStyle(ButtonStyle.Secondary),
+        new ButtonBuilder().setCustomId("cfg_ticket_publicar").setLabel("Publicar tickets").setStyle(ButtonStyle.Success)
       ),
       new ActionRowBuilder().addComponents(
         new ChannelSelectMenuBuilder()
@@ -2074,9 +2127,141 @@ function payloadPainelConfig() {
           .setMinValues(1)
           .setMaxValues(1)
           .addChannelTypes(ChannelType.GuildCategory)
+      ),
+      new ActionRowBuilder().addComponents(
+        new ButtonBuilder().setCustomId("hub_home").setLabel("Voltar ao painel").setStyle(ButtonStyle.Secondary)
       )
     ]
   };
+}
+
+function payloadPainelStaff() {
+  const embed = new EmbedBuilder()
+    .setTitle("Painel da staff")
+    .setDescription(
+      "Um comando so. Escolha o que gerenciar:\n" +
+      "**Loja** — banner, SMTP, PIX, publicar\n" +
+      "**Tickets** — texto, midia, publicar painel\n" +
+      "**Produto** — preco, estoque, cargo, cupons\n" +
+      "**Estoque / Cupons / Relatorio**"
+    )
+    .setColor(0x9b59b6);
+  return {
+    embeds: [embed],
+    components: [
+      new ActionRowBuilder().addComponents(
+        new ButtonBuilder().setCustomId("hub_loja").setLabel("Loja").setStyle(ButtonStyle.Primary),
+        new ButtonBuilder().setCustomId("hub_tickets").setLabel("Tickets").setStyle(ButtonStyle.Primary),
+        new ButtonBuilder().setCustomId("hub_produto").setLabel("Produto").setStyle(ButtonStyle.Primary)
+      ),
+      new ActionRowBuilder().addComponents(
+        new ButtonBuilder().setCustomId("hub_estoque").setLabel("Estoque").setStyle(ButtonStyle.Secondary),
+        new ButtonBuilder().setCustomId("hub_cupons").setLabel("Cupons").setStyle(ButtonStyle.Secondary),
+        new ButtonBuilder().setCustomId("hub_relatorio").setLabel("Relatorio").setStyle(ButtonStyle.Secondary)
+      )
+    ]
+  };
+}
+
+function selectHubProdutos(customId, placeholder) {
+  const opcoes = todosProdutos().slice(0, 25).map(p => ({
+    label: String(p.nome).slice(0, 100),
+    value: p.id,
+    description: `${formatarReais(p.precoCentavos)} · estoque ${estoqueDe(p.id).length}`.slice(0, 100)
+  }));
+  if (!opcoes.length) return null;
+  return new ActionRowBuilder().addComponents(
+    new StringSelectMenuBuilder().setCustomId(customId).setPlaceholder(placeholder).addOptions(opcoes)
+  );
+}
+
+function payloadHubProdutos() {
+  const sel = selectHubProdutos("hub_prod_sel", "Escolha o produto");
+  const embed = new EmbedBuilder()
+    .setTitle("Gerenciar produto")
+    .setDescription("Selecione um produto para abrir o painel completo.")
+    .setColor(0x9b59b6);
+  return { embeds: [embed], components: sel ? [sel, rowVoltarHub()] : [rowVoltarHub()] };
+}
+
+function payloadHubEstoque() {
+  const linhas = todosProdutos().map(p => {
+    const fila = estoqueDe(p.id);
+    const modo = p.modo === "auto" ? "automatica" : "staff";
+    return `${p.emoji || "•"} **${p.nome}** — ${fila.length} em estoque (entrega ${modo})`;
+  });
+  const sel = selectHubProdutos("hub_stock_sel", "Adicionar estoque neste produto");
+  const embed = new EmbedBuilder()
+    .setTitle("Estoque")
+    .setDescription((linhas.join("\n") || "Nenhum produto.").slice(0, 4000))
+    .setColor(0x3498db);
+  return { embeds: [embed], components: sel ? [sel, rowVoltarHub()] : [rowVoltarHub()] };
+}
+
+function payloadHubCupons() {
+  const cupons = Object.values(store.cupons);
+  const linhas = cupons.length
+    ? cupons.map(c => {
+      const desconto = c.tipo === "percent" ? `${c.valor}%` : formatarReais(c.valor);
+      const uso = `${c.usos}/${c.usosMax > 0 ? c.usosMax : "inf"}`;
+      const status = c.ativo ? "ativo" : "off";
+      return `\`${c.codigo}\` — ${desconto} — usos ${uso} — ${status}`;
+    })
+    : ["Nenhum cupom cadastrado."];
+  const embed = new EmbedBuilder()
+    .setTitle("Cupons")
+    .setDescription(linhas.join("\n").slice(0, 4000))
+    .setColor(0xe67e22);
+  return {
+    embeds: [embed],
+    components: [
+      new ActionRowBuilder().addComponents(
+        new ButtonBuilder().setCustomId("hub_cupom_criar").setLabel("Criar").setStyle(ButtonStyle.Success),
+        new ButtonBuilder().setCustomId("hub_cupom_remover").setLabel("Desativar").setStyle(ButtonStyle.Danger),
+        new ButtonBuilder().setCustomId("hub_cupom_publicar").setLabel("Publicar").setStyle(ButtonStyle.Primary)
+      ),
+      rowVoltarHub()
+    ]
+  };
+}
+
+function rowVoltarHub() {
+  return new ActionRowBuilder().addComponents(
+    new ButtonBuilder().setCustomId("hub_home").setLabel("Voltar ao painel").setStyle(ButtonStyle.Secondary)
+  );
+}
+
+function modalCupomCriar() {
+  const modal = new ModalBuilder().setCustomId("hub_cupom_criar_modal").setTitle("Criar cupom");
+  modal.addComponents(
+    new ActionRowBuilder().addComponents(campoTexto("codigo", "Codigo", TextInputStyle.Short, "", { required: true, maxLength: 32 })),
+    new ActionRowBuilder().addComponents(campoTexto("tipo", "Tipo: percent ou fixo", TextInputStyle.Short, "percent", { required: true, maxLength: 8 })),
+    new ActionRowBuilder().addComponents(campoTexto("valor", "Valor (% ou reais)", TextInputStyle.Short, "", { required: true, maxLength: 10 })),
+    new ActionRowBuilder().addComponents(campoTexto("usos", "Usos maximos (0 = ilimitado)", TextInputStyle.Short, "0", { required: false, maxLength: 6 })),
+    new ActionRowBuilder().addComponents(campoTexto("dias", "Validade em dias (0 = sem)", TextInputStyle.Short, "0", { required: false, maxLength: 4 }))
+  );
+  return modal;
+}
+
+function modalCupomRemover() {
+  const modal = new ModalBuilder().setCustomId("hub_cupom_remover_modal").setTitle("Desativar cupom");
+  modal.addComponents(
+    new ActionRowBuilder().addComponents(campoTexto("codigo", "Codigo do cupom", TextInputStyle.Short, "", { required: true, maxLength: 32 }))
+  );
+  return modal;
+}
+
+async function enviarPainelEphemeral(interaction, payload) {
+  const body = { ...payload, ephemeral: true };
+  if (interaction.isMessageComponent() && !interaction.replied && !interaction.deferred) {
+    await interaction.update({ embeds: body.embeds, components: body.components });
+    return;
+  }
+  if (interaction.replied || interaction.deferred) {
+    await interaction.editReply(body);
+    return;
+  }
+  await interaction.reply(body);
 }
 
 async function enviarPainelConfig(interaction) {
@@ -2394,18 +2579,18 @@ async function handleTicket(interaction) {
 
 async function handleLogs(interaction) {
   const quantidade = interaction.options.getInteger("quantidade") || 15;
-  const recentes = store.logs.slice(-quantidade).reverse();
-  if (!recentes.length) {
-    await interaction.reply({ content: "Nenhum log registrado ainda.", ephemeral: true });
+  const concluidas = store.logs.filter(e => e.tipo === "entregue").slice(-quantidade).reverse();
+  if (!concluidas.length) {
+    await interaction.reply({ content: "Nenhuma compra concluida ainda.", ephemeral: true });
     return;
   }
-  const linhas = recentes.map(e => {
+  const linhas = concluidas.map(e => {
     const hora = `<t:${Math.floor(e.em / 1000)}:t>`;
     const alvo = e.pedidoId ? ` · pedido #${e.pedidoId}` : e.userId ? ` · <@${e.userId}>` : "";
-    return `${hora} — ${LOG_LABEL[e.tipo] || e.tipo}${alvo}\n${e.detalhe}`;
+    return `${hora} — Compra concluida${alvo}\n${e.detalhe}`;
   });
   await interaction.reply({
-    embeds: [new EmbedBuilder().setTitle("📜 Logs recentes").setDescription(linhas.join("\n\n").slice(0, 4000)).setColor(0x95a5a6)],
+    embeds: [new EmbedBuilder().setTitle("Compras concluidas").setDescription(linhas.join("\n\n").slice(0, 4000)).setColor(0x57f287)],
     ephemeral: true
   });
 }
@@ -2645,6 +2830,10 @@ const commands = [
     .setDescription("Mostra as avaliacoes de um produto.")
     .addStringOption(o => o.setName("produto").setDescription("Produto").setRequired(true).addChoices(...escolhasProdutos())),
   new SlashCommandBuilder()
+    .setName("painel")
+    .setDescription("Painel unico da staff: loja, tickets, produto, estoque e cupons.")
+    .setDefaultMemberPermissions(PermissionFlagsBits.ManageGuild),
+  new SlashCommandBuilder()
     .setName("painel-ticket")
     .setDescription("Publica o painel de abertura de tickets (staff).")
     .setDefaultMemberPermissions(PermissionFlagsBits.ManageGuild),
@@ -2832,6 +3021,13 @@ async function handleCommand(interaction) {
       return;
     case "configuracao":
       await handleConfiguracao(interaction);
+      return;
+    case "painel":
+      if (!isStaff(interaction.member)) {
+        await interaction.reply({ content: "So a staff pode usar o painel.", ephemeral: true });
+        return;
+      }
+      await interaction.reply({ ...payloadPainelStaff(), ephemeral: true });
       return;
     case "gerenciar":
       await handleGerenciar(interaction);
@@ -3158,9 +3354,7 @@ async function handleButton(interaction) {
   }
 
   if (acao === "ticket_abrir") {
-    await interaction.deferReply({ ephemeral: true });
-    const canal = await abrirTicket(interaction.guild, interaction.user, "Atendimento");
-    await interaction.editReply(`✅ Ticket aberto em <#${canal.id}>.`);
+    await interaction.showModal(modalMotivoTicket());
     return;
   }
 
@@ -3314,6 +3508,133 @@ async function handleButton(interaction) {
     await interaction.deferUpdate();
     await publicarLojaFixa();
     await interaction.editReply(payloadPainelConfig());
+    return;
+  }
+
+  if (acao === "cfg_ticket_painel") {
+    if (!isStaff(interaction.member)) {
+      await interaction.reply({ content: "So a staff pode configurar.", ephemeral: true });
+      return;
+    }
+    const cfg = ticketPainel();
+    const modal = new ModalBuilder().setCustomId("cfg_ticket_texto_modal").setTitle("Personalizar ticket");
+    modal.addComponents(
+      new ActionRowBuilder().addComponents(campoTexto("titulo", "Titulo", TextInputStyle.Short, cfg.titulo, { required: true, maxLength: 256 })),
+      new ActionRowBuilder().addComponents(campoTexto("descricao", "Descricao", TextInputStyle.Paragraph, cfg.descricao, { required: true, maxLength: 1000 })),
+      new ActionRowBuilder().addComponents(campoTexto("botao", "Nome do botao", TextInputStyle.Short, cfg.botaoLabel, { required: true, maxLength: 80 })),
+      new ActionRowBuilder().addComponents(campoTexto("cor", "Cor hex (ex: 5865F2)", TextInputStyle.Short, cfg.cor || "5865F2", { required: false, maxLength: 7 })),
+      new ActionRowBuilder().addComponents(campoTexto("emoji", "Emoji do botao (vazio remove)", TextInputStyle.Short, cfg.botaoEmoji || "", { required: false, maxLength: 32 }))
+    );
+    await interaction.showModal(modal);
+    return;
+  }
+
+  if (acao === "cfg_ticket_midia") {
+    if (!isStaff(interaction.member)) {
+      await interaction.reply({ content: "So a staff pode configurar.", ephemeral: true });
+      return;
+    }
+    const cfg = ticketPainel();
+    const modal = new ModalBuilder().setCustomId("cfg_ticket_midia_modal").setTitle("Midia do ticket");
+    modal.addComponents(
+      new ActionRowBuilder().addComponents(campoTexto("miniatura", "URL da miniatura (vazio remove)", TextInputStyle.Short, cfg.miniatura, { required: false, maxLength: 400 })),
+      new ActionRowBuilder().addComponents(campoTexto("banner", "URL do banner (vazio remove)", TextInputStyle.Short, cfg.banner, { required: false, maxLength: 400 })),
+      new ActionRowBuilder().addComponents(campoTexto("rodape", "Rodape (vazio remove)", TextInputStyle.Short, cfg.rodape, { required: false, maxLength: 80 }))
+    );
+    await interaction.showModal(modal);
+    return;
+  }
+
+  if (acao === "cfg_ticket_publicar") {
+    if (!isStaff(interaction.member)) {
+      await interaction.reply({ content: "So a staff pode configurar.", ephemeral: true });
+      return;
+    }
+    await interaction.deferUpdate();
+    await publicarOuAtualizarPainel("ticket", CANAIS.ticket, payloadPainelTicket());
+    await interaction.editReply(payloadPainelConfig());
+    return;
+  }
+
+  if (acao === "hub_home") {
+    if (!isStaff(interaction.member)) {
+      await interaction.reply({ content: "So a staff pode usar o painel.", ephemeral: true });
+      return;
+    }
+    await enviarPainelEphemeral(interaction, payloadPainelStaff());
+    return;
+  }
+
+  if (acao === "hub_loja" || acao === "hub_tickets") {
+    if (!isStaff(interaction.member)) {
+      await interaction.reply({ content: "So a staff pode usar o painel.", ephemeral: true });
+      return;
+    }
+    await enviarPainelEphemeral(interaction, payloadPainelConfig());
+    return;
+  }
+
+  if (acao === "hub_produto") {
+    if (!isStaff(interaction.member)) {
+      await interaction.reply({ content: "So a staff pode usar o painel.", ephemeral: true });
+      return;
+    }
+    await enviarPainelEphemeral(interaction, payloadHubProdutos());
+    return;
+  }
+
+  if (acao === "hub_estoque") {
+    if (!isStaff(interaction.member)) {
+      await interaction.reply({ content: "So a staff pode usar o painel.", ephemeral: true });
+      return;
+    }
+    await enviarPainelEphemeral(interaction, payloadHubEstoque());
+    return;
+  }
+
+  if (acao === "hub_cupons") {
+    if (!isStaff(interaction.member)) {
+      await interaction.reply({ content: "So a staff pode usar o painel.", ephemeral: true });
+      return;
+    }
+    await enviarPainelEphemeral(interaction, payloadHubCupons());
+    return;
+  }
+
+  if (acao === "hub_relatorio") {
+    if (!isStaff(interaction.member)) {
+      await interaction.reply({ content: "So a staff pode usar o painel.", ephemeral: true });
+      return;
+    }
+    await handleRelatorio(interaction);
+    return;
+  }
+
+  if (acao === "hub_cupom_criar") {
+    if (!isStaff(interaction.member)) {
+      await interaction.reply({ content: "So a staff pode usar o painel.", ephemeral: true });
+      return;
+    }
+    await interaction.showModal(modalCupomCriar());
+    return;
+  }
+
+  if (acao === "hub_cupom_remover") {
+    if (!isStaff(interaction.member)) {
+      await interaction.reply({ content: "So a staff pode usar o painel.", ephemeral: true });
+      return;
+    }
+    await interaction.showModal(modalCupomRemover());
+    return;
+  }
+
+  if (acao === "hub_cupom_publicar") {
+    if (!isStaff(interaction.member)) {
+      await interaction.reply({ content: "So a staff pode usar o painel.", ephemeral: true });
+      return;
+    }
+    await atualizarPainelCupons().catch(() => {});
+    await interaction.reply({ content: `Painel de cupons publicado em <#${CANAIS.cupons}>.`, ephemeral: true });
     return;
   }
 
@@ -3479,14 +3800,41 @@ async function handleSelect(interaction) {
   }
 
   if (id === "ticket_cat") {
-    const categoria = store.categorias[valor];
-    await interaction.deferReply({ ephemeral: true });
-    const canal = await abrirTicket(
-      interaction.guild,
-      interaction.user,
-      categoria ? `Atendimento: ${categoria.nome}` : "Atendimento"
+    await interaction.showModal(modalMotivoTicket(valor));
+    return;
+  }
+
+  if (id === "hub_prod_sel") {
+    if (!isStaff(interaction.member)) {
+      await interaction.reply({ content: "So a staff pode usar o painel.", ephemeral: true });
+      return;
+    }
+    const produto = getProduto(valor);
+    if (!produto) {
+      await interaction.reply({ content: "Produto nao encontrado.", ephemeral: true });
+      return;
+    }
+    await enviarPainelProduto(interaction, produto);
+    return;
+  }
+
+  if (id === "hub_stock_sel") {
+    if (!isStaff(interaction.member)) {
+      await interaction.reply({ content: "So a staff pode usar o painel.", ephemeral: true });
+      return;
+    }
+    const produto = getProduto(valor);
+    if (!produto) {
+      await interaction.reply({ content: "Produto nao encontrado.", ephemeral: true });
+      return;
+    }
+    const modal = new ModalBuilder().setCustomId(`hub_stock_modal:${valor}`).setTitle(`Estoque — ${String(produto.nome).slice(0, 30)}`);
+    modal.addComponents(
+      new ActionRowBuilder().addComponents(
+        campoTexto("conteudo", "Itens (um por linha)", TextInputStyle.Paragraph, "", { required: true, maxLength: 1000 })
+      )
     );
-    await interaction.editReply(`Ticket aberto em <#${canal.id}> (${categoria ? categoria.nome : valor}).`);
+    await interaction.showModal(modal);
     return;
   }
 
@@ -3675,6 +4023,156 @@ async function handleModal(interaction) {
     salvarStore();
     await atualizarLojaFixa();
     await interaction.reply({ content: `✅ Extra de **${produto.nome}** salvo (banner, instrucoes, categoria).`, ephemeral: true });
+    return;
+  }
+
+  if (acao === "ticket_motivo_modal") {
+    const motivo = (interaction.fields.getTextInputValue("motivo") || "").trim();
+    if (!motivo) {
+      await interaction.reply({ content: "Informe o motivo do ticket.", ephemeral: true });
+      return;
+    }
+    await interaction.deferReply({ ephemeral: true });
+    const categoria = valor ? store.categorias[valor] : null;
+    const assunto = categoria ? `${categoria.nome}: ${motivo}` : motivo;
+    const canal = await abrirTicket(interaction.guild, interaction.user, assunto);
+    await interaction.editReply(`Ticket aberto em <#${canal.id}>.`);
+    return;
+  }
+
+  if (acao === "hub_stock_modal") {
+    if (!isStaff(interaction.member)) {
+      await interaction.reply({ content: "So a staff pode configurar.", ephemeral: true });
+      return;
+    }
+    const produto = getProduto(valor);
+    if (!produto) {
+      await interaction.reply({ content: "Produto nao encontrado.", ephemeral: true });
+      return;
+    }
+    const itens = (interaction.fields.getTextInputValue("conteudo") || "")
+      .split(/\r?\n/)
+      .map(l => l.trim())
+      .filter(Boolean);
+    if (!itens.length) {
+      await interaction.reply({ content: "Envie ao menos um item (um por linha).", ephemeral: true });
+      return;
+    }
+    const fila = estoqueDe(valor);
+    for (const texto of itens) {
+      fila.push({ id: store.nextEstoqueItemId++, conteudo: texto, criadoEm: Date.now() });
+    }
+    salvarStore();
+    await atualizarLojaFixa().catch(() => {});
+    await interaction.reply({
+      content: `${itens.length} item(ns) adicionado(s) ao estoque de **${produto.nome}**. Total: **${fila.length}**.`,
+      ephemeral: true
+    });
+    return;
+  }
+
+  if (acao === "hub_cupom_criar_modal") {
+    if (!isStaff(interaction.member)) {
+      await interaction.reply({ content: "So a staff pode configurar.", ephemeral: true });
+      return;
+    }
+    const codigo = (interaction.fields.getTextInputValue("codigo") || "").trim().toUpperCase();
+    const tipo = (interaction.fields.getTextInputValue("tipo") || "percent").trim().toLowerCase();
+    const valorTxt = (interaction.fields.getTextInputValue("valor") || "").replace(",", ".");
+    const valorNum = Number(valorTxt);
+    const usos = Number.parseInt(interaction.fields.getTextInputValue("usos") || "0", 10) || 0;
+    const dias = Number.parseInt(interaction.fields.getTextInputValue("dias") || "0", 10) || 0;
+    if (!codigo) {
+      await interaction.reply({ content: "Informe o codigo.", ephemeral: true });
+      return;
+    }
+    if (tipo !== "percent" && tipo !== "fixo") {
+      await interaction.reply({ content: "Tipo precisa ser percent ou fixo.", ephemeral: true });
+      return;
+    }
+    if (!Number.isFinite(valorNum) || valorNum <= 0) {
+      await interaction.reply({ content: "Valor invalido.", ephemeral: true });
+      return;
+    }
+    if (tipo === "percent" && valorNum > 100) {
+      await interaction.reply({ content: "Percentual precisa estar entre 0 e 100.", ephemeral: true });
+      return;
+    }
+    store.cupons[codigo] = {
+      codigo,
+      tipo,
+      valor: tipo === "percent" ? valorNum : Math.round(valorNum * 100),
+      usosMax: Math.max(0, usos),
+      usos: 0,
+      minCentavos: 0,
+      expiraEm: dias > 0 ? Date.now() + dias * DIA_MS : null,
+      ativo: true,
+      criadoEm: Date.now()
+    };
+    salvarStore();
+    await atualizarPainelCupons().catch(() => {});
+    await interaction.reply({
+      content: `Cupom **${codigo}** criado (${tipo === "percent" ? `${valorNum}%` : formatarReais(Math.round(valorNum * 100))}).`,
+      ephemeral: true
+    });
+    return;
+  }
+
+  if (acao === "hub_cupom_remover_modal") {
+    if (!isStaff(interaction.member)) {
+      await interaction.reply({ content: "So a staff pode configurar.", ephemeral: true });
+      return;
+    }
+    const codigo = (interaction.fields.getTextInputValue("codigo") || "").trim().toUpperCase();
+    if (!store.cupons[codigo]) {
+      await interaction.reply({ content: "Cupom nao encontrado.", ephemeral: true });
+      return;
+    }
+    store.cupons[codigo].ativo = false;
+    salvarStore();
+    await atualizarPainelCupons().catch(() => {});
+    await interaction.reply({ content: `Cupom **${codigo}** desativado.`, ephemeral: true });
+    return;
+  }
+
+  if (acao === "cfg_ticket_texto_modal") {
+    if (!isStaff(interaction.member)) {
+      await interaction.reply({ content: "So a staff pode configurar.", ephemeral: true });
+      return;
+    }
+    store.config.ticketPainel.titulo = (interaction.fields.getTextInputValue("titulo") || "").trim().slice(0, 256);
+    store.config.ticketPainel.descricao = (interaction.fields.getTextInputValue("descricao") || "").trim().slice(0, 4096);
+    store.config.ticketPainel.botaoLabel = (interaction.fields.getTextInputValue("botao") || "Abrir ticket").trim().slice(0, 80);
+    store.config.ticketPainel.cor = (interaction.fields.getTextInputValue("cor") || "5865F2").trim().replace(/^#/, "");
+    store.config.ticketPainel.botaoEmoji = (interaction.fields.getTextInputValue("emoji") || "").trim() || null;
+    salvarStore();
+    await publicarOuAtualizarPainel("ticket", CANAIS.ticket, payloadPainelTicket()).catch(() => {});
+    await interaction.reply({ ...payloadPainelConfig(), ephemeral: true });
+    return;
+  }
+
+  if (acao === "cfg_ticket_midia_modal") {
+    if (!isStaff(interaction.member)) {
+      await interaction.reply({ content: "So a staff pode configurar.", ephemeral: true });
+      return;
+    }
+    const miniatura = limparUrl(interaction.fields.getTextInputValue("miniatura"));
+    const banner = limparUrl(interaction.fields.getTextInputValue("banner"));
+    const rodape = (interaction.fields.getTextInputValue("rodape") || "").trim();
+    if (miniatura && !urlMidiaValida(miniatura)) {
+      await interaction.reply({ content: "URL da miniatura invalida.", ephemeral: true });
+      return;
+    }
+    if (banner && !urlMidiaValida(banner)) {
+      await interaction.reply({ content: "URL do banner invalida.", ephemeral: true });
+      return;
+    }
+    store.config.ticketPainel.miniatura = miniatura || null;
+    store.config.ticketPainel.banner = banner || null;
+    store.config.ticketPainel.rodape = rodape || null;
+    salvarStore();
+    await publicarOuAtualizarPainel("ticket", CANAIS.ticket, payloadPainelTicket()).catch(() => {});
+    await interaction.reply({ ...payloadPainelConfig(), ephemeral: true });
     return;
   }
 
