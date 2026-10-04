@@ -13,7 +13,7 @@ Bot de vendas da Baguncinha: catalogo no Discord, Pix automatico, entregas autom
 7. Bot envia a entrega na DM do cliente, concede cargo temporario (se configurado) e pede avaliacao
 8. Cliente avalia pelo botao na DM ou por `/feedback`
 
-Prazo padrao: **50 minutos** apos o Pix confirmado.
+Prazo padrao: **2 horas** apos o Pix confirmado.
 
 ## Comandos
 
@@ -32,10 +32,15 @@ Staff (exigem Gerenciar Servidor):
 - `/estoque adicionar produto: conteudo:` — adiciona itens (um por linha)
 - `/estoque listar` — mostra o estoque
 - `/estoque remover produto: id:` — remove um item
-- `/cupom criar codigo: tipo: valor: usos: dias: minimo:`
-- `/cupom listar` / `/cupom remover codigo:`
+- `/cupom criar codigo: tipo: valor: usos: dias: minimo: publicar:` — `publicar` (padrao sim) envia o cupom ao canal de cupons
+- `/cupom listar` / `/cupom remover codigo:` / `/cupom publicar`
+- `/canais exportar` — JSON com categorias e canais deste servidor
+- `/canais colar arquivo:` — cola a estrutura (mesmo nome) em outro servidor
+- `/categoria canal nome: categoria-existente: nova-categoria:` — cria canal em categoria nova ou existente
 - `/produto listar`
 - `/produto editar produto: modo: cargo: cargo-dias: preco: disponivel:`
+- `/configuracao loja` — painel unico (banner, SMTP, PIX, categoria de tickets, publicar loja)
+- `/gerenciar produto` — painel do produto (nome, preco, estoque, cargo, cupons, variante, apagar)
 - `/config ver`
 - `/config canal-logs canal:` / `/config canal-feedback canal:` / `/config categoria-ticket categoria:`
 - `/painel-ticket` — publica o painel de abertura de tickets
@@ -52,11 +57,13 @@ Staff (exigem Gerenciar Servidor):
 - **Tickets**: use `/painel-ticket` num canal. O botao abre um canal privado com o cliente e a staff; o botao **Fechar ticket** trava o canal e o renomeia.
 - **Logs completos**: pedido criado, cupom aplicado, pagamento, entrega, cancelamento, expiracao, prazo estourado, cargos e tickets. Todos vao para o canal definido em `/config canal-logs` (nunca para o canal da lojinha) e ficam salvos em `data/store.json` + `data/loja.db`.
 - **Engrenagem so para staff**: o botao ⚙️ nao aparece na vitrine publica; so a staff ve no painel efemero do produto.
-- **Carrinho automatico**: ao comprar, o bot envia o carrinho (QR Pix, copia-e-cola, produto e valor) na DM e no ticket do servidor.
+- **Carrinho automatico**: ao gerar o Pix, o bot envia o QR na DM, abre um canal privado **seu-carrinho** (so o comprador) e um botao **Ir ao carrinho**. No Pix aprovado, um GIF de 6s aparece so nesse canal.
 - **Fechar ticket apaga o canal**.
 - **Nome PIX publico**: `/config pix-nome` — o app do banco mostra o nome da loja, nao seu nome completo.
 - **Entrega DM ou e-mail**: o cliente escolhe onde receber. SMTP em `/config smtp`.
-- **Categorias**: `/categoria criar` e seletor na vitrine e no atendimento.
+- **Categorias**: `/categoria criar` e seletor na vitrine e no atendimento. `/categoria canal` cria canal Discord em categoria nova ou ja existente.
+- **Cupons no canal**: ao criar (`/cupom criar` ou painel do produto) o painel em <#cupons> e atualizado, a menos que `publicar: false` / `nao`.
+- **Estrutura de canais**: `/canais exportar` neste servidor e `/canais colar` no outro; nomes iguais nao sao duplicados.
 - **Banner**: `top`, `bottom`, `thumbnail`, `float` (`/config banner-posicao` e `/produto editar`).
 - **Instrucoes do produto**: campo no extra do produto (ex: acesse o site X e cole o codigo).
 - **Logo no QR**: `assets/qr-logo.png` vai no centro do QR Code.
