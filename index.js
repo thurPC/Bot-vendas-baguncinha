@@ -1734,6 +1734,19 @@ async function handleProduto(interaction) {
   }
 }
 
+function campoTexto(customId, label, style, valor, extra = {}) {
+  const input = new TextInputBuilder()
+    .setCustomId(customId)
+    .setLabel(label)
+    .setStyle(style)
+    .setRequired(extra.required === true);
+  if (extra.placeholder) input.setPlaceholder(extra.placeholder);
+  if (extra.maxLength) input.setMaxLength(extra.maxLength);
+  const v = String(valor || "").slice(0, extra.maxLength || 4000);
+  if (v) input.setValue(v);
+  return input;
+}
+
 function embedPainelProduto(produto) {
   const qtd = estoqueDe(produto.id).length;
   return new EmbedBuilder()
@@ -1852,19 +1865,6 @@ function resumoConfig() {
     `Nome PIX publico: **${pixNomePublico()}** (ocultar nome completo: ${store.config.ocultarNomePix !== false ? "sim" : "nao"})\n` +
     `SMTP: ${store.config.smtpHost ? `**${store.config.smtpHost}** porta ${store.config.smtpPort || 587}` : "nao configurado"}`
   );
-}
-
-function campoTexto(customId, label, style, valor, extra = {}) {
-  const input = new TextInputBuilder()
-    .setCustomId(customId)
-    .setLabel(label)
-    .setStyle(style)
-    .setRequired(extra.required === true);
-  if (extra.placeholder) input.setPlaceholder(extra.placeholder);
-  if (extra.maxLength) input.setMaxLength(extra.maxLength);
-  const v = String(valor || "").slice(0, extra.maxLength || 4000);
-  if (v) input.setValue(v);
-  return input;
 }
 
 function payloadPainelConfig() {
