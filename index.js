@@ -26,7 +26,11 @@ const path = require("path");
 const persist = require("./src/persist");
 const { ocultarNomePix } = require("./src/pixNome");
 const { gerarQrComLogo } = require("./src/qrLogo");
+<<<<<<< HEAD
+const { enviarProdutoPorEmail, testarSmtp } = require("./src/mailer");
+=======
 const { enviarProdutoPorEmail } = require("./src/mailer");
+>>>>>>> origin/main
 
 const TOKEN = process.env.TOKEN;
 const CLIENT_ID = process.env.CLIENT_ID;
@@ -55,6 +59,8 @@ const CANAIS_2 = {
   ticket: process.env.CANAL_TICKET_2
 };
 
+<<<<<<< HEAD
+=======
 const GUILDS = {};
 if (GUILD_ID) {
   GUILDS[GUILD_ID] = {
@@ -76,6 +82,7 @@ const GUILD_IDS = Object.keys(GUILDS);
 const guildPermitida = id => !!GUILDS[id];
 const guildCfg = id => GUILDS[id] || GUILDS[GUILD_ID];
 
+>>>>>>> origin/main
 const PRAZO_ENTREGA_MIN = 120;
 const PRAZO_ENTREGA_LABEL = "2 horas";
 const QR_NOME_PUBLICO = "BAGUNCINHA";
@@ -166,6 +173,9 @@ const LOG_LABEL = {
   cargo_erro: "⚠️ Falha ao aplicar cargo",
   feedback: "Nova avaliacao",
   ticket_aberto: "🎫 Ticket aberto",
+  loja_pausada: "Loja pausada",
+  loja_reativada: "Loja reativada",
+  pagamento_manual: "Pagamento marcado pela staff",
   ticket_fechado: "🎫 Ticket fechado"
 };
 
@@ -211,6 +221,12 @@ if (!store.produtos) store.produtos = {};
 if (!store.tickets) store.tickets = {};
 if (!store.carrinhos) store.carrinhos = {};
 if (!store.config || typeof store.config !== "object") store.config = {};
+<<<<<<< HEAD
+store.config.logChannelId = CANAIS.logs;
+store.config.feedbackChannelId = CANAIS.feedbacks;
+store.config.lojaChannelId = CANAIS.loja;
+=======
+>>>>>>> origin/main
 if (store.config.banner === undefined) store.config.banner = null;
 if (store.config.bannerPosicao == null || store.config.bannerPosicao === "") store.config.bannerPosicao = "top";
 if (store.config.pixNomePublico == null || store.config.pixNomePublico === "") store.config.pixNomePublico = QR_NOME_PUBLICO;
@@ -221,6 +237,12 @@ if (store.config.smtpPort == null) store.config.smtpPort = 587;
 if (store.config.smtpUser === undefined) store.config.smtpUser = null;
 if (store.config.smtpPass === undefined) store.config.smtpPass = null;
 if (store.config.smtpFrom === undefined) store.config.smtpFrom = null;
+<<<<<<< HEAD
+if (store.config.lojaPausada === undefined) store.config.lojaPausada = false;
+if (store.config.lojaPausaMotivo === undefined) store.config.lojaPausaMotivo = "";
+if (!store.lojaFixa) store.lojaFixa = { channelId: null, messageId: null };
+if (!store.paineisFixos) store.paineisFixos = { ticket: null, cupons: null };
+=======
 if (!store.lojaFixa) store.lojaFixa = { channelId: null, messageId: null };
 if (!store.paineisFixos) store.paineisFixos = { ticket: null, cupons: null };
 if (!store.guilds) store.guilds = {};
@@ -249,6 +271,7 @@ if (!store.config.ticketPainel.cor) store.config.ticketPainel.cor = "5865F2";
 if (store.config.ticketPainel.miniatura === undefined) store.config.ticketPainel.miniatura = null;
 if (store.config.ticketPainel.banner === undefined) store.config.ticketPainel.banner = null;
 if (store.config.ticketPainel.rodape === undefined) store.config.ticketPainel.rodape = null;
+>>>>>>> origin/main
 if (!store.categorias) {
   store.categorias = {
     nitro: { id: "nitro", nome: "Nitro", emoji: "💎", descricao: "Discord Nitro", posicao: 0, ativo: true },
@@ -316,7 +339,54 @@ function produtoEsgotado(produto) {
 }
 
 function produtoPodeComprar(produto) {
-  return !!(produto && produto.disponivel && !produtoEsgotado(produto));
+  return !!(produto && produto.disponivel && !produtoEsgotado(produto) && !store.config.lojaPausada);
+}
+
+function motivoLojaPausada() {
+  const extra = store.config.lojaPausaMotivo ? ` Motivo: ${store.config.lojaPausaMotivo}` : "";
+  return `A loja esta pausada no momento.${extra}`;
+}
+
+function opcoesAutocompleteProduto(focused) {
+  const q = String(focused || "").toLowerCase();
+  return todosProdutos()
+    .filter(p => !q || p.id.toLowerCase().includes(q) || String(p.nome).toLowerCase().includes(q))
+    .slice(0, 25)
+    .map(p => ({ name: `${p.nome} (${p.id})`.slice(0, 100), value: p.id }));
+}
+
+function categoriasAtivas() {
+  return Object.values(store.categorias || {})
+    .filter(c => c && c.ativo !== false)
+    .sort((a, b) => (a.posicao || 0) - (b.posicao || 0));
+}
+
+function produtosDaCategoria(categoriaId) {
+  return todosProdutos().filter(p => (p.categoriaId || "geral") === categoriaId);
+}
+
+function aplicarBanner(embed, url, posicao, thumbnailUrl) {
+  const pos = String(posicao || "bottom").toLowerCase();
+  if (pos === "float" || pos === "flutuante") {
+    if (thumbnailUrl || url) embed.setThumbnail(thumbnailUrl || url);
+    if (urlMidiaValida(url)) embed.setImage(url);
+    return embed;
+  }
+  if (pos === "top" && urlMidiaValida(url)) embed.setImage(url);
+  else if (pos === "bottom" && urlMidiaValida(url)) embed.setImage(url);
+  else if (pos === "thumbnail" && urlMidiaValida(url)) embed.setThumbnail(url);
+  else if (pos === "author" && urlMidiaValida(url)) embed.setAuthor({ name: "\u200b", iconURL: url });
+  if (urlMidiaValida(thumbnailUrl) && pos !== "thumbnail") embed.setThumbnail(thumbnailUrl);
+  return embed;
+}
+
+function pixNomePublico() {
+  if (store.config.ocultarNomePix === false) return store.config.pixNomePublico || QR_NOME_PUBLICO;
+  return store.config.pixNomePublico || QR_NOME_PUBLICO;
+}
+
+function limparUrl(url) {
+  return String(url || "").trim().replace(/^<|>$/g, "").trim();
 }
 
 function categoriasAtivas() {
@@ -389,7 +459,11 @@ function limparPixCopiaECola(codigo) {
     .trim();
 }
 
+<<<<<<< HEAD
+function botoesPix(pedidoId, canalCarrinhoId) {
+=======
 function botoesPix(pedidoId, canalCarrinhoId, guildId = GUILD_ID) {
+>>>>>>> origin/main
   const row = new ActionRowBuilder().addComponents(
     new ButtonBuilder()
       .setCustomId(`pix_copiar:${pedidoId}`)
@@ -404,25 +478,42 @@ function botoesPix(pedidoId, canalCarrinhoId, guildId = GUILD_ID) {
         .setURL(`${PUBLIC_URL}/pix/${pedidoId}`)
     );
   }
+<<<<<<< HEAD
+  if (canalCarrinhoId && GUILD_ID) {
+=======
   if (canalCarrinhoId && guildId) {
+>>>>>>> origin/main
     row.addComponents(
       new ButtonBuilder()
         .setLabel("Ir ao carrinho")
         .setStyle(ButtonStyle.Link)
+<<<<<<< HEAD
+        .setURL(`https://discord.com/channels/${GUILD_ID}/${canalCarrinhoId}`)
+=======
         .setURL(`https://discord.com/channels/${guildId}/${canalCarrinhoId}`)
+>>>>>>> origin/main
     );
   }
   return [row];
 }
 
+<<<<<<< HEAD
+function botaoIrCarrinho(canalId) {
+  if (!canalId || !GUILD_ID) return [];
+=======
 function botaoIrCarrinho(canalId, guildId = GUILD_ID) {
   if (!canalId || !guildId) return [];
+>>>>>>> origin/main
   return [
     new ActionRowBuilder().addComponents(
       new ButtonBuilder()
         .setLabel("Ir ao carrinho")
         .setStyle(ButtonStyle.Link)
+<<<<<<< HEAD
+        .setURL(`https://discord.com/channels/${GUILD_ID}/${canalId}`)
+=======
         .setURL(`https://discord.com/channels/${guildId}/${canalId}`)
+>>>>>>> origin/main
     )
   ];
 }
@@ -527,10 +618,16 @@ function embedLog(entrada) {
 }
 
 async function enviarLogCanal(entrada) {
+<<<<<<< HEAD
+  if (!store.config.logChannelId) return;
+  if (store.config.logChannelId === CANAIS.loja || store.config.logChannelId === store.config.lojaChannelId) return;
+  const canal = await client.channels.fetch(store.config.logChannelId).catch(() => null);
+=======
   const cfg = guildCfg(entrada.guildId);
   const logId = cfg.canais.logs;
   if (!logId || logId === cfg.canais.loja) return;
   const canal = await client.channels.fetch(logId).catch(() => null);
+>>>>>>> origin/main
   if (!canal || canalEhLoja(canal)) return;
   await canal.send({ embeds: [embedLog(entrada)] }).catch(() => {});
 }
@@ -555,6 +652,21 @@ function catalogoEmbed(categoriaId) {
   const produtos = categoriaId ? produtosDaCategoria(categoriaId) : todosProdutos();
   const linhas = produtos.map(linhaPrecoProduto);
   const titulo = categoria ? `${categoria.emoji || "📁"} ${categoria.nome}` : "Loja Baguncinha";
+<<<<<<< HEAD
+  const intro = store.config.lojaPausada
+    ? motivoLojaPausada()
+    : categoria
+      ? (categoria.descricao || "Escolha um produto desta categoria.")
+      : "Selecione uma categoria para ver os produtos. O bot gera o Pix, confirma o pagamento e entrega.";
+  const embed = new EmbedBuilder()
+    .setTitle(store.config.lojaPausada ? "Loja pausada" : titulo)
+    .setDescription(
+      `${intro}\n\n` +
+      (store.config.lojaPausada ? "" : (linhas.length ? linhas.join("\n\n") : "Nenhum produto nesta categoria.") +
+      `\n\nPrazo: ate **${PRAZO_ENTREGA_LABEL}** depois do Pix confirmado.`)
+    )
+    .setColor(store.config.lojaPausada ? 0xed4245 : 0x9b59b6);
+=======
   const intro = categoria
     ? (categoria.descricao || "Escolha um produto desta categoria.")
     : "Selecione uma categoria para ver os produtos. O bot gera o Pix, confirma o pagamento e entrega.";
@@ -566,6 +678,7 @@ function catalogoEmbed(categoriaId) {
       `\n\nPrazo: ate **${PRAZO_ENTREGA_LABEL}** depois do Pix confirmado.`
     )
     .setColor(0x9b59b6);
+>>>>>>> origin/main
   aplicarBanner(embed, store.config.banner, store.config.bannerPosicao || "top");
   return embed;
 }
@@ -609,6 +722,17 @@ function selectCategorias(customId = "cat") {
 
 function botoesCatalogo(categoriaId) {
   const rows = [];
+<<<<<<< HEAD
+  if (store.config.lojaPausada) {
+    rows.push(
+      new ActionRowBuilder().addComponents(
+        new ButtonBuilder().setCustomId("loja_pausada").setLabel("Loja pausada").setStyle(ButtonStyle.Danger).setDisabled(true)
+      )
+    );
+    return rows;
+  }
+=======
+>>>>>>> origin/main
   const produtos = categoriaId ? produtosDaCategoria(categoriaId) : todosProdutos();
   for (const produto of produtos.slice(0, categoriaId ? 4 : 5)) {
     const esgotado = produtoEsgotado(produto);
@@ -637,6 +761,13 @@ function botoesCatalogo(categoriaId) {
 
 function payloadLoja(categoriaId) {
   const components = [];
+<<<<<<< HEAD
+  if (store.config.lojaPausada) {
+    components.push(...botoesCatalogo());
+    return { content: null, embeds: [catalogoEmbed(categoriaId)], components };
+  }
+=======
+>>>>>>> origin/main
   if (!categoriaId) {
     const sel = selectCategorias("cat");
     if (sel) components.push(sel);
@@ -648,10 +779,26 @@ function payloadLoja(categoriaId) {
 }
 
 async function atualizarLojaFixa() {
+<<<<<<< HEAD
+  const canalId = store.lojaFixa.channelId || store.config.lojaChannelId || CANAIS.loja;
+  const messageId = store.lojaFixa.messageId;
+  if (!canalId) return;
+  const canal = await client.channels.fetch(canalId).catch(() => null);
+  if (!canal) return;
+  if (messageId) {
+    const msg = await canal.messages.fetch(messageId).catch(() => null);
+    if (msg) {
+      await msg.edit(payloadLoja()).catch(() => {});
+      return;
+    }
+  }
+  await publicarLojaFixa(canal);
+=======
   // atualiza a vitrine nos 2 servidores
   for (const gid of GUILD_IDS) {
     await atualizarLojaFixaGuild(gid).catch(error => console.error(`Falha ao atualizar loja (${gid}):`, error.message));
   }
+>>>>>>> origin/main
 }
 
 async function atualizarLojaFixaGuild(gid) {
@@ -701,6 +848,20 @@ function ticketPainel() {
 function payloadPainelTicket() {
   const cfg = ticketPainel();
   const embed = new EmbedBuilder()
+<<<<<<< HEAD
+    .setTitle("ATENDIMENTO AO CLIENTE")
+    .setDescription("Se você estiver enfrentando algum problema ou precisar de ajuda com nossos serviços, por favor, abra um ticket de suporte. Assim que recebermos seu ticket, nossa equipe de suporte entrará em contato com você para solucionar o problema o mais breve possível. Obrigado pela sua compreensão e cooperação.\n\n*(Podendo haver atrasos e lentidao no atendimento Sab/Dom)*")
+    .setColor(0x5865f2);
+  const components = [];
+  const sel = selectCategorias("ticket_cat");
+  if (sel) components.push(sel);
+  components.push(
+    new ActionRowBuilder().addComponents(
+      new ButtonBuilder().setCustomId("ticket_abrir").setLabel("Abrir ticket").setEmoji("🎫").setStyle(ButtonStyle.Secondary)
+    )
+  );
+  return { embeds: [embed], components };
+=======
     .setTitle(String(cfg.titulo || "ATENDIMENTO AO CLIENTE").slice(0, 256))
     .setDescription(String(cfg.descricao || "Abra um ticket para falar com a equipe.").slice(0, 4096))
     .setColor(parseCor(cfg.cor) || 0x5865f2);
@@ -735,6 +896,7 @@ function modalMotivoTicket(categoriaId) {
     )
   );
   return modal;
+>>>>>>> origin/main
 }
 
 function payloadPainelCupons() {
@@ -784,6 +946,128 @@ async function atualizarPaineisTicket() {
   for (const gid of GUILD_IDS) {
     await publicarOuAtualizarPainel(gid, "ticket", guildCfg(gid).canais.ticket, payloadPainelTicket()).catch(() => {});
   }
+}
+
+async function responderMesmaMensagem(interaction, payload) {
+  const data = { ...payload };
+  if (interaction.isModalSubmit()) {
+    if (interaction.replied || interaction.deferred) return interaction.editReply({ ...data, ephemeral: true });
+    return interaction.reply({ ...data, ephemeral: true });
+  }
+  if (interaction.isMessageComponent()) {
+    if (interaction.replied || interaction.deferred) {
+      return interaction.editReply({ embeds: data.embeds, components: data.components, content: data.content ?? null });
+    }
+    return interaction.update({ embeds: data.embeds, components: data.components, content: data.content ?? null });
+  }
+  if (interaction.replied || interaction.deferred) return interaction.editReply({ ...data, ephemeral: true });
+  return interaction.reply({ ...data, ephemeral: true });
+}
+
+function mensagemEfmera(interaction) {
+  try {
+    return interaction.message?.flags?.has(MessageFlags.Ephemeral) === true;
+  } catch {
+    return false;
+  }
+}
+
+function canalTemporario(nome) {
+  const n = String(nome || "").toLowerCase();
+  return n.startsWith("ticket-") || n.startsWith("seu-carrinho") || n.startsWith("carrinho-");
+}
+
+function tipoCanalSnapshot(ch) {
+  if (ch.type === ChannelType.GuildVoice) return "voice";
+  if (ch.type === ChannelType.GuildAnnouncement || ch.type === ChannelType.GuildText) return "text";
+  return null;
+}
+
+function slugCanal(nome) {
+  return String(nome || "canal")
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/[^a-z0-9-]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .slice(0, 100) || "canal";
+}
+
+function snapshotCanais(guild) {
+  const categorias = guild.channels.cache
+    .filter(c => c.type === ChannelType.GuildCategory)
+    .sort((a, b) => a.position - b.position)
+    .map(cat => ({
+      type: "category",
+      name: cat.name,
+      position: cat.position,
+      channels: guild.channels.cache
+        .filter(ch => ch.parentId === cat.id && tipoCanalSnapshot(ch) && !canalTemporario(ch.name))
+        .sort((a, b) => a.position - b.position)
+        .map(ch => ({
+          type: tipoCanalSnapshot(ch),
+          name: ch.name,
+          topic: ch.topic || null,
+          position: ch.position
+        }))
+    }));
+  const semCategoria = guild.channels.cache
+    .filter(ch => !ch.parentId && tipoCanalSnapshot(ch) && !canalTemporario(ch.name))
+    .sort((a, b) => a.position - b.position)
+    .map(ch => ({
+      type: tipoCanalSnapshot(ch),
+      name: ch.name,
+      topic: ch.topic || null,
+      position: ch.position
+    }));
+  return { guild: guild.name, guildId: guild.id, categorias, semCategoria };
+}
+
+async function aplicarSnapshotCanais(guild, snapshot) {
+  const criados = [];
+  const pulados = [];
+  const existentes = guild.channels.cache;
+  const acharCategoria = nome => existentes.find(c => c.type === ChannelType.GuildCategory && c.name === nome);
+  const acharFilho = (nome, parentId) => existentes.find(c => c.name === nome && (c.parentId || null) === (parentId || null));
+
+  for (const cat of snapshot.categorias || []) {
+    let categoria = acharCategoria(cat.name);
+    if (!categoria) {
+      categoria = await guild.channels.create({
+        name: cat.name,
+        type: ChannelType.GuildCategory
+      });
+      criados.push(`categoria ${cat.name}`);
+    } else {
+      pulados.push(`categoria ${cat.name}`);
+    }
+    for (const ch of cat.channels || []) {
+      if (acharFilho(ch.name, categoria.id)) {
+        pulados.push(`#${ch.name}`);
+        continue;
+      }
+      await guild.channels.create({
+        name: ch.name,
+        type: ch.type === "voice" ? ChannelType.GuildVoice : ChannelType.GuildText,
+        parent: categoria.id,
+        topic: ch.topic || undefined
+      });
+      criados.push(`#${ch.name}`);
+    }
+  }
+  for (const ch of snapshot.semCategoria || []) {
+    if (acharFilho(ch.name, null)) {
+      pulados.push(`#${ch.name}`);
+      continue;
+    }
+    await guild.channels.create({
+      name: ch.name,
+      type: ch.type === "voice" ? ChannelType.GuildVoice : ChannelType.GuildText,
+      topic: ch.topic || undefined
+    });
+    criados.push(`#${ch.name}`);
+  }
+  return { criados, pulados };
 }
 
 async function responderMesmaMensagem(interaction, payload) {
@@ -984,12 +1268,22 @@ function embedPedidoAdmin(pedido) {
 }
 
 function botoesAdmin(pedidoId) {
-  return [
-    new ActionRowBuilder().addComponents(
-      new ButtonBuilder().setCustomId(`entregar:${pedidoId}`).setLabel("Entregar").setStyle(ButtonStyle.Success),
-      new ButtonBuilder().setCustomId(`cancelar:${pedidoId}`).setLabel("Cancelar").setStyle(ButtonStyle.Danger)
-    )
-  ];
+  const pedido = store.pedidos[String(pedidoId)];
+  const row = new ActionRowBuilder();
+  if (pedido && pedido.status === STATUS.AGUARDANDO_PAGAMENTO) {
+    row.addComponents(
+      new ButtonBuilder().setCustomId(`marcarpago:${pedidoId}`).setLabel("Marcar Pix pago").setStyle(ButtonStyle.Primary)
+    );
+  }
+  if (!pedido || pedido.status === STATUS.AGUARDANDO_ENTREGA) {
+    row.addComponents(
+      new ButtonBuilder().setCustomId(`entregar:${pedidoId}`).setLabel("Entregar").setStyle(ButtonStyle.Success)
+    );
+  }
+  row.addComponents(
+    new ButtonBuilder().setCustomId(`cancelar:${pedidoId}`).setLabel("Cancelar").setStyle(ButtonStyle.Danger)
+  );
+  return [row];
 }
 
 function embedFeedback(pedido, nota, comentario) {
@@ -1081,8 +1375,12 @@ async function canalAdmin(guild) {
 
 function canalEhLoja(canal) {
   if (!canal) return false;
+<<<<<<< HEAD
+  return canal.id === CANAIS.loja || canal.id === store.config.lojaChannelId || canal.id === store.lojaFixa.channelId;
+=======
   return Object.values(GUILDS).some(g => g.canais.loja === canal.id) ||
     Object.values(store.guilds).some(st => st.lojaFixa.channelId === canal.id);
+>>>>>>> origin/main
 }
 
 async function notificarAdmin(pedido, extra) {
@@ -1107,7 +1405,7 @@ async function notificarAdmin(pedido, extra) {
   const payload = {
     content: guildCfg(gid).adminRoleId && pedido.status === STATUS.AGUARDANDO_ENTREGA ? `<@&${guildCfg(gid).adminRoleId}>` : null,
     embeds: [embed],
-    components: pedido.status === STATUS.AGUARDANDO_ENTREGA ? botoesAdmin(pedido.id) : []
+    components: [STATUS.AGUARDANDO_ENTREGA, STATUS.AGUARDANDO_PAGAMENTO].includes(pedido.status) ? botoesAdmin(pedido.id) : []
   };
 
   if (pedido.adminMessageId) {
@@ -1419,6 +1717,10 @@ function modalAvaliar(pedidoId) {
 }
 
 async function criarPedido(interaction, produtoId, cupomCodigo) {
+  if (store.config.lojaPausada) {
+    await interaction.reply({ content: motivoLojaPausada(), ephemeral: true });
+    return;
+  }
   const produto = getProduto(produtoId);
   if (!produto || !produto.disponivel) {
     await interaction.reply({ content: "Esse produto nao esta disponivel.", ephemeral: true });
@@ -1525,7 +1827,11 @@ async function criarPedido(interaction, produtoId, cupomCodigo) {
     const serverMsg = await carrinho.send({
       content: `${interaction.user} seu carrinho:`,
       embeds: [embedCarrinho],
+<<<<<<< HEAD
+      components: [...botoesPix(pedido.id), botoesEntrega(pedido.id)],
+=======
       components: [...botoesPix(pedido.id, undefined, pedido.guildId), botoesEntrega(pedido.id)],
+>>>>>>> origin/main
       files: pixFile()
     });
     pedido.cartServerMessageId = serverMsg.id;
@@ -1533,7 +1839,11 @@ async function criarPedido(interaction, produtoId, cupomCodigo) {
     console.error("Falha ao abrir canal de carrinho no servidor:", error.message);
   }
 
+<<<<<<< HEAD
+  const componentes = [...botoesPix(pedido.id, pedido.cartChannelId), botoesEntrega(pedido.id)];
+=======
   const componentes = [...botoesPix(pedido.id, pedido.cartChannelId, pedido.guildId), botoesEntrega(pedido.id)];
+>>>>>>> origin/main
 
   await interaction.editReply({
     content:
@@ -1557,6 +1867,10 @@ async function criarPedido(interaction, produtoId, cupomCodigo) {
   } catch {
     console.log(`Nao consegui DM o carrinho do pedido #${pedido.id}.`);
   }
+<<<<<<< HEAD
+  await notificarAdmin(pedido, "Aguardando Pix. Use **Marcar Pix pago** se o cliente pagou fora do webhook.");
+=======
+>>>>>>> origin/main
   salvarStore();
 }
 
@@ -1634,8 +1948,12 @@ async function overwritesPrivado(guild, userId) {
 }
 
 async function abrirCarrinho(guild, user, pedido) {
+<<<<<<< HEAD
+  const aberto = Object.entries(store.carrinhos).find(([, c]) => c.userId === user.id && c.status === "aberto");
+=======
   const aberto = Object.entries(store.carrinhos).find(([, c]) =>
     c.userId === user.id && c.status === "aberto" && (c.guildId || GUILD_ID) === guild.id);
+>>>>>>> origin/main
   if (aberto) {
     const existente = guild.channels.cache.get(aberto[0]) || await guild.channels.fetch(aberto[0]).catch(() => null);
     if (existente) {
@@ -1656,8 +1974,12 @@ async function abrirCarrinho(guild, user, pedido) {
     userId: user.id,
     pedidoId: pedido.id,
     abertoEm: Date.now(),
+<<<<<<< HEAD
+    status: "aberto"
+=======
     status: "aberto",
     guildId: guild.id
+>>>>>>> origin/main
   };
   salvarStore();
 
@@ -1718,15 +2040,23 @@ async function fecharCarrinho(interaction, canalId) {
 async function abrirTicket(guild, user, assunto) {
   const base = `ticket-${user.username}`.toLowerCase().replace(/[^a-z0-9-]/g, "").slice(0, 80) || `ticket-${user.id}`;
   const overwrites = await overwritesPrivado(guild, user.id);
+<<<<<<< HEAD
+  if (ADMIN_ROLE_ID) {
+=======
   const adminRoleId = guildCfg(guild.id).adminRoleId;
   if (adminRoleId) {
+>>>>>>> origin/main
     overwrites.push({
       id: adminRoleId,
       allow: [PermissionFlagsBits.ViewChannel, PermissionFlagsBits.SendMessages, PermissionFlagsBits.ReadMessageHistory]
     });
   }
 
+<<<<<<< HEAD
+  let parent = store.config.ticketCategoryId || undefined;
+=======
   let parent = (store.guilds[guild.id] && store.guilds[guild.id].ticketCategoryId) || undefined;
+>>>>>>> origin/main
   if (parent) {
     const cat = await guild.channels.fetch(parent).catch(() => null);
     if (cat) parent = cat.id;
@@ -1948,7 +2278,11 @@ async function handleCupom(interaction) {
 
   if (sub === "publicar") {
     await atualizarPainelCupons().catch(() => {});
+<<<<<<< HEAD
+    await interaction.reply({ content: `Painel de cupons publicado em <#${CANAIS.cupons}>.`, ephemeral: true });
+=======
     await interaction.reply({ content: `Painel de cupons publicado em <#${guildCfg(interaction.guildId).canais.cupons}>.`, ephemeral: true });
+>>>>>>> origin/main
   }
 }
 
@@ -2020,14 +2354,256 @@ async function handleProduto(interaction) {
     const atual = getProduto(produtoId);
     await interaction.reply({
       content:
-        `✅ Produto **${atual.nome}** atualizado.\n` +
+        `Produto **${atual.nome}** atualizado.\n` +
         `Preco: ${formatarReais(atual.precoCentavos)}\n` +
         `Modo: ${atual.modo === "auto" ? "automatico" : "staff"}\n` +
         `Disponivel: ${atual.disponivel ? "sim" : "nao"}\n` +
         `Cargo temporario: ${atual.cargoId ? `<@&${atual.cargoId}> por ${atual.cargoDias} dia(s)` : "nenhum"}`,
       ephemeral: true
     });
+    return;
   }
+
+  if (sub === "criar") {
+    const id = interaction.options.getString("id", true).trim().toLowerCase().replace(/[^a-z0-9_-]/g, "").slice(0, 32);
+    const nome = interaction.options.getString("nome", true).trim();
+    const preco = interaction.options.getNumber("preco", true);
+    const categoriaId = (interaction.options.getString("categoria") || "geral").trim().toLowerCase();
+    const modo = interaction.options.getString("modo") || "semi";
+    const descricao = (interaction.options.getString("descricao") || "Produto da Baguncinha.").trim();
+    const emoji = (interaction.options.getString("emoji") || "📦").trim().slice(0, 8);
+    if (!id || !nome || !Number.isFinite(preco) || preco < 0) {
+      await interaction.reply({ content: "ID, nome e preco validos sao obrigatorios.", ephemeral: true });
+      return;
+    }
+    if (getProduto(id) || PRODUTOS[id] || (store.produtos || {})[id]) {
+      await interaction.reply({ content: `Ja existe um produto com o ID \`${id}\`.`, ephemeral: true });
+      return;
+    }
+    if (!store.categorias[categoriaId]) {
+      store.categorias[categoriaId] = {
+        id: categoriaId,
+        nome: categoriaId,
+        emoji: "📁",
+        descricao: "",
+        posicao: Object.keys(store.categorias).length,
+        ativo: true
+      };
+    }
+    store.produtos[id] = {
+      id,
+      nome,
+      descricao,
+      precoCentavos: Math.round(preco * 100),
+      emoji,
+      disponivel: true,
+      modo,
+      cargoId: null,
+      cargoDias: 0,
+      imagem: null,
+      banner: null,
+      bannerPosicao: "bottom",
+      categoriaId,
+      instrucoes: "",
+      precoOriginalCentavos: 0
+    };
+    salvarStore();
+    await atualizarLojaFixa();
+    await interaction.reply({
+      content:
+        `Produto **${nome}** (\`${id}\`) criado.\n` +
+        `Preco: **${formatarReais(Math.round(preco * 100))}** • Categoria: \`${categoriaId}\` • Modo: **${modo === "auto" ? "automatico" : "staff"}**.\n` +
+        `Use \`/gerenciar produto produto:${id}\` para estoque, banner e cupom.`,
+      ephemeral: true
+    });
+  }
+}
+
+function campoTexto(customId, label, style, valor, extra = {}) {
+  const input = new TextInputBuilder()
+    .setCustomId(customId)
+    .setLabel(label)
+    .setStyle(style)
+    .setRequired(extra.required === true);
+  if (extra.placeholder) input.setPlaceholder(extra.placeholder);
+  if (extra.maxLength) input.setMaxLength(extra.maxLength);
+  const v = String(valor || "").slice(0, extra.maxLength || 4000);
+  if (v) input.setValue(v);
+  return input;
+}
+
+function embedPainelProduto(produto) {
+  const qtd = estoqueDe(produto.id).length;
+  return new EmbedBuilder()
+    .setTitle(`Gerenciar — ${produto.nome}`)
+    .setDescription(
+      `ID: \`${produto.id}\`\n` +
+      `${precoVitrine(produto)}\n` +
+      `Modo: **${produto.modo === "auto" ? "automatico" : "staff"}**\n` +
+      `Disponivel: **${produto.disponivel ? "sim" : "nao"}**\n` +
+      `Estoque: **${qtd}**\n` +
+      `Cargo: ${produto.cargoId ? `<@&${produto.cargoId}> ${produto.cargoDias || 0} dia(s)` : "nenhum"}\n` +
+      `Cor: ${produto.cor || "#9b59b6"}\n` +
+      `Botao config: **${produto.ocultarBotaoConfig ? "oculto" : "visivel"}**`
+    )
+    .setColor(parseCor(produto.cor) || 0x9b59b6);
+}
+
+function payloadPainelProduto(produto, pagina = 1) {
+  const embed = embedPainelProduto(produto);
+  if (pagina === 2) {
+    return {
+      embeds: [embed],
+      components: [
+        new ActionRowBuilder().addComponents(
+          new ButtonBuilder().setCustomId(`gp_variante:${produto.id}`).setLabel("Criar variante").setStyle(ButtonStyle.Secondary),
+          new ButtonBuilder().setCustomId(`gp_ocultar:${produto.id}`).setLabel("Ocultar botao de configuracao").setStyle(ButtonStyle.Secondary),
+          new ButtonBuilder().setCustomId(`gp_apagar:${produto.id}`).setLabel("Apagar Produto").setStyle(ButtonStyle.Danger)
+        ),
+        new ActionRowBuilder().addComponents(
+          new ButtonBuilder().setCustomId(`gp_salvar:${produto.id}`).setLabel("Salvar Produto").setStyle(ButtonStyle.Success),
+          new ButtonBuilder().setCustomId(`gp_pagina:1:${produto.id}`).setLabel("Voltar").setStyle(ButtonStyle.Primary)
+        )
+      ]
+    };
+  }
+  return {
+    embeds: [embed],
+    components: [
+      new ActionRowBuilder().addComponents(
+        new ButtonBuilder().setCustomId(`gp_nome:${produto.id}`).setLabel("Alterar Nome").setStyle(ButtonStyle.Secondary),
+        new ButtonBuilder().setCustomId(`gp_desc:${produto.id}`).setLabel("Alterar Descricao").setStyle(ButtonStyle.Secondary),
+        new ButtonBuilder().setCustomId(`gp_preco:${produto.id}`).setLabel("Alterar Preco").setStyle(ButtonStyle.Secondary)
+      ),
+      new ActionRowBuilder().addComponents(
+        new ButtonBuilder().setCustomId(`gp_miniatura:${produto.id}`).setLabel("Alterar Miniatura").setStyle(ButtonStyle.Secondary),
+        new ButtonBuilder().setCustomId(`gp_banner:${produto.id}`).setLabel("Alterar Banner").setStyle(ButtonStyle.Secondary)
+      ),
+      new ActionRowBuilder().addComponents(
+        new ButtonBuilder().setCustomId(`addstock:${produto.id}`).setLabel("Adicionar Estoque").setStyle(ButtonStyle.Secondary),
+        new ButtonBuilder().setCustomId(`clearstock:${produto.id}`).setLabel("Limpar Estoque").setStyle(ButtonStyle.Secondary),
+        new ButtonBuilder().setCustomId(`gp_backup:${produto.id}`).setLabel("Backup Estoque").setStyle(ButtonStyle.Secondary)
+      ),
+      new ActionRowBuilder().addComponents(
+        new ButtonBuilder().setCustomId(`gp_rodape:${produto.id}`).setLabel("Editar Rodape").setStyle(ButtonStyle.Secondary),
+        new ButtonBuilder().setCustomId(`gp_cor:${produto.id}`).setLabel("Alterar Cor").setStyle(ButtonStyle.Secondary),
+        new ButtonBuilder().setCustomId(`gp_cargo:${produto.id}`).setLabel("Gerenciar Cargo").setStyle(ButtonStyle.Secondary)
+      ),
+      new ActionRowBuilder().addComponents(
+        new ButtonBuilder().setCustomId(`gp_cupons:${produto.id}`).setLabel("Gerenciar Cupons").setStyle(ButtonStyle.Secondary),
+        new ButtonBuilder().setCustomId(`gp_export:${produto.id}`).setLabel("Exportar Config").setStyle(ButtonStyle.Secondary),
+        new ButtonBuilder().setCustomId(`gp_import:${produto.id}`).setLabel("Importar Config").setStyle(ButtonStyle.Secondary),
+        new ButtonBuilder().setCustomId(`gp_pagina:2:${produto.id}`).setLabel("Mais opcoes").setStyle(ButtonStyle.Primary)
+      )
+    ]
+  };
+}
+
+async function enviarPainelProduto(interaction, produto, pagina = 1) {
+  const payload = { ...payloadPainelProduto(produto, pagina), ephemeral: true };
+  if (interaction.replied || interaction.deferred) {
+    await interaction.followUp(payload);
+    return;
+  }
+  if (interaction.isMessageComponent() && interaction.customId.startsWith("gp_")) {
+    await interaction.update({ embeds: payload.embeds, components: payload.components });
+    return;
+  }
+  if (interaction.isModalSubmit()) {
+    await interaction.reply(payload);
+    return;
+  }
+  await interaction.reply(payload);
+}
+
+function modalCampoProduto(customId, titulo, campoId, label, valor, style = TextInputStyle.Short, extra = {}) {
+  const modal = new ModalBuilder().setCustomId(customId).setTitle(titulo.slice(0, 45));
+  modal.addComponents(
+    new ActionRowBuilder().addComponents(
+      campoTexto(campoId, label, style, valor, extra)
+    )
+  );
+  return modal;
+}
+
+async function handleGerenciar(interaction) {
+  const sub = interaction.options.getSubcommand();
+  if (sub !== "produto") {
+    await interaction.reply({ content: "Use `/gerenciar produto`.", ephemeral: true });
+    return;
+  }
+  const produto = getProduto(interaction.options.getString("produto", true));
+  if (!produto) {
+    await interaction.reply({ content: "Produto nao encontrado.", ephemeral: true });
+    return;
+  }
+  await enviarPainelProduto(interaction, produto);
+}
+
+function resumoConfig() {
+  return (
+    `Canal de logs: ${store.config.logChannelId ? `<#${store.config.logChannelId}>` : "nao definido"}\n` +
+    `Canal de feedbacks: ${store.config.feedbackChannelId ? `<#${store.config.feedbackChannelId}>` : "nao definido"}\n` +
+    `Categoria de tickets: ${store.config.ticketCategoryId ? `<#${store.config.ticketCategoryId}>` : "nao definida"}\n` +
+    `Loja fixa: ${store.lojaFixa.channelId ? `<#${store.lojaFixa.channelId}>` : "nao publicada"}\n` +
+    `Banner da loja: ${urlMidiaValida(store.config.banner) ? `definido (${store.config.bannerPosicao || "top"})` : "nao definido"}\n` +
+    `Nome PIX publico: **${pixNomePublico()}** (ocultar nome completo: ${store.config.ocultarNomePix !== false ? "sim" : "nao"})\n` +
+    `SMTP: ${store.config.smtpHost ? `**${store.config.smtpHost}** porta ${store.config.smtpPort || 587}` : "nao configurado"}\n` +
+    `Loja: **${store.config.lojaPausada ? "PAUSADA" : "aberta"}**${store.config.lojaPausaMotivo ? ` (${store.config.lojaPausaMotivo})` : ""}`
+  );
+}
+
+function payloadPainelConfig() {
+  const embed = new EmbedBuilder()
+    .setTitle("Configuracao da loja")
+    .setDescription(resumoConfig() + "\n\nUse os botoes e o seletor abaixo. Tudo e salvo na hora.")
+    .setColor(0x9b59b6);
+
+  return {
+    embeds: [embed],
+    components: [
+      new ActionRowBuilder().addComponents(
+        new ButtonBuilder().setCustomId("cfg_banner").setLabel("Banner").setStyle(ButtonStyle.Primary),
+        new ButtonBuilder().setCustomId("cfg_smtp").setLabel("SMTP").setStyle(ButtonStyle.Primary),
+        new ButtonBuilder().setCustomId("cfg_pix").setLabel("Nome PIX").setStyle(ButtonStyle.Primary),
+        new ButtonBuilder().setCustomId("cfg_publicar").setLabel("Publicar loja").setStyle(ButtonStyle.Success),
+        new ButtonBuilder()
+          .setCustomId("cfg_pausar")
+          .setLabel(store.config.lojaPausada ? "Reabrir loja" : "Pausar loja")
+          .setStyle(store.config.lojaPausada ? ButtonStyle.Success : ButtonStyle.Danger)
+      ),
+      new ActionRowBuilder().addComponents(
+        new ChannelSelectMenuBuilder()
+          .setCustomId("cfg_cat_ticket")
+          .setPlaceholder("Categoria dos tickets")
+          .setMinValues(1)
+          .setMaxValues(1)
+          .addChannelTypes(ChannelType.GuildCategory)
+      )
+    ]
+  };
+}
+
+async function enviarPainelConfig(interaction) {
+  const payload = { ...payloadPainelConfig(), ephemeral: true };
+  if (interaction.replied || interaction.deferred) {
+    await interaction.editReply(payload);
+    return;
+  }
+  if (interaction.isMessageComponent()) {
+    await interaction.update({ embeds: payload.embeds, components: payload.components });
+    return;
+  }
+  await interaction.reply(payload);
+}
+
+async function handleConfiguracao(interaction) {
+  const sub = interaction.options.getSubcommand();
+  if (sub !== "loja") {
+    await interaction.reply({ content: "Use `/configuracao loja`.", ephemeral: true });
+    return;
+  }
+  await enviarPainelConfig(interaction);
 }
 
 function campoTexto(customId, label, style, valor, extra = {}) {
@@ -2363,6 +2939,16 @@ async function handleConfig(interaction) {
     const stv = store.guilds[interaction.guildId] || store.guilds[GUILD_ID];
     const cv = guildCfg(interaction.guildId).canais;
     const desc =
+<<<<<<< HEAD
+      `Canal de logs: ${store.config.logChannelId ? `<#${store.config.logChannelId}>` : "nao definido"}\n` +
+      `Canal de feedbacks: ${store.config.feedbackChannelId ? `<#${store.config.feedbackChannelId}>` : "nao definido"}\n` +
+      `Categoria de tickets: ${store.config.ticketCategoryId ? `<#${store.config.ticketCategoryId}>` : "nao definida"}\n` +
+      `Loja fixa: ${store.lojaFixa.channelId ? `<#${store.lojaFixa.channelId}>` : "nao publicada"}\n` +
+      `Banner da loja: ${urlMidiaValida(store.config.banner) ? `definido (${store.config.bannerPosicao || "top"})` : "nao definido"}\n` +
+      `Nome PIX publico: **${pixNomePublico()}** (ocultar nome completo: ${store.config.ocultarNomePix !== false ? "sim" : "nao"})\n` +
+      `SMTP: ${store.config.smtpHost ? store.config.smtpHost : "nao configurado"}\n` +
+      `Loja: **${store.config.lojaPausada ? "PAUSADA" : "aberta"}**${store.config.lojaPausaMotivo ? ` (${store.config.lojaPausaMotivo})` : ""}\n` +
+=======
       `Canal de logs: ${cv.logs ? `<#${cv.logs}>` : "nao definido"}\n` +
       `Canal de feedbacks: ${cv.feedbacks ? `<#${cv.feedbacks}>` : "nao definido"}\n` +
       `Categoria de tickets: ${stv.ticketCategoryId ? `<#${stv.ticketCategoryId}>` : "nao definida"}\n` +
@@ -2370,6 +2956,7 @@ async function handleConfig(interaction) {
       `Banner da loja: ${urlMidiaValida(store.config.banner) ? `definido (${store.config.bannerPosicao || "top"})` : "nao definido"}\n` +
       `Nome PIX publico: **${pixNomePublico()}** (ocultar nome completo: ${store.config.ocultarNomePix !== false ? "sim" : "nao"})\n` +
       `SMTP: ${store.config.smtpHost ? store.config.smtpHost : "nao configurado"}\n` +
+>>>>>>> origin/main
       `Cargos temporarios ativos: ${store.cargosTemporarios.length}\n` +
       `Pedidos registrados: ${Object.keys(store.pedidos).length}`;
     await interaction.reply({
@@ -2391,9 +2978,15 @@ async function handleConfig(interaction) {
 
   if (sub === "categoria-ticket") {
     const categoria = interaction.options.getChannel("categoria", true);
+<<<<<<< HEAD
+    store.config.ticketCategoryId = categoria.id;
+    salvarStore();
+    await interaction.reply({ content: `Categoria de tickets definida em <#${store.config.ticketCategoryId}>.`, ephemeral: true });
+=======
     store.guilds[interaction.guildId].ticketCategoryId = categoria.id;
     salvarStore();
     await interaction.reply({ content: `Categoria de tickets definida em <#${categoria.id}>.`, ephemeral: true });
+>>>>>>> origin/main
     return;
   }
 
@@ -2452,9 +3045,87 @@ async function handleConfig(interaction) {
     return;
   }
 
+<<<<<<< HEAD
+  if (sub === "smtp-teste") {
+    const destino = (interaction.options.getString("email") || "").trim();
+    if (!destino || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(destino)) {
+      await interaction.reply({ content: "Informe um e-mail valido.", ephemeral: true });
+      return;
+    }
+    await interaction.deferReply({ ephemeral: true });
+    try {
+      await testarSmtp(store.config, destino);
+      await interaction.editReply({ content: `E-mail de teste enviado para **${destino}**.` });
+    } catch (error) {
+      await interaction.editReply({ content: `Falha no SMTP: ${error.message}` });
+    }
+    return;
+  }
+
+  if (sub === "pausar") {
+    const pausar = interaction.options.getBoolean("pausar", true);
+    const motivo = (interaction.options.getString("motivo") || "").trim();
+    store.config.lojaPausada = pausar;
+    store.config.lojaPausaMotivo = pausar ? motivo : "";
+    salvarStore();
+    await atualizarLojaFixa();
+    registrarLog(pausar ? "loja_pausada" : "loja_reativada", pausar ? `Loja pausada. ${motivo}` : "Loja reaberta.", {
+      staffId: interaction.user.id
+    });
+    await interaction.reply({
+      content: pausar ? `Loja **pausada**.${motivo ? ` Motivo: ${motivo}` : ""}` : "Loja **reaberta**.",
+      ephemeral: true
+    });
+    return;
+  }
+
   await interaction.reply({ content: "Subcomando de config desconhecido. Use /config ver.", ephemeral: true }).catch(() => {});
 }
 
+async function handleFila(interaction) {
+  const pedidos = Object.values(store.pedidos)
+    .filter(p => p.status === STATUS.AGUARDANDO_PAGAMENTO || p.status === STATUS.AGUARDANDO_ENTREGA)
+    .sort((a, b) => a.id - b.id);
+  if (!pedidos.length) {
+    await interaction.reply({ content: "Nenhum pedido aberto.", ephemeral: true });
+    return;
+  }
+  const linhas = pedidos.slice(0, 20).map(p => {
+    const atraso = p.prazoEntregaAte && Date.now() > p.prazoEntregaAte ? " ATRASADO" : "";
+    return `#${p.id} — ${p.produtoNome} — ${formatarReais(p.valorCentavos)} — ${STATUS_LABEL[p.status]}${atraso} — <@${p.userId}>`;
+  });
+  await interaction.reply({
+    embeds: [new EmbedBuilder().setTitle("Fila de pedidos").setDescription(linhas.join("\n")).setColor(0xfee75c)],
+    ephemeral: true
+  });
+}
+
+async function handleBackup(interaction) {
+  const sub = interaction.options.getSubcommand();
+  if (sub === "exportar") {
+    await interaction.deferReply({ ephemeral: true });
+    const dump = {
+      savedAt: Date.now(),
+      config: { ...store.config, smtpPass: store.config.smtpPass ? "(oculto)" : null },
+      produtos: store.produtos,
+      produtoOverrides: store.produtoOverrides,
+      categorias: store.categorias,
+      cupons: store.cupons,
+      nextPedidoId: store.nextPedidoId,
+      estoqueResumo: Object.fromEntries(Object.entries(store.estoque || {}).map(([k, v]) => [k, Array.isArray(v) ? v.length : 0]))
+    };
+    await interaction.editReply({
+      content: "Backup da loja (sem senha SMTP e sem estoque secreto).",
+      files: [new AttachmentBuilder(Buffer.from(JSON.stringify(dump, null, 2), "utf8"), { name: `backup-loja-${Date.now()}.json` })]
+    });
+  }
+}
+
+=======
+  await interaction.reply({ content: "Subcomando de config desconhecido. Use /config ver.", ephemeral: true }).catch(() => {});
+}
+
+>>>>>>> origin/main
 async function handleCategoria(interaction) {
   const sub = interaction.options.getSubcommand();
   if (sub === "criar") {
@@ -2723,13 +3394,21 @@ const commands = [
     .setDefaultMemberPermissions(PermissionFlagsBits.ManageGuild)
     .addSubcommand(sub =>
       sub.setName("adicionar").setDescription("Adiciona itens ao estoque (um por linha).")
+<<<<<<< HEAD
+        .addStringOption(o => o.setName("produto").setDescription("Produto").setRequired(true).setAutocomplete(true))
+=======
         .addStringOption(o => o.setName("produto").setDescription("Produto").setRequired(true).addChoices(...escolhasProdutos()))
+>>>>>>> origin/main
         .addStringOption(o => o.setName("conteudo").setDescription("Segredo/codigo. Um item por linha.").setRequired(true))
     )
     .addSubcommand(sub => sub.setName("listar").setDescription("Mostra o estoque."))
     .addSubcommand(sub =>
       sub.setName("remover").setDescription("Remove um item pelo id.")
+<<<<<<< HEAD
+        .addStringOption(o => o.setName("produto").setDescription("Produto").setRequired(true).setAutocomplete(true))
+=======
         .addStringOption(o => o.setName("produto").setDescription("Produto").setRequired(true).addChoices(...escolhasProdutos()))
+>>>>>>> origin/main
         .addIntegerOption(o => o.setName("id").setDescription("Id do item").setRequired(true).setMinValue(1))
     ),
   new SlashCommandBuilder()
@@ -2761,8 +3440,25 @@ const commands = [
     .setDefaultMemberPermissions(PermissionFlagsBits.ManageGuild)
     .addSubcommand(sub => sub.setName("listar").setDescription("Lista os produtos."))
     .addSubcommand(sub =>
+      sub.setName("criar").setDescription("Cria um produto novo na vitrine.")
+        .addStringOption(o => o.setName("id").setDescription("ID interno (ex: nitro_1m_promo)").setRequired(true).setMaxLength(32))
+        .addStringOption(o => o.setName("nome").setDescription("Nome visivel").setRequired(true).setMaxLength(80))
+        .addNumberOption(o => o.setName("preco").setDescription("Preco em reais").setRequired(true).setMinValue(0))
+        .addStringOption(o => o.setName("categoria").setDescription("ID da categoria (cria se nao existir)").setMaxLength(32))
+        .addStringOption(o =>
+          o.setName("modo").setDescription("Entrega automatica ou pela staff")
+            .addChoices({ name: "Automatico", value: "auto" }, { name: "Staff", value: "semi" })
+        )
+        .addStringOption(o => o.setName("descricao").setDescription("Descricao").setMaxLength(1000))
+        .addStringOption(o => o.setName("emoji").setDescription("Emoji").setMaxLength(8))
+    )
+    .addSubcommand(sub =>
       sub.setName("editar").setDescription("Edita um produto.")
+<<<<<<< HEAD
+        .addStringOption(o => o.setName("produto").setDescription("Produto").setRequired(true).setAutocomplete(true))
+=======
         .addStringOption(o => o.setName("produto").setDescription("Produto").setRequired(true).addChoices(...escolhasProdutos()))
+>>>>>>> origin/main
         .addStringOption(o =>
           o.setName("modo").setDescription("Entrega automatica (se houver estoque) ou pela staff")
             .addChoices({ name: "Automatico", value: "auto" }, { name: "Staff", value: "semi" })
@@ -2836,6 +3532,18 @@ const commands = [
         .addStringOption(o => o.setName("senha").setDescription("Senha / app password").setRequired(true))
         .addStringOption(o => o.setName("from").setDescription("From (ex: Loja <loja@email.com>)").setRequired(true))
         .addIntegerOption(o => o.setName("porta").setDescription("Porta (587 ou 465)").setMinValue(1))
+<<<<<<< HEAD
+    )
+    .addSubcommand(sub =>
+      sub.setName("smtp-teste").setDescription("Envia um e-mail de teste com o SMTP salvo.")
+        .addStringOption(o => o.setName("email").setDescription("Destino do teste").setRequired(true))
+    )
+    .addSubcommand(sub =>
+      sub.setName("pausar").setDescription("Pausa ou reabre a loja (bloqueia compras).")
+        .addBooleanOption(o => o.setName("pausar").setDescription("true = pausar, false = reabrir").setRequired(true))
+        .addStringOption(o => o.setName("motivo").setDescription("Motivo (aparece na vitrine)").setMaxLength(200))
+=======
+>>>>>>> origin/main
     ),
   new SlashCommandBuilder()
     .setName("configuracao")
@@ -2850,7 +3558,11 @@ const commands = [
     .setDefaultMemberPermissions(PermissionFlagsBits.ManageGuild)
     .addSubcommand(sub =>
       sub.setName("produto").setDescription("Abre o painel: nome, preco, estoque, cargo, cupons, variante e mais.")
+<<<<<<< HEAD
+        .addStringOption(o => o.setName("produto").setDescription("Produto").setRequired(true).setAutocomplete(true))
+=======
         .addStringOption(o => o.setName("produto").setDescription("Produto").setRequired(true).addChoices(...escolhasProdutos()))
+>>>>>>> origin/main
     ),
   new SlashCommandBuilder()
     .setName("categoria")
@@ -2896,11 +3608,15 @@ const commands = [
   new SlashCommandBuilder()
     .setName("avaliacoes")
     .setDescription("Mostra as avaliacoes de um produto.")
+<<<<<<< HEAD
+    .addStringOption(o => o.setName("produto").setDescription("Produto").setRequired(true).setAutocomplete(true)),
+=======
     .addStringOption(o => o.setName("produto").setDescription("Produto").setRequired(true).addChoices(...escolhasProdutos())),
   new SlashCommandBuilder()
     .setName("painel")
     .setDescription("Painel unico da staff: loja, tickets, produto, estoque e cupons.")
     .setDefaultMemberPermissions(PermissionFlagsBits.ManageGuild),
+>>>>>>> origin/main
   new SlashCommandBuilder()
     .setName("painel-ticket")
     .setDescription("Publica o painel de abertura de tickets (staff).")
@@ -2917,7 +3633,16 @@ const commands = [
   new SlashCommandBuilder()
     .setName("relatorio")
     .setDescription("Resumo de vendas (staff).")
+    .setDefaultMemberPermissions(PermissionFlagsBits.ManageGuild),
+  new SlashCommandBuilder()
+    .setName("fila")
+    .setDescription("Pedidos abertos aguardando Pix ou entrega (staff).")
+    .setDefaultMemberPermissions(PermissionFlagsBits.ManageGuild),
+  new SlashCommandBuilder()
+    .setName("backup")
+    .setDescription("Backup da loja (staff).")
     .setDefaultMemberPermissions(PermissionFlagsBits.ManageGuild)
+    .addSubcommand(sub => sub.setName("exportar").setDescription("Baixa JSON de config, produtos, categorias e cupons."))
 ].map(c => c.toJSON());
 
 async function discordGet(caminho) {
@@ -3070,8 +3795,13 @@ async function handleCommand(interaction) {
       await interaction.reply({
         embeds: [embedPedidoCliente(pedido)],
         components: pedido.pixCopiaECola && pedido.status === STATUS.AGUARDANDO_PAGAMENTO
+<<<<<<< HEAD
+          ? botoesPix(pedido.id, pedido.cartChannelId)
+          : botaoIrCarrinho(pedido.cartChannelId),
+=======
           ? botoesPix(pedido.id, pedido.cartChannelId, pedido.guildId)
           : botaoIrCarrinho(pedido.cartChannelId, pedido.guildId),
+>>>>>>> origin/main
         ephemeral: true
       });
       return;
@@ -3091,6 +3821,8 @@ async function handleCommand(interaction) {
     case "configuracao":
       await handleConfiguracao(interaction);
       return;
+<<<<<<< HEAD
+=======
     case "painel":
       if (!isStaff(interaction.member)) {
         await interaction.reply({ content: "So a staff pode usar o painel.", ephemeral: true });
@@ -3098,6 +3830,7 @@ async function handleCommand(interaction) {
       }
       await interaction.reply({ ...payloadPainelStaff(), ephemeral: true });
       return;
+>>>>>>> origin/main
     case "gerenciar":
       await handleGerenciar(interaction);
       return;
@@ -3125,6 +3858,12 @@ async function handleCommand(interaction) {
     case "relatorio":
       await handleRelatorio(interaction);
       return;
+    case "fila":
+      await handleFila(interaction);
+      return;
+    case "backup":
+      await handleBackup(interaction);
+      return;
     default:
       console.warn(`Comando nao reconhecido: /${interaction.commandName}. Os comandos atuais serao re-registrados.`);
       await registerCommands().catch(() => {});
@@ -3138,6 +3877,10 @@ async function handleButton(interaction) {
   const [acao, valor] = interaction.customId.split(":");
 
   if (acao === "comprar") {
+    if (store.config.lojaPausada) {
+      await interaction.reply({ content: motivoLojaPausada(), ephemeral: true });
+      return;
+    }
     const produto = getProduto(valor);
     if (!produto || !produto.disponivel) {
       await interaction.reply({ content: "Esse produto nao esta disponivel.", ephemeral: true });
@@ -3391,6 +4134,27 @@ async function handleButton(interaction) {
     return;
   }
 
+  if (acao === "marcarpago") {
+    if (!isStaff(interaction.member)) {
+      await interaction.reply({ content: "So a staff pode marcar pagamento.", ephemeral: true });
+      return;
+    }
+    const pedido = store.pedidos[String(valor)];
+    if (!pedido || pedido.status !== STATUS.AGUARDANDO_PAGAMENTO) {
+      await interaction.reply({ content: "Esse pedido nao esta aguardando Pix.", ephemeral: true });
+      return;
+    }
+    await interaction.deferReply({ ephemeral: true });
+    registrarLog("pagamento_manual", `Pedido #${pedido.id} marcado como pago por <@${interaction.user.id}>.`, {
+      pedidoId: pedido.id,
+      userId: pedido.userId,
+      staffId: interaction.user.id
+    });
+    await confirmarPagamento(pedido, { status: "approved" });
+    await interaction.editReply({ content: `Pedido #${pedido.id} marcado como pago.` });
+    return;
+  }
+
   if (acao === "cancelar") {
     await interaction.deferReply({ ephemeral: true });
     const member = interaction.member;
@@ -3575,16 +4339,44 @@ async function handleButton(interaction) {
       return;
     }
     await interaction.deferUpdate();
+<<<<<<< HEAD
+    await publicarLojaFixa();
+    await interaction.editReply(payloadPainelConfig());
+    return;
+  }
+
+  if (acao === "cfg_pausar") {
+=======
     await publicarLojaFixa(interaction.guildId);
     await interaction.editReply(payloadPainelConfig(interaction.guildId));
     return;
   }
 
   if (acao === "cfg_ticket_painel") {
+>>>>>>> origin/main
     if (!isStaff(interaction.member)) {
       await interaction.reply({ content: "So a staff pode configurar.", ephemeral: true });
       return;
     }
+<<<<<<< HEAD
+    if (store.config.lojaPausada) {
+      store.config.lojaPausada = false;
+      store.config.lojaPausaMotivo = "";
+      salvarStore();
+      await atualizarLojaFixa();
+      registrarLog("loja_reativada", "Loja reaberta pelo painel.", { staffId: interaction.user.id });
+      await enviarPainelConfig(interaction);
+      return;
+    }
+    const modal = new ModalBuilder().setCustomId("cfg_pausar_modal").setTitle("Pausar loja");
+    modal.addComponents(
+      new ActionRowBuilder().addComponents(
+        campoTexto("motivo", "Motivo (aparece na vitrine)", TextInputStyle.Short, store.config.lojaPausaMotivo || "Manutencao", {
+          required: false,
+          maxLength: 200
+        })
+      )
+=======
     const cfg = ticketPainel();
     const modal = new ModalBuilder().setCustomId("cfg_ticket_texto_modal").setTitle("Personalizar ticket");
     modal.addComponents(
@@ -3593,11 +4385,16 @@ async function handleButton(interaction) {
       new ActionRowBuilder().addComponents(campoTexto("botao", "Nome do botao", TextInputStyle.Short, cfg.botaoLabel, { required: true, maxLength: 80 })),
       new ActionRowBuilder().addComponents(campoTexto("cor", "Cor hex (ex: 5865F2)", TextInputStyle.Short, cfg.cor || "5865F2", { required: false, maxLength: 7 })),
       new ActionRowBuilder().addComponents(campoTexto("emoji", "Emoji do botao (vazio remove)", TextInputStyle.Short, cfg.botaoEmoji || "", { required: false, maxLength: 32 }))
+>>>>>>> origin/main
     );
     await interaction.showModal(modal);
     return;
   }
 
+<<<<<<< HEAD
+  if (acao === "loja_pausada") {
+    await interaction.reply({ content: motivoLojaPausada(), ephemeral: true }).catch(() => {});
+=======
   if (acao === "cfg_ticket_midia") {
     if (!isStaff(interaction.member)) {
       await interaction.reply({ content: "So a staff pode configurar.", ephemeral: true });
@@ -3704,6 +4501,7 @@ async function handleButton(interaction) {
     }
     await atualizarPainelCupons().catch(() => {});
     await interaction.reply({ content: `Painel de cupons publicado em <#${guildCfg(interaction.guildId).canais.cupons}>.`, ephemeral: true });
+>>>>>>> origin/main
     return;
   }
 
@@ -3869,6 +4667,16 @@ async function handleSelect(interaction) {
   }
 
   if (id === "ticket_cat") {
+<<<<<<< HEAD
+    const categoria = store.categorias[valor];
+    await interaction.deferReply({ ephemeral: true });
+    const canal = await abrirTicket(
+      interaction.guild,
+      interaction.user,
+      categoria ? `Atendimento: ${categoria.nome}` : "Atendimento"
+    );
+    await interaction.editReply(`Ticket aberto em <#${canal.id}> (${categoria ? categoria.nome : valor}).`);
+=======
     await interaction.showModal(modalMotivoTicket(valor));
     return;
   }
@@ -3904,6 +4712,7 @@ async function handleSelect(interaction) {
       )
     );
     await interaction.showModal(modal);
+>>>>>>> origin/main
     return;
   }
 
@@ -3912,7 +4721,11 @@ async function handleSelect(interaction) {
       await interaction.reply({ content: "So a staff pode configurar.", ephemeral: true });
       return;
     }
+<<<<<<< HEAD
+    store.config.ticketCategoryId = valor;
+=======
     store.guilds[interaction.guildId].ticketCategoryId = valor;
+>>>>>>> origin/main
     salvarStore();
     await enviarPainelConfig(interaction);
     return;
@@ -4095,6 +4908,8 @@ async function handleModal(interaction) {
     return;
   }
 
+<<<<<<< HEAD
+=======
   if (acao === "ticket_motivo_modal") {
     const motivo = (interaction.fields.getTextInputValue("motivo") || "").trim();
     if (!motivo) {
@@ -4245,6 +5060,7 @@ async function handleModal(interaction) {
     return;
   }
 
+>>>>>>> origin/main
   if (acao === "cfg_banner_modal") {
     if (!isStaff(interaction.member)) {
       await interaction.reply({ content: "So a staff pode configurar.", ephemeral: true });
@@ -4260,7 +5076,11 @@ async function handleModal(interaction) {
     if (posicao) store.config.bannerPosicao = posicao;
     salvarStore();
     await atualizarLojaFixa().catch(error => console.error("Falha ao atualizar loja fixa:", error.message));
+<<<<<<< HEAD
+    await interaction.reply({ ...payloadPainelConfig(), ephemeral: true });
+=======
     await interaction.reply({ ...payloadPainelConfig(interaction.guildId), ephemeral: true });
+>>>>>>> origin/main
     return;
   }
 
@@ -4275,7 +5095,25 @@ async function handleModal(interaction) {
     store.config.smtpPass = interaction.fields.getTextInputValue("senha") || "";
     store.config.smtpFrom = (interaction.fields.getTextInputValue("from") || "").trim();
     salvarStore();
+<<<<<<< HEAD
+    await interaction.reply({ ...payloadPainelConfig(), ephemeral: true });
+    return;
+  }
+
+  if (acao === "cfg_pausar_modal") {
+    if (!isStaff(interaction.member)) {
+      await interaction.reply({ content: "So a staff pode configurar.", ephemeral: true });
+      return;
+    }
+    store.config.lojaPausada = true;
+    store.config.lojaPausaMotivo = (interaction.fields.getTextInputValue("motivo") || "").trim();
+    salvarStore();
+    await atualizarLojaFixa().catch(() => {});
+    registrarLog("loja_pausada", `Loja pausada. ${store.config.lojaPausaMotivo}`, { staffId: interaction.user.id });
+    await interaction.reply({ ...payloadPainelConfig(), ephemeral: true });
+=======
     await interaction.reply({ ...payloadPainelConfig(interaction.guildId), ephemeral: true });
+>>>>>>> origin/main
     return;
   }
 
@@ -4288,7 +5126,11 @@ async function handleModal(interaction) {
     const ocultar = (interaction.fields.getTextInputValue("ocultar") || "sim").trim().toLowerCase();
     store.config.ocultarNomePix = !["nao", "não", "no", "n", "false", "0"].includes(ocultar);
     salvarStore();
+<<<<<<< HEAD
+    await interaction.reply({ ...payloadPainelConfig(), ephemeral: true });
+=======
     await interaction.reply({ ...payloadPainelConfig(interaction.guildId), ephemeral: true });
+>>>>>>> origin/main
     return;
   }
 
@@ -4465,12 +5307,21 @@ async function handleModal(interaction) {
     .catch(() => {});
 }
 
+<<<<<<< HEAD
+async function handleAutocomplete(interaction) {
+  const focused = interaction.options.getFocused(true);
+  if (focused.name === "produto") {
+    await interaction.respond(opcoesAutocompleteProduto(focused.value)).catch(() => {});
+  }
+}
+=======
 client.on("guildCreate", async guild => {
   if (!guildPermitida(guild.id)) {
     console.warn(`Servidor nao autorizado: ${guild.name} (${guild.id}). Saindo.`);
     await guild.leave().catch(() => {});
   }
 });
+>>>>>>> origin/main
 
 client.on("interactionCreate", async interaction => {
   if (interaction.guildId && !guildPermitida(interaction.guildId)) {
@@ -4480,6 +5331,10 @@ client.on("interactionCreate", async interaction => {
     return;
   }
   try {
+    if (interaction.isAutocomplete()) {
+      await handleAutocomplete(interaction);
+      return;
+    }
     if (interaction.isChatInputCommand()) {
       await handleCommand(interaction);
       return;
