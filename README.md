@@ -38,11 +38,16 @@ Staff (exigem Gerenciar Servidor):
 - `/canais colar arquivo:` — cola a estrutura (mesmo nome) em outro servidor
 - `/categoria canal nome: categoria-existente: nova-categoria:` — cria canal em categoria nova ou existente
 - `/produto listar`
+- `/produto criar id: nome: preco: categoria: modo:` — cria produto novo (aparece na vitrine na hora)
 - `/produto editar produto: modo: cargo: cargo-dias: preco: disponivel:`
-- `/configuracao loja` — painel unico (banner, SMTP, PIX, categoria de tickets, publicar loja)
+- `/configuracao loja` — painel unico (banner, SMTP, PIX, pausar/reabrir, publicar loja)
 - `/gerenciar produto` — painel do produto (nome, preco, estoque, cargo, cupons, variante, apagar)
 - `/config ver`
+- `/config pausar pausar: motivo:` — pausa ou reabre a loja (bloqueia compras)
+- `/config smtp-teste email:` — testa o SMTP da entrega por e-mail
 - `/config canal-logs canal:` / `/config canal-feedback canal:` / `/config categoria-ticket categoria:`
+- `/fila` — pedidos abertos (Pix ou entrega), marca atrasados
+- `/backup exportar` — JSON de config, produtos, categorias e cupons
 - `/painel-ticket` — publica o painel de abertura de tickets
 - `/logs quantidade:` — logs de vendas recentes
 - `/relatorio` — resumo de vendas
@@ -67,6 +72,10 @@ Staff (exigem Gerenciar Servidor):
 - **Banner**: `top`, `bottom`, `thumbnail`, `float` (`/config banner-posicao` e `/produto editar`).
 - **Instrucoes do produto**: campo no extra do produto (ex: acesse o site X e cole o codigo).
 - **Logo no QR**: `assets/qr-logo.png` vai no centro do QR Code.
+- **Pausar loja**: `/config pausar` ou o botao no painel. A vitrine mostra o motivo e o Comprar fica bloqueado.
+- **Pix manual**: no canal admin, **Marcar Pix pago** confirma o pedido se o webhook falhar.
+- **Fila**: `/fila` lista Pix pendente e entregas, com aviso de atraso (prazo 2h).
+- **Backup**: `/backup exportar` (sem senha SMTP e sem estoque secreto).
 
 ## Variaveis de ambiente
 
