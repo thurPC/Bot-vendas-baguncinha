@@ -232,7 +232,8 @@ if (!store.guilds) store.guilds = {};
 for (const gid of GUILD_IDS) {
   const g = store.guilds[gid] || (store.guilds[gid] = {});
   if (!g.lojaFixa) g.lojaFixa = { channelId: null, messageId: null };
-  if (!g.paineisFixos) g.paineisFixos = { ticket: null, cupons: null };
+  if (!g.paineisFixos) g.paineisFixos = { ticket: null, cupons: null, feedbacks: null };
+  if (g.paineisFixos.feedbacks === undefined) g.paineisFixos.feedbacks = null;
   if (g.ticketCategoryId === undefined) g.ticketCategoryId = null;
 }
 // migra os dados antigos (servidor unico) para o servidor 1
@@ -253,7 +254,8 @@ if (store.config.ticketPainel.botaoEmoji === undefined) store.config.ticketPaine
 if (!store.config.ticketPainel.cor) store.config.ticketPainel.cor = "5865F2";
 if (store.config.ticketPainel.miniatura === undefined) store.config.ticketPainel.miniatura = null;
 if (store.config.ticketPainel.banner === undefined) store.config.ticketPainel.banner = null;
-if (store.config.ticketPainel.rodape === undefined) store.config.ticketPainel.rodape = null;if (!store.categorias) {
+if (store.config.ticketPainel.rodape === undefined) store.config.ticketPainel.rodape = null;
+if (!store.categorias) {
   store.categorias = {
     nitro: { id: "nitro", nome: "Nitro", emoji: "💎", descricao: "Discord Nitro", posicao: 0, ativo: true },
     boost: { id: "boost", nome: "Boosts", emoji: "🚀", descricao: "Boosts de servidor", posicao: 1, ativo: true }
@@ -512,6 +514,37 @@ function isStaff(member) {
   return member.permissions.has(PermissionFlagsBits.ManageGuild);
 }
 
+function canaisComandoRestrito(guildId) {
+  const c = (guildCfg(guildId) || {}).canais || {};
+  return [c.loja, c.feedbacks, c.logs, c.ticket, c.cupons].filter(Boolean);
+}
+
+function canalBloqueiaComandoCliente(interaction) {
+  if (!interaction.guildId || !interaction.channelId) return false;
+  if (isStaff(interaction.member)) return false;
+  return canaisComandoRestrito(interaction.guildId).includes(interaction.channelId);
+}
+
+function avisoComandoBloqueado(interaction) {
+  const c = (guildCfg(interaction.guildId) || {}).canais || {};
+  if (interaction.channelId === c.loja) {
+    return "Neste canal use os botoes da vitrine. Seus pedidos ficam no botao **Meus pedidos**.";
+  }
+  if (interaction.channelId === c.ticket) {
+    return "Neste canal use o seletor ou o botao do painel para abrir um ticket.";
+  }
+  if (interaction.channelId === c.feedbacks) {
+    return "Neste canal use os botoes **Avaliar pedido** e **Ver avaliacoes**.";
+  }
+  if (interaction.channelId === c.logs) {
+    return "Este canal e so de logs. Comandos ficam apenas para a staff.";
+  }
+  if (interaction.channelId === c.cupons) {
+    return "Neste canal os cupons ja aparecem no painel. Comandos ficam apenas para a staff.";
+  }
+  return "Neste canal use os botoes do painel. Comandos ficam so para a staff.";
+}
+
 function logCanalPublico(tipo) {
   return tipo === "entregue";
 }
@@ -549,7 +582,8 @@ async function enviarLogCanal(entrada) {
   const cfg = guildCfg(entrada.guildId);
   const logId = cfg.canais.logs;
   if (!logId || logId === cfg.canais.loja) return;
-  const canal = await client.channels.fetch(logId).catch(() => null);  if (!canal || canalEhLoja(canal)) return;
+  const canal = await client.channels.fetch(logId).catch(() => null);
+  if (!canal || canalEhLoja(canal)) return;
   await canal.send({ embeds: [embedLog(entrada)] }).catch(() => {});
 }
 
@@ -577,14 +611,21 @@ function catalogoEmbed(categoriaId) {
     ? motivoLojaPausada()
     : categoria
       ? (categoria.descricao || "Escolha um produto desta categoria.")
-      : "Selecione uma categoria para ver os produtos. O bot gera o Pix, confirma o pagamento e entrega.";
+      : cats.length
+        ? "Selecione uma categoria para ver os produtos. O bot gera o Pix, confirma o pagamento e entrega."
+        : "Escolha um produto. O bot gera o Pix, confirma o pagamento e entrega.";
+  let corpo = intro;
+  if (!store.config.lojaPausada) {
+    if (categoriaId) {
+      corpo += `\n\n${linhas.length ? linhas.join("\n\n") : "Nenhum produto nesta categoria."}`;
+    } else if (!cats.length) {
+      corpo += `\n\n${linhas.length ? linhas.join("\n\n") : "Nenhum produto no momento."}`;
+    }
+    corpo += `\n\nPrazo: ate **${PRAZO_ENTREGA_LABEL}** depois do Pix confirmado.`;
+  }
   const embed = new EmbedBuilder()
     .setTitle(store.config.lojaPausada ? "Loja pausada" : titulo)
-    .setDescription(
-      `${intro}\n\n` +
-      (store.config.lojaPausada ? "" : (linhas.length ? linhas.join("\n\n") : "Nenhum produto nesta categoria.") +
-      `\n\nPrazo: ate **${PRAZO_ENTREGA_LABEL}** depois do Pix confirmado.`)
-    )
+    .setDescription(corpo)
     .setColor(store.config.lojaPausada ? 0xed4245 : 0x9b59b6);
   aplicarBanner(embed, store.config.banner, store.config.bannerPosicao || "top");
   return embed;
@@ -614,8 +655,8 @@ function selectCategorias(customId = "cat") {
   if (!cats.length) return null;
   return new ActionRowBuilder().addComponents(
     new StringSelectMenuBuilder()
-      .setCustomId(customId)
-      .setPlaceholder("Selecione o tipo de atendimento / categoria")
+      .setCustomId(`${customId}:${Date.now()}`)
+      .setPlaceholder("Selecione uma categoria")
       .addOptions(
         cats.slice(0, 25).map(c => ({
           label: c.nome.slice(0, 100),
@@ -636,8 +677,26 @@ function botoesCatalogo(categoriaId) {
       )
     );
     return rows;
-  }  const produtos = categoriaId ? produtosDaCategoria(categoriaId) : todosProdutos();
-  for (const produto of produtos.slice(0, categoriaId ? 4 : 5)) {
+  }
+  const produtos = categoriaId ? produtosDaCategoria(categoriaId) : todosProdutos();
+  if (categoriaId) {
+    const botoes = produtos.slice(0, 20).map(produto =>
+      new ButtonBuilder()
+        .setCustomId(`ver:${produto.id}`)
+        .setLabel(produto.nome.slice(0, 80))
+        .setStyle(ButtonStyle.Primary)
+    );
+    for (let i = 0; i < botoes.length && rows.length < 4; i += 5) {
+      rows.push(new ActionRowBuilder().addComponents(...botoes.slice(i, i + 5)));
+    }
+    rows.push(
+      new ActionRowBuilder().addComponents(
+        new ButtonBuilder().setCustomId("loja_home").setLabel("Voltar").setStyle(ButtonStyle.Secondary)
+      )
+    );
+    return rows;
+  }
+  for (const produto of produtos.slice(0, 5)) {
     const esgotado = produtoEsgotado(produto);
     const row = new ActionRowBuilder().addComponents(
       new ButtonBuilder()
@@ -652,25 +711,37 @@ function botoesCatalogo(categoriaId) {
     );
     rows.push(row);
   }
-  if (categoriaId) {
-    rows.push(
-      new ActionRowBuilder().addComponents(
-        new ButtonBuilder().setCustomId("loja_home").setLabel("Voltar").setStyle(ButtonStyle.Secondary)
-      )
-    );
-  }
   return rows.slice(0, 5);
+}
+
+function rowAcoesCliente(incluirTicket = false) {
+  const botoes = [
+    new ButtonBuilder().setCustomId("cli_meuspedidos").setLabel("Meus pedidos").setStyle(ButtonStyle.Secondary),
+    new ButtonBuilder().setCustomId("cli_avaliar").setLabel("Avaliar pedido").setStyle(ButtonStyle.Secondary)
+  ];
+  if (incluirTicket) {
+    botoes.push(new ButtonBuilder().setCustomId("ticket_abrir").setLabel("Abrir ticket").setStyle(ButtonStyle.Secondary));
+  }
+  return new ActionRowBuilder().addComponents(...botoes);
 }
 
 function payloadLoja(categoriaId) {
   const components = [];
   if (store.config.lojaPausada) {
     components.push(...botoesCatalogo());
+    components.push(rowAcoesCliente(true));
     return { content: null, embeds: [catalogoEmbed(categoriaId)], components };
-  }  if (!categoriaId) {
+  }
+  if (!categoriaId) {
     const sel = selectCategorias("cat");
-    if (sel) components.push(sel);
-    else components.push(...botoesCatalogo());
+    if (sel) {
+      components.push(sel);
+    } else {
+      const rows = botoesCatalogo();
+      if (rows.length >= 5) rows.pop();
+      components.push(...rows);
+    }
+    components.push(rowAcoesCliente(true));
   } else {
     components.push(...botoesCatalogo(categoriaId));
   }
@@ -682,7 +753,8 @@ async function atualizarLojaFixa() {
   // atualiza a vitrine nos 2 servidores
   for (const gid of GUILD_IDS) {
     await atualizarLojaFixaGuild(gid).catch(error => console.error(`Falha ao atualizar loja (${gid}):`, error.message));
-  }}
+  }
+}
 
 async function atualizarLojaFixaGuild(gid) {
   const st = store.guilds[gid];
@@ -749,6 +821,7 @@ function payloadPainelTicket() {
     try { botao.setEmoji(cfg.botaoEmoji); } catch { /* emoji invalido */ }
   }
   components.push(new ActionRowBuilder().addComponents(botao));
+  components.push(rowAcoesCliente());
   return { embeds: [embed], components };
 }
 
@@ -765,7 +838,8 @@ function modalMotivoTicket(categoriaId) {
       })
     )
   );
-  return modal;}
+  return modal;
+}
 
 function payloadPainelCupons() {
   const cupons = Object.values(store.cupons).filter(c => c.ativo);
@@ -813,6 +887,42 @@ async function atualizarPainelCupons() {
 async function atualizarPaineisTicket() {
   for (const gid of GUILD_IDS) {
     await publicarOuAtualizarPainel(gid, "ticket", guildCfg(gid).canais.ticket, payloadPainelTicket()).catch(() => {});
+  }
+}
+
+function payloadPainelFeedback() {
+  const avaliacoes = Object.values(store.pedidos)
+    .filter(p => p.feedback)
+    .sort((a, b) => (b.feedback.em || 0) - (a.feedback.em || 0))
+    .slice(0, 8);
+  const linhas = avaliacoes.length
+    ? avaliacoes.map(p => {
+      const comentario = p.feedback.comentario ? `\n"${String(p.feedback.comentario).slice(0, 120)}"` : "";
+      return `${estrelas(p.feedback.nota)} — ${p.produtoNome} (pedido #${p.id})${comentario}`;
+    })
+    : ["Ainda nao ha avaliacoes. Compre e avalie pelo botao abaixo."];
+  const embed = new EmbedBuilder()
+    .setTitle("Avaliacoes da loja")
+    .setDescription(
+      "Use os botoes. Sem comando.\n\n" +
+      linhas.join("\n\n").slice(0, 3800)
+    )
+    .setColor(0xf1c40f);
+  return {
+    embeds: [embed],
+    components: [
+      new ActionRowBuilder().addComponents(
+        new ButtonBuilder().setCustomId("cli_avaliar").setLabel("Avaliar pedido").setStyle(ButtonStyle.Primary),
+        new ButtonBuilder().setCustomId("cli_avaliacoes").setLabel("Ver avaliacoes").setStyle(ButtonStyle.Secondary),
+        new ButtonBuilder().setCustomId("cli_meuspedidos").setLabel("Meus pedidos").setStyle(ButtonStyle.Secondary)
+      )
+    ]
+  };
+}
+
+async function atualizarPainelFeedbacks() {
+  for (const gid of GUILD_IDS) {
+    await publicarOuAtualizarPainel(gid, "feedbacks", guildCfg(gid).canais.feedbacks, payloadPainelFeedback()).catch(() => {});
   }
 }
 
@@ -944,6 +1054,7 @@ async function publicarCanaisFixos() {
   }
   await atualizarPaineisTicket();
   await atualizarPainelCupons();
+  await atualizarPainelFeedbacks();
 }
 
 function embedPedidoCliente(pedido, extra, opcoes = {}) {
@@ -1216,6 +1327,7 @@ async function registrarFeedback(pedido, nota, comentario) {
     pedidoId: pedido.id,
     userId: pedido.userId
   });
+  await atualizarPainelFeedbacks().catch(() => {});
 }
 
 async function concederCargo(pedido, produto) {
@@ -1680,7 +1792,8 @@ async function overwritesPrivado(guild, userId) {
 async function abrirCarrinho(guild, user, pedido) {
 
   const aberto = Object.entries(store.carrinhos).find(([, c]) =>
-    c.userId === user.id && c.status === "aberto" && (c.guildId || GUILD_ID) === guild.id);  if (aberto) {
+    c.userId === user.id && c.status === "aberto" && (c.guildId || GUILD_ID) === guild.id);
+  if (aberto) {
     const existente = guild.channels.cache.get(aberto[0]) || await guild.channels.fetch(aberto[0]).catch(() => null);
     if (existente) {
       store.carrinhos[existente.id].pedidoId = pedido.id;
@@ -1764,14 +1877,16 @@ async function abrirTicket(guild, user, assunto) {
   const overwrites = await overwritesPrivado(guild, user.id);
 
   const adminRoleId = guildCfg(guild.id).adminRoleId;
-  if (adminRoleId) {    overwrites.push({
+  if (adminRoleId) {
+    overwrites.push({
       id: adminRoleId,
       allow: [PermissionFlagsBits.ViewChannel, PermissionFlagsBits.SendMessages, PermissionFlagsBits.ReadMessageHistory]
     });
   }
 
 
-  let parent = (store.guilds[guild.id] && store.guilds[guild.id].ticketCategoryId) || undefined;  if (parent) {
+  let parent = (store.guilds[guild.id] && store.guilds[guild.id].ticketCategoryId) || undefined;
+  if (parent) {
     const cat = await guild.channels.fetch(parent).catch(() => null);
     if (cat) parent = cat.id;
   }
@@ -2656,7 +2771,8 @@ async function handleConfig(interaction) {
       `Loja fixa: ${stv.lojaFixa.channelId ? `<#${stv.lojaFixa.channelId}>` : "nao publicada"}\n` +
       `Banner da loja: ${urlMidiaValida(store.config.banner) ? `definido (${store.config.bannerPosicao || "top"})` : "nao definido"}\n` +
       `Nome PIX publico: **${pixNomePublico()}** (ocultar nome completo: ${store.config.ocultarNomePix !== false ? "sim" : "nao"})\n` +
-      `SMTP: ${store.config.smtpHost ? store.config.smtpHost : "nao configurado"}\n` +      `Loja: **${store.config.lojaPausada ? "PAUSADA" : "aberta"}**${store.config.lojaPausaMotivo ? ` (${store.config.lojaPausaMotivo})` : ""}\n` +
+      `SMTP: ${store.config.smtpHost ? store.config.smtpHost : "nao configurado"}\n` +
+      `Loja: **${store.config.lojaPausada ? "PAUSADA" : "aberta"}**${store.config.lojaPausaMotivo ? ` (${store.config.lojaPausaMotivo})` : ""}\n` +
       `Cargos temporarios ativos: ${store.cargosTemporarios.length}\n` +
       `Pedidos registrados: ${Object.keys(store.pedidos).length}`;
     await interaction.reply({
@@ -2681,7 +2797,8 @@ async function handleConfig(interaction) {
 
     store.guilds[interaction.guildId].ticketCategoryId = categoria.id;
     salvarStore();
-    await interaction.reply({ content: `Categoria de tickets definida em <#${categoria.id}>.`, ephemeral: true });    return;
+    await interaction.reply({ content: `Categoria de tickets definida em <#${categoria.id}>.`, ephemeral: true });
+    return;
   }
 
   if (sub === "canal-loja") {
@@ -3409,7 +3526,138 @@ async function registerCommands() {
   }
 }
 
+function pedidosDoCliente(userId) {
+  return Object.values(store.pedidos)
+    .filter(p => p.userId === userId)
+    .sort((a, b) => Number(b.id) - Number(a.id));
+}
+
+function payloadMeusPedidos(userId) {
+  const meus = pedidosDoCliente(userId).slice(0, 25);
+  if (!meus.length) {
+    return { content: "Voce ainda nao tem pedidos.", embeds: [], components: [] };
+  }
+  const linhas = meus.slice(0, 8).map(p =>
+    `#${p.id} — ${p.produtoNome} — ${formatarReais(p.valorCentavos)} — ${STATUS_LABEL[p.status]}`
+  );
+  return {
+    content: null,
+    embeds: [new EmbedBuilder().setTitle("Seus pedidos").setDescription(linhas.join("\n")).setColor(0x9b59b6)],
+    components: [
+      new ActionRowBuilder().addComponents(
+        new StringSelectMenuBuilder()
+          .setCustomId(`cli_pedido_sel:${Date.now()}`)
+          .setPlaceholder("Abrir um pedido")
+          .addOptions(meus.map(p => ({
+            label: `#${p.id} — ${String(p.produtoNome).slice(0, 70)}`.slice(0, 100),
+            value: String(p.id),
+            description: String(STATUS_LABEL[p.status] || p.status).slice(0, 100)
+          })))
+      )
+    ]
+  };
+}
+
+function componentsPedidoCliente(pedido) {
+  const rows = [];
+  if (pedido.pixCopiaECola && pedido.status === STATUS.AGUARDANDO_PAGAMENTO) {
+    rows.push(...botoesPix(pedido.id, pedido.cartChannelId, pedido.guildId));
+  } else {
+    rows.push(...botaoIrCarrinho(pedido.cartChannelId, pedido.guildId));
+  }
+  if (pedido.status === STATUS.ENTREGUE && !pedido.feedback) {
+    rows.push(
+      new ActionRowBuilder().addComponents(
+        new ButtonBuilder().setCustomId(`avaliar:${pedido.id}`).setLabel("Avaliar pedido").setStyle(ButtonStyle.Primary)
+      )
+    );
+  }
+  return rows;
+}
+
+function pedidosParaAvaliar(userId) {
+  return pedidosDoCliente(userId).filter(p => p.status === STATUS.ENTREGUE && !p.feedback);
+}
+
+function payloadEscolherAvaliacao(userId) {
+  const lista = pedidosParaAvaliar(userId).slice(0, 25);
+  if (!lista.length) {
+    return { content: "Voce nao tem pedido entregue pendente de avaliacao.", embeds: [], components: [] };
+  }
+  return {
+    content: "Escolha o pedido para avaliar.",
+    embeds: [],
+    components: [
+      new ActionRowBuilder().addComponents(
+        new StringSelectMenuBuilder()
+          .setCustomId(`cli_avaliar_sel:${Date.now()}`)
+          .setPlaceholder("Pedido para avaliar")
+          .addOptions(lista.map(p => ({
+            label: `#${p.id} — ${String(p.produtoNome).slice(0, 70)}`.slice(0, 100),
+            value: String(p.id),
+            description: "Entregue — toque para avaliar".slice(0, 100)
+          })))
+      )
+    ]
+  };
+}
+
+function payloadEscolherAvaliacoesProduto() {
+  const ids = [...new Set(Object.values(store.pedidos).filter(p => p.feedback).map(p => p.produtoId))];
+  const opcoes = ids.slice(0, 25).map(id => {
+    const produto = getProduto(id);
+    return {
+      label: String(produto ? produto.nome : id).slice(0, 100),
+      value: String(id)
+    };
+  }).filter(o => o.value);
+  if (!opcoes.length) {
+    return { content: "Ainda nao ha avaliacoes.", embeds: [], components: [] };
+  }
+  return {
+    content: "Escolha o produto para ver as avaliacoes.",
+    embeds: [],
+    components: [
+      new ActionRowBuilder().addComponents(
+        new StringSelectMenuBuilder()
+          .setCustomId(`cli_avaliacoes_sel:${Date.now()}`)
+          .setPlaceholder("Ver avaliacoes de um produto")
+          .addOptions(opcoes)
+      )
+    ]
+  };
+}
+
+function payloadAvaliacoesProduto(produtoId) {
+  const produto = getProduto(produtoId);
+  const avaliacoes = Object.values(store.pedidos)
+    .filter(p => p.produtoId === produtoId && p.feedback)
+    .sort((a, b) => b.feedback.em - a.feedback.em);
+  if (!avaliacoes.length) {
+    return { content: `Ainda nao ha avaliacoes para **${produto ? produto.nome : produtoId}**.`, embeds: [], components: [] };
+  }
+  const media = avaliacoes.reduce((s, p) => s + p.feedback.nota, 0) / avaliacoes.length;
+  const linhas = avaliacoes.slice(0, 10).map(p => {
+    const comentario = p.feedback.comentario ? `\n"${p.feedback.comentario}"` : "";
+    return `${estrelas(p.feedback.nota)} — pedido #${p.id}${comentario}`;
+  });
+  return {
+    content: null,
+    embeds: [
+      new EmbedBuilder()
+        .setTitle(`Avaliacoes — ${produto ? produto.nome : produtoId}`)
+        .setDescription(`Media: **${media.toFixed(1)}/5** com **${avaliacoes.length}** avaliacao(oes).\n\n` + linhas.join("\n\n"))
+        .setColor(0xf1c40f)
+    ],
+    components: []
+  };
+}
+
 async function handleCommand(interaction) {
+  if (canalBloqueiaComandoCliente(interaction)) {
+    await interaction.reply({ content: avisoComandoBloqueado(interaction), ephemeral: true });
+    return;
+  }
   switch (interaction.commandName) {
     case "loja":
       if (isStaff(interaction.member)) {
@@ -3424,19 +3672,7 @@ async function handleCommand(interaction) {
       await interaction.reply({ content: `Loja fixa publicada em <#${guildCfg(interaction.guildId).canais.loja}>.`, ephemeral: true });
       return;
     case "meuspedidos": {
-      const meus = Object.values(store.pedidos)
-        .filter(p => p.userId === interaction.user.id)
-        .sort((a, b) => b.id - a.id)
-        .slice(0, 8);
-      if (meus.length === 0) {
-        await interaction.reply({ content: "Voce ainda nao tem pedidos.", ephemeral: true });
-        return;
-      }
-      const linhas = meus.map(p => `#${p.id} — ${p.produtoNome} — ${formatarReais(p.valorCentavos)} — ${STATUS_LABEL[p.status]}`);
-      await interaction.reply({
-        embeds: [new EmbedBuilder().setTitle("Seus pedidos").setDescription(linhas.join("\n")).setColor(0x9b59b6)],
-        ephemeral: true
-      });
+      await interaction.reply({ ...payloadMeusPedidos(interaction.user.id), ephemeral: true });
       return;
     }
     case "pedido": {
@@ -3446,17 +3682,14 @@ async function handleCommand(interaction) {
         await interaction.reply({ content: "Pedido nao encontrado.", ephemeral: true });
         return;
       }
-      const member = interaction.member;
-      if (pedido.userId !== interaction.user.id && !isStaff(member)) {
+      if (pedido.userId !== interaction.user.id && !isStaff(interaction.member)) {
         await interaction.reply({ content: "Voce so pode ver os seus pedidos.", ephemeral: true });
         return;
       }
       await interaction.reply({
         embeds: [embedPedidoCliente(pedido)],
-        components: pedido.pixCopiaECola && pedido.status === STATUS.AGUARDANDO_PAGAMENTO
-
-          ? botoesPix(pedido.id, pedido.cartChannelId, pedido.guildId)
-          : botaoIrCarrinho(pedido.cartChannelId, pedido.guildId),        ephemeral: true
+        components: componentsPedidoCliente(pedido),
+        ephemeral: true
       });
       return;
     }
@@ -3482,7 +3715,8 @@ async function handleCommand(interaction) {
         return;
       }
       await interaction.reply({ ...payloadPainelStaff(), ephemeral: true });
-      return;    case "gerenciar":
+      return;
+    case "gerenciar":
       await handleGerenciar(interaction);
       return;
     case "categoria":
@@ -3560,7 +3794,11 @@ async function handleButton(interaction) {
         .setCustomId(`comprar:${produto.id}`)
         .setLabel(esgotado ? "Esgotado" : "Comprar")
         .setStyle(esgotado ? ButtonStyle.Secondary : ButtonStyle.Success)
-        .setDisabled(!produtoPodeComprar(produto))
+        .setDisabled(!produtoPodeComprar(produto)),
+      new ButtonBuilder()
+        .setCustomId(produto.categoriaId ? `loja_cat:${produto.categoriaId}` : "loja_home")
+        .setLabel("Voltar")
+        .setStyle(ButtonStyle.Secondary)
     );
     if (isStaff(interaction.member) && !produto.ocultarBotaoConfig) {
       row.addComponents(
@@ -3854,6 +4092,31 @@ async function handleButton(interaction) {
 
   if (acao === "loja_home") {
     await interaction.update(payloadLoja()).catch(() => {});
+    return;
+  }
+
+  if (acao === "loja_cat") {
+    await interaction.update(payloadLoja(valor)).catch(() => {});
+    return;
+  }
+
+  if (acao === "cli_meuspedidos") {
+    await interaction.reply({ ...payloadMeusPedidos(interaction.user.id), ephemeral: true });
+    return;
+  }
+
+  if (acao === "cli_avaliar") {
+    const pendentes = pedidosParaAvaliar(interaction.user.id);
+    if (pendentes.length === 1) {
+      await interaction.showModal(modalAvaliar(pendentes[0].id));
+      return;
+    }
+    await interaction.reply({ ...payloadEscolherAvaliacao(interaction.user.id), ephemeral: true });
+    return;
+  }
+
+  if (acao === "cli_avaliacoes") {
+    await interaction.reply({ ...payloadEscolherAvaliacoesProduto(), ephemeral: true });
     return;
   }
 
@@ -4301,18 +4564,60 @@ async function handleSelect(interaction) {
   const id = interaction.customId;
   const valor = interaction.values[0];
 
-  if (id === "cat") {
+  if (id === "cat" || id.startsWith("cat:")) {
     if (mensagemEfmera(interaction)) {
       await interaction.update(payloadLoja(valor));
     } else {
-      await interaction.reply({ ...payloadLoja(valor), ephemeral: true });
+      await interaction.update(payloadLoja());
+      await interaction.followUp({ ...payloadLoja(valor), ephemeral: true });
     }
     return;
   }
 
-  if (id === "ticket_cat") {
-
+  if (id === "ticket_cat" || id.startsWith("ticket_cat:")) {
     await interaction.showModal(modalMotivoTicket(valor));
+    await interaction.message.edit(payloadPainelTicket()).catch(() => {});
+    return;
+  }
+
+  if (id === "cli_pedido_sel" || id.startsWith("cli_pedido_sel:")) {
+    const pedido = store.pedidos[String(valor)];
+    if (!pedido) {
+      await interaction.reply({ content: "Pedido nao encontrado.", ephemeral: true });
+      return;
+    }
+    if (pedido.userId !== interaction.user.id && !isStaff(interaction.member)) {
+      await interaction.reply({ content: "Voce so pode ver os seus pedidos.", ephemeral: true });
+      return;
+    }
+    await interaction.reply({
+      embeds: [embedPedidoCliente(pedido)],
+      components: componentsPedidoCliente(pedido),
+      ephemeral: true
+    });
+    return;
+  }
+
+  if (id === "cli_avaliar_sel" || id.startsWith("cli_avaliar_sel:")) {
+    const pedido = store.pedidos[String(valor)];
+    if (!pedido || pedido.userId !== interaction.user.id) {
+      await interaction.reply({ content: "Pedido invalido.", ephemeral: true });
+      return;
+    }
+    if (pedido.status !== STATUS.ENTREGUE) {
+      await interaction.reply({ content: "So da pra avaliar pedidos ja entregues.", ephemeral: true });
+      return;
+    }
+    if (pedido.feedback) {
+      await interaction.reply({ content: "Esse pedido ja foi avaliado.", ephemeral: true });
+      return;
+    }
+    await interaction.showModal(modalAvaliar(valor));
+    return;
+  }
+
+  if (id === "cli_avaliacoes_sel" || id.startsWith("cli_avaliacoes_sel:")) {
+    await interaction.reply({ ...payloadAvaliacoesProduto(valor), ephemeral: true });
     return;
   }
 
@@ -4346,7 +4651,8 @@ async function handleSelect(interaction) {
         campoTexto("conteudo", "Itens (um por linha)", TextInputStyle.Paragraph, "", { required: true, maxLength: 1000 })
       )
     );
-    await interaction.showModal(modal);    return;
+    await interaction.showModal(modal);
+    return;
   }
 
   if (id === "cfg_cat_ticket") {
@@ -4355,7 +4661,8 @@ async function handleSelect(interaction) {
       return;
     }
 
-    store.guilds[interaction.guildId].ticketCategoryId = valor;    salvarStore();
+    store.guilds[interaction.guildId].ticketCategoryId = valor;
+    salvarStore();
     await enviarPainelConfig(interaction);
     return;
   }
