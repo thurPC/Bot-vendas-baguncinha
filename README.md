@@ -40,7 +40,7 @@ Staff (exigem Gerenciar Servidor):
 - `/produto listar`
 - `/produto criar id: nome: preco: categoria: modo:` — cria produto novo (aparece na vitrine na hora)
 - `/produto editar produto: modo: cargo: cargo-dias: preco: disponivel:`
-- `/configuracao loja` — painel unico (banner, SMTP, PIX, pausar/reabrir, publicar loja)
+- `/configuracao loja` — painel unico (banner, SMTP, PIX, pausar/reabrir, tickets, publicar loja)
 - `/gerenciar produto` — painel do produto (nome, preco, estoque, cargo, cupons, variante, apagar)
 - `/config ver`
 - `/config pausar pausar: motivo:` — pausa ou reabre a loja (bloqueia compras)
