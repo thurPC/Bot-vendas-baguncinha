@@ -26,12 +26,7 @@ const path = require("path");
 const persist = require("./src/persist");
 const { ocultarNomePix } = require("./src/pixNome");
 const { gerarQrComLogo } = require("./src/qrLogo");
-<<<<<<< HEAD
 const { enviarProdutoPorEmail, testarSmtp } = require("./src/mailer");
-=======
-const { enviarProdutoPorEmail } = require("./src/mailer");
->>>>>>> origin/main
-
 const TOKEN = process.env.TOKEN;
 const CLIENT_ID = process.env.CLIENT_ID;
 const GUILD_ID = process.env.GUILD_ID;
@@ -59,8 +54,7 @@ const CANAIS_2 = {
   ticket: process.env.CANAL_TICKET_2
 };
 
-<<<<<<< HEAD
-=======
+
 const GUILDS = {};
 if (GUILD_ID) {
   GUILDS[GUILD_ID] = {
@@ -81,8 +75,6 @@ if (GUILD_ID_2) {
 const GUILD_IDS = Object.keys(GUILDS);
 const guildPermitida = id => !!GUILDS[id];
 const guildCfg = id => GUILDS[id] || GUILDS[GUILD_ID];
-
->>>>>>> origin/main
 const PRAZO_ENTREGA_MIN = 120;
 const PRAZO_ENTREGA_LABEL = "2 horas";
 const QR_NOME_PUBLICO = "BAGUNCINHA";
@@ -221,12 +213,6 @@ if (!store.produtos) store.produtos = {};
 if (!store.tickets) store.tickets = {};
 if (!store.carrinhos) store.carrinhos = {};
 if (!store.config || typeof store.config !== "object") store.config = {};
-<<<<<<< HEAD
-store.config.logChannelId = CANAIS.logs;
-store.config.feedbackChannelId = CANAIS.feedbacks;
-store.config.lojaChannelId = CANAIS.loja;
-=======
->>>>>>> origin/main
 if (store.config.banner === undefined) store.config.banner = null;
 if (store.config.bannerPosicao == null || store.config.bannerPosicao === "") store.config.bannerPosicao = "top";
 if (store.config.pixNomePublico == null || store.config.pixNomePublico === "") store.config.pixNomePublico = QR_NOME_PUBLICO;
@@ -237,12 +223,9 @@ if (store.config.smtpPort == null) store.config.smtpPort = 587;
 if (store.config.smtpUser === undefined) store.config.smtpUser = null;
 if (store.config.smtpPass === undefined) store.config.smtpPass = null;
 if (store.config.smtpFrom === undefined) store.config.smtpFrom = null;
-<<<<<<< HEAD
 if (store.config.lojaPausada === undefined) store.config.lojaPausada = false;
 if (store.config.lojaPausaMotivo === undefined) store.config.lojaPausaMotivo = "";
-if (!store.lojaFixa) store.lojaFixa = { channelId: null, messageId: null };
-if (!store.paineisFixos) store.paineisFixos = { ticket: null, cupons: null };
-=======
+
 if (!store.lojaFixa) store.lojaFixa = { channelId: null, messageId: null };
 if (!store.paineisFixos) store.paineisFixos = { ticket: null, cupons: null };
 if (!store.guilds) store.guilds = {};
@@ -270,9 +253,7 @@ if (store.config.ticketPainel.botaoEmoji === undefined) store.config.ticketPaine
 if (!store.config.ticketPainel.cor) store.config.ticketPainel.cor = "5865F2";
 if (store.config.ticketPainel.miniatura === undefined) store.config.ticketPainel.miniatura = null;
 if (store.config.ticketPainel.banner === undefined) store.config.ticketPainel.banner = null;
-if (store.config.ticketPainel.rodape === undefined) store.config.ticketPainel.rodape = null;
->>>>>>> origin/main
-if (!store.categorias) {
+if (store.config.ticketPainel.rodape === undefined) store.config.ticketPainel.rodape = null;if (!store.categorias) {
   store.categorias = {
     nitro: { id: "nitro", nome: "Nitro", emoji: "💎", descricao: "Discord Nitro", posicao: 0, ativo: true },
     boost: { id: "boost", nome: "Boosts", emoji: "🚀", descricao: "Boosts de servidor", posicao: 1, ativo: true }
@@ -389,40 +370,6 @@ function limparUrl(url) {
   return String(url || "").trim().replace(/^<|>$/g, "").trim();
 }
 
-function categoriasAtivas() {
-  return Object.values(store.categorias || {})
-    .filter(c => c && c.ativo !== false)
-    .sort((a, b) => (a.posicao || 0) - (b.posicao || 0));
-}
-
-function produtosDaCategoria(categoriaId) {
-  return todosProdutos().filter(p => (p.categoriaId || "geral") === categoriaId);
-}
-
-function aplicarBanner(embed, url, posicao, thumbnailUrl) {
-  const pos = String(posicao || "bottom").toLowerCase();
-  if (pos === "float" || pos === "flutuante") {
-    if (thumbnailUrl || url) embed.setThumbnail(thumbnailUrl || url);
-    if (urlMidiaValida(url)) embed.setImage(url);
-    return embed;
-  }
-  if (pos === "top" && urlMidiaValida(url)) embed.setImage(url);
-  else if (pos === "bottom" && urlMidiaValida(url)) embed.setImage(url);
-  else if (pos === "thumbnail" && urlMidiaValida(url)) embed.setThumbnail(url);
-  else if (pos === "author" && urlMidiaValida(url)) embed.setAuthor({ name: "\u200b", iconURL: url });
-  if (urlMidiaValida(thumbnailUrl) && pos !== "thumbnail") embed.setThumbnail(thumbnailUrl);
-  return embed;
-}
-
-function pixNomePublico() {
-  if (store.config.ocultarNomePix === false) return store.config.pixNomePublico || QR_NOME_PUBLICO;
-  return store.config.pixNomePublico || QR_NOME_PUBLICO;
-}
-
-function limparUrl(url) {
-  return String(url || "").trim().replace(/^<|>$/g, "").trim();
-}
-
 function urlMidiaValida(url) {
   if (!url) return false;
   try {
@@ -459,11 +406,8 @@ function limparPixCopiaECola(codigo) {
     .trim();
 }
 
-<<<<<<< HEAD
-function botoesPix(pedidoId, canalCarrinhoId) {
-=======
+
 function botoesPix(pedidoId, canalCarrinhoId, guildId = GUILD_ID) {
->>>>>>> origin/main
   const row = new ActionRowBuilder().addComponents(
     new ButtonBuilder()
       .setCustomId(`pix_copiar:${pedidoId}`)
@@ -478,42 +422,25 @@ function botoesPix(pedidoId, canalCarrinhoId, guildId = GUILD_ID) {
         .setURL(`${PUBLIC_URL}/pix/${pedidoId}`)
     );
   }
-<<<<<<< HEAD
-  if (canalCarrinhoId && GUILD_ID) {
-=======
   if (canalCarrinhoId && guildId) {
->>>>>>> origin/main
     row.addComponents(
       new ButtonBuilder()
         .setLabel("Ir ao carrinho")
         .setStyle(ButtonStyle.Link)
-<<<<<<< HEAD
-        .setURL(`https://discord.com/channels/${GUILD_ID}/${canalCarrinhoId}`)
-=======
         .setURL(`https://discord.com/channels/${guildId}/${canalCarrinhoId}`)
->>>>>>> origin/main
     );
   }
   return [row];
 }
 
-<<<<<<< HEAD
-function botaoIrCarrinho(canalId) {
-  if (!canalId || !GUILD_ID) return [];
-=======
 function botaoIrCarrinho(canalId, guildId = GUILD_ID) {
   if (!canalId || !guildId) return [];
->>>>>>> origin/main
   return [
     new ActionRowBuilder().addComponents(
       new ButtonBuilder()
         .setLabel("Ir ao carrinho")
         .setStyle(ButtonStyle.Link)
-<<<<<<< HEAD
-        .setURL(`https://discord.com/channels/${GUILD_ID}/${canalId}`)
-=======
         .setURL(`https://discord.com/channels/${guildId}/${canalId}`)
->>>>>>> origin/main
     )
   ];
 }
@@ -618,17 +545,11 @@ function embedLog(entrada) {
 }
 
 async function enviarLogCanal(entrada) {
-<<<<<<< HEAD
-  if (!store.config.logChannelId) return;
-  if (store.config.logChannelId === CANAIS.loja || store.config.logChannelId === store.config.lojaChannelId) return;
-  const canal = await client.channels.fetch(store.config.logChannelId).catch(() => null);
-=======
+
   const cfg = guildCfg(entrada.guildId);
   const logId = cfg.canais.logs;
   if (!logId || logId === cfg.canais.loja) return;
-  const canal = await client.channels.fetch(logId).catch(() => null);
->>>>>>> origin/main
-  if (!canal || canalEhLoja(canal)) return;
+  const canal = await client.channels.fetch(logId).catch(() => null);  if (!canal || canalEhLoja(canal)) return;
   await canal.send({ embeds: [embedLog(entrada)] }).catch(() => {});
 }
 
@@ -652,7 +573,6 @@ function catalogoEmbed(categoriaId) {
   const produtos = categoriaId ? produtosDaCategoria(categoriaId) : todosProdutos();
   const linhas = produtos.map(linhaPrecoProduto);
   const titulo = categoria ? `${categoria.emoji || "📁"} ${categoria.nome}` : "Loja Baguncinha";
-<<<<<<< HEAD
   const intro = store.config.lojaPausada
     ? motivoLojaPausada()
     : categoria
@@ -666,19 +586,6 @@ function catalogoEmbed(categoriaId) {
       `\n\nPrazo: ate **${PRAZO_ENTREGA_LABEL}** depois do Pix confirmado.`)
     )
     .setColor(store.config.lojaPausada ? 0xed4245 : 0x9b59b6);
-=======
-  const intro = categoria
-    ? (categoria.descricao || "Escolha um produto desta categoria.")
-    : "Selecione uma categoria para ver os produtos. O bot gera o Pix, confirma o pagamento e entrega.";
-  const embed = new EmbedBuilder()
-    .setTitle(titulo)
-    .setDescription(
-      `${intro}\n\n` +
-      (linhas.length ? linhas.join("\n\n") : "Nenhum produto nesta categoria.") +
-      `\n\nPrazo: ate **${PRAZO_ENTREGA_LABEL}** depois do Pix confirmado.`
-    )
-    .setColor(0x9b59b6);
->>>>>>> origin/main
   aplicarBanner(embed, store.config.banner, store.config.bannerPosicao || "top");
   return embed;
 }
@@ -722,7 +629,6 @@ function selectCategorias(customId = "cat") {
 
 function botoesCatalogo(categoriaId) {
   const rows = [];
-<<<<<<< HEAD
   if (store.config.lojaPausada) {
     rows.push(
       new ActionRowBuilder().addComponents(
@@ -730,10 +636,7 @@ function botoesCatalogo(categoriaId) {
       )
     );
     return rows;
-  }
-=======
->>>>>>> origin/main
-  const produtos = categoriaId ? produtosDaCategoria(categoriaId) : todosProdutos();
+  }  const produtos = categoriaId ? produtosDaCategoria(categoriaId) : todosProdutos();
   for (const produto of produtos.slice(0, categoriaId ? 4 : 5)) {
     const esgotado = produtoEsgotado(produto);
     const row = new ActionRowBuilder().addComponents(
@@ -761,14 +664,10 @@ function botoesCatalogo(categoriaId) {
 
 function payloadLoja(categoriaId) {
   const components = [];
-<<<<<<< HEAD
   if (store.config.lojaPausada) {
     components.push(...botoesCatalogo());
     return { content: null, embeds: [catalogoEmbed(categoriaId)], components };
-  }
-=======
->>>>>>> origin/main
-  if (!categoriaId) {
+  }  if (!categoriaId) {
     const sel = selectCategorias("cat");
     if (sel) components.push(sel);
     else components.push(...botoesCatalogo());
@@ -779,27 +678,11 @@ function payloadLoja(categoriaId) {
 }
 
 async function atualizarLojaFixa() {
-<<<<<<< HEAD
-  const canalId = store.lojaFixa.channelId || store.config.lojaChannelId || CANAIS.loja;
-  const messageId = store.lojaFixa.messageId;
-  if (!canalId) return;
-  const canal = await client.channels.fetch(canalId).catch(() => null);
-  if (!canal) return;
-  if (messageId) {
-    const msg = await canal.messages.fetch(messageId).catch(() => null);
-    if (msg) {
-      await msg.edit(payloadLoja()).catch(() => {});
-      return;
-    }
-  }
-  await publicarLojaFixa(canal);
-=======
+
   // atualiza a vitrine nos 2 servidores
   for (const gid of GUILD_IDS) {
     await atualizarLojaFixaGuild(gid).catch(error => console.error(`Falha ao atualizar loja (${gid}):`, error.message));
-  }
->>>>>>> origin/main
-}
+  }}
 
 async function atualizarLojaFixaGuild(gid) {
   const st = store.guilds[gid];
@@ -848,20 +731,7 @@ function ticketPainel() {
 function payloadPainelTicket() {
   const cfg = ticketPainel();
   const embed = new EmbedBuilder()
-<<<<<<< HEAD
-    .setTitle("ATENDIMENTO AO CLIENTE")
-    .setDescription("Se você estiver enfrentando algum problema ou precisar de ajuda com nossos serviços, por favor, abra um ticket de suporte. Assim que recebermos seu ticket, nossa equipe de suporte entrará em contato com você para solucionar o problema o mais breve possível. Obrigado pela sua compreensão e cooperação.\n\n*(Podendo haver atrasos e lentidao no atendimento Sab/Dom)*")
-    .setColor(0x5865f2);
-  const components = [];
-  const sel = selectCategorias("ticket_cat");
-  if (sel) components.push(sel);
-  components.push(
-    new ActionRowBuilder().addComponents(
-      new ButtonBuilder().setCustomId("ticket_abrir").setLabel("Abrir ticket").setEmoji("🎫").setStyle(ButtonStyle.Secondary)
-    )
-  );
-  return { embeds: [embed], components };
-=======
+
     .setTitle(String(cfg.titulo || "ATENDIMENTO AO CLIENTE").slice(0, 256))
     .setDescription(String(cfg.descricao || "Abra um ticket para falar com a equipe.").slice(0, 4096))
     .setColor(parseCor(cfg.cor) || 0x5865f2);
@@ -895,9 +765,7 @@ function modalMotivoTicket(categoriaId) {
       })
     )
   );
-  return modal;
->>>>>>> origin/main
-}
+  return modal;}
 
 function payloadPainelCupons() {
   const cupons = Object.values(store.cupons).filter(c => c.ativo);
@@ -946,128 +814,6 @@ async function atualizarPaineisTicket() {
   for (const gid of GUILD_IDS) {
     await publicarOuAtualizarPainel(gid, "ticket", guildCfg(gid).canais.ticket, payloadPainelTicket()).catch(() => {});
   }
-}
-
-async function responderMesmaMensagem(interaction, payload) {
-  const data = { ...payload };
-  if (interaction.isModalSubmit()) {
-    if (interaction.replied || interaction.deferred) return interaction.editReply({ ...data, ephemeral: true });
-    return interaction.reply({ ...data, ephemeral: true });
-  }
-  if (interaction.isMessageComponent()) {
-    if (interaction.replied || interaction.deferred) {
-      return interaction.editReply({ embeds: data.embeds, components: data.components, content: data.content ?? null });
-    }
-    return interaction.update({ embeds: data.embeds, components: data.components, content: data.content ?? null });
-  }
-  if (interaction.replied || interaction.deferred) return interaction.editReply({ ...data, ephemeral: true });
-  return interaction.reply({ ...data, ephemeral: true });
-}
-
-function mensagemEfmera(interaction) {
-  try {
-    return interaction.message?.flags?.has(MessageFlags.Ephemeral) === true;
-  } catch {
-    return false;
-  }
-}
-
-function canalTemporario(nome) {
-  const n = String(nome || "").toLowerCase();
-  return n.startsWith("ticket-") || n.startsWith("seu-carrinho") || n.startsWith("carrinho-");
-}
-
-function tipoCanalSnapshot(ch) {
-  if (ch.type === ChannelType.GuildVoice) return "voice";
-  if (ch.type === ChannelType.GuildAnnouncement || ch.type === ChannelType.GuildText) return "text";
-  return null;
-}
-
-function slugCanal(nome) {
-  return String(nome || "canal")
-    .toLowerCase()
-    .normalize("NFD")
-    .replace(/[\u0300-\u036f]/g, "")
-    .replace(/[^a-z0-9-]+/g, "-")
-    .replace(/^-+|-+$/g, "")
-    .slice(0, 100) || "canal";
-}
-
-function snapshotCanais(guild) {
-  const categorias = guild.channels.cache
-    .filter(c => c.type === ChannelType.GuildCategory)
-    .sort((a, b) => a.position - b.position)
-    .map(cat => ({
-      type: "category",
-      name: cat.name,
-      position: cat.position,
-      channels: guild.channels.cache
-        .filter(ch => ch.parentId === cat.id && tipoCanalSnapshot(ch) && !canalTemporario(ch.name))
-        .sort((a, b) => a.position - b.position)
-        .map(ch => ({
-          type: tipoCanalSnapshot(ch),
-          name: ch.name,
-          topic: ch.topic || null,
-          position: ch.position
-        }))
-    }));
-  const semCategoria = guild.channels.cache
-    .filter(ch => !ch.parentId && tipoCanalSnapshot(ch) && !canalTemporario(ch.name))
-    .sort((a, b) => a.position - b.position)
-    .map(ch => ({
-      type: tipoCanalSnapshot(ch),
-      name: ch.name,
-      topic: ch.topic || null,
-      position: ch.position
-    }));
-  return { guild: guild.name, guildId: guild.id, categorias, semCategoria };
-}
-
-async function aplicarSnapshotCanais(guild, snapshot) {
-  const criados = [];
-  const pulados = [];
-  const existentes = guild.channels.cache;
-  const acharCategoria = nome => existentes.find(c => c.type === ChannelType.GuildCategory && c.name === nome);
-  const acharFilho = (nome, parentId) => existentes.find(c => c.name === nome && (c.parentId || null) === (parentId || null));
-
-  for (const cat of snapshot.categorias || []) {
-    let categoria = acharCategoria(cat.name);
-    if (!categoria) {
-      categoria = await guild.channels.create({
-        name: cat.name,
-        type: ChannelType.GuildCategory
-      });
-      criados.push(`categoria ${cat.name}`);
-    } else {
-      pulados.push(`categoria ${cat.name}`);
-    }
-    for (const ch of cat.channels || []) {
-      if (acharFilho(ch.name, categoria.id)) {
-        pulados.push(`#${ch.name}`);
-        continue;
-      }
-      await guild.channels.create({
-        name: ch.name,
-        type: ch.type === "voice" ? ChannelType.GuildVoice : ChannelType.GuildText,
-        parent: categoria.id,
-        topic: ch.topic || undefined
-      });
-      criados.push(`#${ch.name}`);
-    }
-  }
-  for (const ch of snapshot.semCategoria || []) {
-    if (acharFilho(ch.name, null)) {
-      pulados.push(`#${ch.name}`);
-      continue;
-    }
-    await guild.channels.create({
-      name: ch.name,
-      type: ch.type === "voice" ? ChannelType.GuildVoice : ChannelType.GuildText,
-      topic: ch.topic || undefined
-    });
-    criados.push(`#${ch.name}`);
-  }
-  return { criados, pulados };
 }
 
 async function responderMesmaMensagem(interaction, payload) {
@@ -1375,13 +1121,9 @@ async function canalAdmin(guild) {
 
 function canalEhLoja(canal) {
   if (!canal) return false;
-<<<<<<< HEAD
-  return canal.id === CANAIS.loja || canal.id === store.config.lojaChannelId || canal.id === store.lojaFixa.channelId;
-=======
+
   return Object.values(GUILDS).some(g => g.canais.loja === canal.id) ||
-    Object.values(store.guilds).some(st => st.lojaFixa.channelId === canal.id);
->>>>>>> origin/main
-}
+    Object.values(store.guilds).some(st => st.lojaFixa.channelId === canal.id);}
 
 async function notificarAdmin(pedido, extra) {
   const gid = pedido.guildId || GUILD_ID;
@@ -1827,24 +1569,16 @@ async function criarPedido(interaction, produtoId, cupomCodigo) {
     const serverMsg = await carrinho.send({
       content: `${interaction.user} seu carrinho:`,
       embeds: [embedCarrinho],
-<<<<<<< HEAD
-      components: [...botoesPix(pedido.id), botoesEntrega(pedido.id)],
-=======
-      components: [...botoesPix(pedido.id, undefined, pedido.guildId), botoesEntrega(pedido.id)],
->>>>>>> origin/main
-      files: pixFile()
+
+      components: [...botoesPix(pedido.id, undefined, pedido.guildId), botoesEntrega(pedido.id)],      files: pixFile()
     });
     pedido.cartServerMessageId = serverMsg.id;
   } catch (error) {
     console.error("Falha ao abrir canal de carrinho no servidor:", error.message);
   }
 
-<<<<<<< HEAD
-  const componentes = [...botoesPix(pedido.id, pedido.cartChannelId), botoesEntrega(pedido.id)];
-=======
-  const componentes = [...botoesPix(pedido.id, pedido.cartChannelId, pedido.guildId), botoesEntrega(pedido.id)];
->>>>>>> origin/main
 
+  const componentes = [...botoesPix(pedido.id, pedido.cartChannelId, pedido.guildId), botoesEntrega(pedido.id)];
   await interaction.editReply({
     content:
       `Carrinho gerado — valor final **${formatarReais(pedido.valorCentavos)}**.\n` +
@@ -1867,11 +1601,7 @@ async function criarPedido(interaction, produtoId, cupomCodigo) {
   } catch {
     console.log(`Nao consegui DM o carrinho do pedido #${pedido.id}.`);
   }
-<<<<<<< HEAD
-  await notificarAdmin(pedido, "Aguardando Pix. Use **Marcar Pix pago** se o cliente pagou fora do webhook.");
-=======
->>>>>>> origin/main
-  salvarStore();
+  await notificarAdmin(pedido, "Aguardando Pix. Use **Marcar Pix pago** se o cliente pagou fora do webhook.");  salvarStore();
 }
 
 async function handleEntregarModal(interaction, pedidoId) {
@@ -1948,13 +1678,9 @@ async function overwritesPrivado(guild, userId) {
 }
 
 async function abrirCarrinho(guild, user, pedido) {
-<<<<<<< HEAD
-  const aberto = Object.entries(store.carrinhos).find(([, c]) => c.userId === user.id && c.status === "aberto");
-=======
+
   const aberto = Object.entries(store.carrinhos).find(([, c]) =>
-    c.userId === user.id && c.status === "aberto" && (c.guildId || GUILD_ID) === guild.id);
->>>>>>> origin/main
-  if (aberto) {
+    c.userId === user.id && c.status === "aberto" && (c.guildId || GUILD_ID) === guild.id);  if (aberto) {
     const existente = guild.channels.cache.get(aberto[0]) || await guild.channels.fetch(aberto[0]).catch(() => null);
     if (existente) {
       store.carrinhos[existente.id].pedidoId = pedido.id;
@@ -1974,13 +1700,9 @@ async function abrirCarrinho(guild, user, pedido) {
     userId: user.id,
     pedidoId: pedido.id,
     abertoEm: Date.now(),
-<<<<<<< HEAD
-    status: "aberto"
-=======
+
     status: "aberto",
-    guildId: guild.id
->>>>>>> origin/main
-  };
+    guildId: guild.id  };
   salvarStore();
 
   const embed = new EmbedBuilder()
@@ -2040,24 +1762,16 @@ async function fecharCarrinho(interaction, canalId) {
 async function abrirTicket(guild, user, assunto) {
   const base = `ticket-${user.username}`.toLowerCase().replace(/[^a-z0-9-]/g, "").slice(0, 80) || `ticket-${user.id}`;
   const overwrites = await overwritesPrivado(guild, user.id);
-<<<<<<< HEAD
-  if (ADMIN_ROLE_ID) {
-=======
+
   const adminRoleId = guildCfg(guild.id).adminRoleId;
-  if (adminRoleId) {
->>>>>>> origin/main
-    overwrites.push({
+  if (adminRoleId) {    overwrites.push({
       id: adminRoleId,
       allow: [PermissionFlagsBits.ViewChannel, PermissionFlagsBits.SendMessages, PermissionFlagsBits.ReadMessageHistory]
     });
   }
 
-<<<<<<< HEAD
-  let parent = store.config.ticketCategoryId || undefined;
-=======
-  let parent = (store.guilds[guild.id] && store.guilds[guild.id].ticketCategoryId) || undefined;
->>>>>>> origin/main
-  if (parent) {
+
+  let parent = (store.guilds[guild.id] && store.guilds[guild.id].ticketCategoryId) || undefined;  if (parent) {
     const cat = await guild.channels.fetch(parent).catch(() => null);
     if (cat) parent = cat.id;
   }
@@ -2278,12 +1992,8 @@ async function handleCupom(interaction) {
 
   if (sub === "publicar") {
     await atualizarPainelCupons().catch(() => {});
-<<<<<<< HEAD
-    await interaction.reply({ content: `Painel de cupons publicado em <#${CANAIS.cupons}>.`, ephemeral: true });
-=======
-    await interaction.reply({ content: `Painel de cupons publicado em <#${guildCfg(interaction.guildId).canais.cupons}>.`, ephemeral: true });
->>>>>>> origin/main
-  }
+
+    await interaction.reply({ content: `Painel de cupons publicado em <#${guildCfg(interaction.guildId).canais.cupons}>.`, ephemeral: true });  }
 }
 
 async function handleProduto(interaction) {
@@ -2939,24 +2649,14 @@ async function handleConfig(interaction) {
     const stv = store.guilds[interaction.guildId] || store.guilds[GUILD_ID];
     const cv = guildCfg(interaction.guildId).canais;
     const desc =
-<<<<<<< HEAD
-      `Canal de logs: ${store.config.logChannelId ? `<#${store.config.logChannelId}>` : "nao definido"}\n` +
-      `Canal de feedbacks: ${store.config.feedbackChannelId ? `<#${store.config.feedbackChannelId}>` : "nao definido"}\n` +
-      `Categoria de tickets: ${store.config.ticketCategoryId ? `<#${store.config.ticketCategoryId}>` : "nao definida"}\n` +
-      `Loja fixa: ${store.lojaFixa.channelId ? `<#${store.lojaFixa.channelId}>` : "nao publicada"}\n` +
-      `Banner da loja: ${urlMidiaValida(store.config.banner) ? `definido (${store.config.bannerPosicao || "top"})` : "nao definido"}\n` +
-      `Nome PIX publico: **${pixNomePublico()}** (ocultar nome completo: ${store.config.ocultarNomePix !== false ? "sim" : "nao"})\n` +
-      `SMTP: ${store.config.smtpHost ? store.config.smtpHost : "nao configurado"}\n` +
-      `Loja: **${store.config.lojaPausada ? "PAUSADA" : "aberta"}**${store.config.lojaPausaMotivo ? ` (${store.config.lojaPausaMotivo})` : ""}\n` +
-=======
+
       `Canal de logs: ${cv.logs ? `<#${cv.logs}>` : "nao definido"}\n` +
       `Canal de feedbacks: ${cv.feedbacks ? `<#${cv.feedbacks}>` : "nao definido"}\n` +
       `Categoria de tickets: ${stv.ticketCategoryId ? `<#${stv.ticketCategoryId}>` : "nao definida"}\n` +
       `Loja fixa: ${stv.lojaFixa.channelId ? `<#${stv.lojaFixa.channelId}>` : "nao publicada"}\n` +
       `Banner da loja: ${urlMidiaValida(store.config.banner) ? `definido (${store.config.bannerPosicao || "top"})` : "nao definido"}\n` +
       `Nome PIX publico: **${pixNomePublico()}** (ocultar nome completo: ${store.config.ocultarNomePix !== false ? "sim" : "nao"})\n` +
-      `SMTP: ${store.config.smtpHost ? store.config.smtpHost : "nao configurado"}\n` +
->>>>>>> origin/main
+      `SMTP: ${store.config.smtpHost ? store.config.smtpHost : "nao configurado"}\n` +      `Loja: **${store.config.lojaPausada ? "PAUSADA" : "aberta"}**${store.config.lojaPausaMotivo ? ` (${store.config.lojaPausaMotivo})` : ""}\n` +
       `Cargos temporarios ativos: ${store.cargosTemporarios.length}\n` +
       `Pedidos registrados: ${Object.keys(store.pedidos).length}`;
     await interaction.reply({
@@ -2978,16 +2678,10 @@ async function handleConfig(interaction) {
 
   if (sub === "categoria-ticket") {
     const categoria = interaction.options.getChannel("categoria", true);
-<<<<<<< HEAD
-    store.config.ticketCategoryId = categoria.id;
-    salvarStore();
-    await interaction.reply({ content: `Categoria de tickets definida em <#${store.config.ticketCategoryId}>.`, ephemeral: true });
-=======
+
     store.guilds[interaction.guildId].ticketCategoryId = categoria.id;
     salvarStore();
-    await interaction.reply({ content: `Categoria de tickets definida em <#${categoria.id}>.`, ephemeral: true });
->>>>>>> origin/main
-    return;
+    await interaction.reply({ content: `Categoria de tickets definida em <#${categoria.id}>.`, ephemeral: true });    return;
   }
 
   if (sub === "canal-loja") {
@@ -3045,7 +2739,6 @@ async function handleConfig(interaction) {
     return;
   }
 
-<<<<<<< HEAD
   if (sub === "smtp-teste") {
     const destino = (interaction.options.getString("email") || "").trim();
     if (!destino || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(destino)) {
@@ -3120,12 +2813,6 @@ async function handleBackup(interaction) {
     });
   }
 }
-
-=======
-  await interaction.reply({ content: "Subcomando de config desconhecido. Use /config ver.", ephemeral: true }).catch(() => {});
-}
-
->>>>>>> origin/main
 async function handleCategoria(interaction) {
   const sub = interaction.options.getSubcommand();
   if (sub === "criar") {
@@ -3394,22 +3081,12 @@ const commands = [
     .setDefaultMemberPermissions(PermissionFlagsBits.ManageGuild)
     .addSubcommand(sub =>
       sub.setName("adicionar").setDescription("Adiciona itens ao estoque (um por linha).")
-<<<<<<< HEAD
-        .addStringOption(o => o.setName("produto").setDescription("Produto").setRequired(true).setAutocomplete(true))
-=======
-        .addStringOption(o => o.setName("produto").setDescription("Produto").setRequired(true).addChoices(...escolhasProdutos()))
->>>>>>> origin/main
-        .addStringOption(o => o.setName("conteudo").setDescription("Segredo/codigo. Um item por linha.").setRequired(true))
+        .addStringOption(o => o.setName("produto").setDescription("Produto").setRequired(true).setAutocomplete(true))        .addStringOption(o => o.setName("conteudo").setDescription("Segredo/codigo. Um item por linha.").setRequired(true))
     )
     .addSubcommand(sub => sub.setName("listar").setDescription("Mostra o estoque."))
     .addSubcommand(sub =>
       sub.setName("remover").setDescription("Remove um item pelo id.")
-<<<<<<< HEAD
-        .addStringOption(o => o.setName("produto").setDescription("Produto").setRequired(true).setAutocomplete(true))
-=======
-        .addStringOption(o => o.setName("produto").setDescription("Produto").setRequired(true).addChoices(...escolhasProdutos()))
->>>>>>> origin/main
-        .addIntegerOption(o => o.setName("id").setDescription("Id do item").setRequired(true).setMinValue(1))
+        .addStringOption(o => o.setName("produto").setDescription("Produto").setRequired(true).setAutocomplete(true))        .addIntegerOption(o => o.setName("id").setDescription("Id do item").setRequired(true).setMinValue(1))
     ),
   new SlashCommandBuilder()
     .setName("cupom")
@@ -3454,12 +3131,7 @@ const commands = [
     )
     .addSubcommand(sub =>
       sub.setName("editar").setDescription("Edita um produto.")
-<<<<<<< HEAD
-        .addStringOption(o => o.setName("produto").setDescription("Produto").setRequired(true).setAutocomplete(true))
-=======
-        .addStringOption(o => o.setName("produto").setDescription("Produto").setRequired(true).addChoices(...escolhasProdutos()))
->>>>>>> origin/main
-        .addStringOption(o =>
+        .addStringOption(o => o.setName("produto").setDescription("Produto").setRequired(true).setAutocomplete(true))        .addStringOption(o =>
           o.setName("modo").setDescription("Entrega automatica (se houver estoque) ou pela staff")
             .addChoices({ name: "Automatico", value: "auto" }, { name: "Staff", value: "semi" })
         )
@@ -3532,7 +3204,6 @@ const commands = [
         .addStringOption(o => o.setName("senha").setDescription("Senha / app password").setRequired(true))
         .addStringOption(o => o.setName("from").setDescription("From (ex: Loja <loja@email.com>)").setRequired(true))
         .addIntegerOption(o => o.setName("porta").setDescription("Porta (587 ou 465)").setMinValue(1))
-<<<<<<< HEAD
     )
     .addSubcommand(sub =>
       sub.setName("smtp-teste").setDescription("Envia um e-mail de teste com o SMTP salvo.")
@@ -3541,10 +3212,7 @@ const commands = [
     .addSubcommand(sub =>
       sub.setName("pausar").setDescription("Pausa ou reabre a loja (bloqueia compras).")
         .addBooleanOption(o => o.setName("pausar").setDescription("true = pausar, false = reabrir").setRequired(true))
-        .addStringOption(o => o.setName("motivo").setDescription("Motivo (aparece na vitrine)").setMaxLength(200))
-=======
->>>>>>> origin/main
-    ),
+        .addStringOption(o => o.setName("motivo").setDescription("Motivo (aparece na vitrine)").setMaxLength(200))    ),
   new SlashCommandBuilder()
     .setName("configuracao")
     .setDescription("Painel unico para configurar a loja (staff).")
@@ -3558,12 +3226,7 @@ const commands = [
     .setDefaultMemberPermissions(PermissionFlagsBits.ManageGuild)
     .addSubcommand(sub =>
       sub.setName("produto").setDescription("Abre o painel: nome, preco, estoque, cargo, cupons, variante e mais.")
-<<<<<<< HEAD
-        .addStringOption(o => o.setName("produto").setDescription("Produto").setRequired(true).setAutocomplete(true))
-=======
-        .addStringOption(o => o.setName("produto").setDescription("Produto").setRequired(true).addChoices(...escolhasProdutos()))
->>>>>>> origin/main
-    ),
+        .addStringOption(o => o.setName("produto").setDescription("Produto").setRequired(true).setAutocomplete(true))    ),
   new SlashCommandBuilder()
     .setName("categoria")
     .setDescription("Gerencia categorias da loja (staff).")
@@ -3608,15 +3271,11 @@ const commands = [
   new SlashCommandBuilder()
     .setName("avaliacoes")
     .setDescription("Mostra as avaliacoes de um produto.")
-<<<<<<< HEAD
     .addStringOption(o => o.setName("produto").setDescription("Produto").setRequired(true).setAutocomplete(true)),
-=======
-    .addStringOption(o => o.setName("produto").setDescription("Produto").setRequired(true).addChoices(...escolhasProdutos())),
   new SlashCommandBuilder()
     .setName("painel")
     .setDescription("Painel unico da staff: loja, tickets, produto, estoque e cupons.")
     .setDefaultMemberPermissions(PermissionFlagsBits.ManageGuild),
->>>>>>> origin/main
   new SlashCommandBuilder()
     .setName("painel-ticket")
     .setDescription("Publica o painel de abertura de tickets (staff).")
@@ -3795,14 +3454,9 @@ async function handleCommand(interaction) {
       await interaction.reply({
         embeds: [embedPedidoCliente(pedido)],
         components: pedido.pixCopiaECola && pedido.status === STATUS.AGUARDANDO_PAGAMENTO
-<<<<<<< HEAD
-          ? botoesPix(pedido.id, pedido.cartChannelId)
-          : botaoIrCarrinho(pedido.cartChannelId),
-=======
+
           ? botoesPix(pedido.id, pedido.cartChannelId, pedido.guildId)
-          : botaoIrCarrinho(pedido.cartChannelId, pedido.guildId),
->>>>>>> origin/main
-        ephemeral: true
+          : botaoIrCarrinho(pedido.cartChannelId, pedido.guildId),        ephemeral: true
       });
       return;
     }
@@ -3821,17 +3475,14 @@ async function handleCommand(interaction) {
     case "configuracao":
       await handleConfiguracao(interaction);
       return;
-<<<<<<< HEAD
-=======
+
     case "painel":
       if (!isStaff(interaction.member)) {
         await interaction.reply({ content: "So a staff pode usar o painel.", ephemeral: true });
         return;
       }
       await interaction.reply({ ...payloadPainelStaff(), ephemeral: true });
-      return;
->>>>>>> origin/main
-    case "gerenciar":
+      return;    case "gerenciar":
       await handleGerenciar(interaction);
       return;
     case "categoria":
@@ -4339,26 +3990,16 @@ async function handleButton(interaction) {
       return;
     }
     await interaction.deferUpdate();
-<<<<<<< HEAD
-    await publicarLojaFixa();
-    await interaction.editReply(payloadPainelConfig());
-    return;
-  }
-
-  if (acao === "cfg_pausar") {
-=======
     await publicarLojaFixa(interaction.guildId);
     await interaction.editReply(payloadPainelConfig(interaction.guildId));
     return;
   }
 
-  if (acao === "cfg_ticket_painel") {
->>>>>>> origin/main
+  if (acao === "cfg_pausar") {
     if (!isStaff(interaction.member)) {
       await interaction.reply({ content: "So a staff pode configurar.", ephemeral: true });
       return;
     }
-<<<<<<< HEAD
     if (store.config.lojaPausada) {
       store.config.lojaPausada = false;
       store.config.lojaPausaMotivo = "";
@@ -4376,7 +4017,13 @@ async function handleButton(interaction) {
           maxLength: 200
         })
       )
-=======
+    );
+    await interaction.showModal(modal);
+    return;
+  }
+
+  if (acao === "cfg_ticket_painel") {
+
     const cfg = ticketPainel();
     const modal = new ModalBuilder().setCustomId("cfg_ticket_texto_modal").setTitle("Personalizar ticket");
     modal.addComponents(
@@ -4384,17 +4031,16 @@ async function handleButton(interaction) {
       new ActionRowBuilder().addComponents(campoTexto("descricao", "Descricao", TextInputStyle.Paragraph, cfg.descricao, { required: true, maxLength: 1000 })),
       new ActionRowBuilder().addComponents(campoTexto("botao", "Nome do botao", TextInputStyle.Short, cfg.botaoLabel, { required: true, maxLength: 80 })),
       new ActionRowBuilder().addComponents(campoTexto("cor", "Cor hex (ex: 5865F2)", TextInputStyle.Short, cfg.cor || "5865F2", { required: false, maxLength: 7 })),
-      new ActionRowBuilder().addComponents(campoTexto("emoji", "Emoji do botao (vazio remove)", TextInputStyle.Short, cfg.botaoEmoji || "", { required: false, maxLength: 32 }))
->>>>>>> origin/main
-    );
+      new ActionRowBuilder().addComponents(campoTexto("emoji", "Emoji do botao (vazio remove)", TextInputStyle.Short, cfg.botaoEmoji || "", { required: false, maxLength: 32 }))    );
     await interaction.showModal(modal);
     return;
   }
 
-<<<<<<< HEAD
   if (acao === "loja_pausada") {
     await interaction.reply({ content: motivoLojaPausada(), ephemeral: true }).catch(() => {});
-=======
+    return;
+  }
+
   if (acao === "cfg_ticket_midia") {
     if (!isStaff(interaction.member)) {
       await interaction.reply({ content: "So a staff pode configurar.", ephemeral: true });
@@ -4500,9 +4146,7 @@ async function handleButton(interaction) {
       return;
     }
     await atualizarPainelCupons().catch(() => {});
-    await interaction.reply({ content: `Painel de cupons publicado em <#${guildCfg(interaction.guildId).canais.cupons}>.`, ephemeral: true });
->>>>>>> origin/main
-    return;
+    await interaction.reply({ content: `Painel de cupons publicado em <#${guildCfg(interaction.guildId).canais.cupons}>.`, ephemeral: true });    return;
   }
 
   if (acao.startsWith("gp_")) {
@@ -4667,16 +4311,7 @@ async function handleSelect(interaction) {
   }
 
   if (id === "ticket_cat") {
-<<<<<<< HEAD
-    const categoria = store.categorias[valor];
-    await interaction.deferReply({ ephemeral: true });
-    const canal = await abrirTicket(
-      interaction.guild,
-      interaction.user,
-      categoria ? `Atendimento: ${categoria.nome}` : "Atendimento"
-    );
-    await interaction.editReply(`Ticket aberto em <#${canal.id}> (${categoria ? categoria.nome : valor}).`);
-=======
+
     await interaction.showModal(modalMotivoTicket(valor));
     return;
   }
@@ -4711,9 +4346,7 @@ async function handleSelect(interaction) {
         campoTexto("conteudo", "Itens (um por linha)", TextInputStyle.Paragraph, "", { required: true, maxLength: 1000 })
       )
     );
-    await interaction.showModal(modal);
->>>>>>> origin/main
-    return;
+    await interaction.showModal(modal);    return;
   }
 
   if (id === "cfg_cat_ticket") {
@@ -4721,12 +4354,8 @@ async function handleSelect(interaction) {
       await interaction.reply({ content: "So a staff pode configurar.", ephemeral: true });
       return;
     }
-<<<<<<< HEAD
-    store.config.ticketCategoryId = valor;
-=======
-    store.guilds[interaction.guildId].ticketCategoryId = valor;
->>>>>>> origin/main
-    salvarStore();
+
+    store.guilds[interaction.guildId].ticketCategoryId = valor;    salvarStore();
     await enviarPainelConfig(interaction);
     return;
   }
@@ -4908,8 +4537,7 @@ async function handleModal(interaction) {
     return;
   }
 
-<<<<<<< HEAD
-=======
+
   if (acao === "ticket_motivo_modal") {
     const motivo = (interaction.fields.getTextInputValue("motivo") || "").trim();
     if (!motivo) {
@@ -5059,8 +4687,6 @@ async function handleModal(interaction) {
     await interaction.reply({ ...payloadPainelConfig(interaction.guildId), ephemeral: true });
     return;
   }
-
->>>>>>> origin/main
   if (acao === "cfg_banner_modal") {
     if (!isStaff(interaction.member)) {
       await interaction.reply({ content: "So a staff pode configurar.", ephemeral: true });
@@ -5076,12 +4702,8 @@ async function handleModal(interaction) {
     if (posicao) store.config.bannerPosicao = posicao;
     salvarStore();
     await atualizarLojaFixa().catch(error => console.error("Falha ao atualizar loja fixa:", error.message));
-<<<<<<< HEAD
-    await interaction.reply({ ...payloadPainelConfig(), ephemeral: true });
-=======
-    await interaction.reply({ ...payloadPainelConfig(interaction.guildId), ephemeral: true });
->>>>>>> origin/main
-    return;
+
+    await interaction.reply({ ...payloadPainelConfig(interaction.guildId), ephemeral: true });    return;
   }
 
   if (acao === "cfg_smtp_modal") {
@@ -5095,8 +4717,7 @@ async function handleModal(interaction) {
     store.config.smtpPass = interaction.fields.getTextInputValue("senha") || "";
     store.config.smtpFrom = (interaction.fields.getTextInputValue("from") || "").trim();
     salvarStore();
-<<<<<<< HEAD
-    await interaction.reply({ ...payloadPainelConfig(), ephemeral: true });
+    await interaction.reply({ ...payloadPainelConfig(interaction.guildId), ephemeral: true });
     return;
   }
 
@@ -5110,10 +4731,7 @@ async function handleModal(interaction) {
     salvarStore();
     await atualizarLojaFixa().catch(() => {});
     registrarLog("loja_pausada", `Loja pausada. ${store.config.lojaPausaMotivo}`, { staffId: interaction.user.id });
-    await interaction.reply({ ...payloadPainelConfig(), ephemeral: true });
-=======
     await interaction.reply({ ...payloadPainelConfig(interaction.guildId), ephemeral: true });
->>>>>>> origin/main
     return;
   }
 
@@ -5126,12 +4744,8 @@ async function handleModal(interaction) {
     const ocultar = (interaction.fields.getTextInputValue("ocultar") || "sim").trim().toLowerCase();
     store.config.ocultarNomePix = !["nao", "não", "no", "n", "false", "0"].includes(ocultar);
     salvarStore();
-<<<<<<< HEAD
-    await interaction.reply({ ...payloadPainelConfig(), ephemeral: true });
-=======
-    await interaction.reply({ ...payloadPainelConfig(interaction.guildId), ephemeral: true });
->>>>>>> origin/main
-    return;
+
+    await interaction.reply({ ...payloadPainelConfig(interaction.guildId), ephemeral: true });    return;
   }
 
   if (acao.startsWith("gp_") && acao.endsWith("_modal")) {
@@ -5307,22 +4921,20 @@ async function handleModal(interaction) {
     .catch(() => {});
 }
 
-<<<<<<< HEAD
 async function handleAutocomplete(interaction) {
   const focused = interaction.options.getFocused(true);
   if (focused.name === "produto") {
     await interaction.respond(opcoesAutocompleteProduto(focused.value)).catch(() => {});
   }
 }
-=======
+
+
 client.on("guildCreate", async guild => {
   if (!guildPermitida(guild.id)) {
     console.warn(`Servidor nao autorizado: ${guild.name} (${guild.id}). Saindo.`);
     await guild.leave().catch(() => {});
   }
 });
->>>>>>> origin/main
-
 client.on("interactionCreate", async interaction => {
   if (interaction.guildId && !guildPermitida(interaction.guildId)) {
     if (typeof interaction.isRepliable === "function" && interaction.isRepliable()) {
