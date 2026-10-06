@@ -33,7 +33,6 @@ async function enviarProdutoPorEmail(config, to, pedido, codigo, extra, instruco
   });
 }
 
-<<<<<<< HEAD
 async function testarSmtp(config, to) {
   if (!config?.smtpHost || !config?.smtpUser || !config?.smtpFrom) {
     throw new Error("SMTP nao configurado");
@@ -60,6 +59,3 @@ async function testarSmtp(config, to) {
 }
 
 module.exports = { enviarProdutoPorEmail, testarSmtp };
-=======
-module.exports = { enviarProdutoPorEmail };
->>>>>>> origin/main
