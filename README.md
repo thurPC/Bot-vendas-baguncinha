@@ -10,8 +10,8 @@ Bot de vendas da Baguncinha: catalogo no Discord, Pix automatico, entregas autom
 4. Webhook confirma o Pix
 5. Se o produto for **automatico** e houver estoque, o bot entrega na hora; senao avisa a staff
 6. Staff clica em Entregar, cola o codigo/licenca (modo staff)
-7. Bot envia a entrega na DM do cliente, concede cargo temporario (se configurado) e pede avaliacao
-8. Cliente avalia pelo botao na DM ou por `/feedback`
+7. Bot envia a entrega na DM do cliente, concede cargo temporario (se configurado) e pede avaliacao em texto
+8. Cliente avalia no canal de feedbacks so com texto (ex: `5 chegou rapido`), sem botao
 
 Prazo padrao: **2 horas** apos o Pix confirmado.
 
@@ -23,7 +23,7 @@ Loja e cliente:
 - `/catalogo` — publica o catalogo no canal (staff, exige Gerenciar Mensagens)
 - `/meuspedidos` — lista seus pedidos
 - `/pedido id:` — consulta um pedido
-- `/feedback id: nota: comentario:` — avalia um pedido entregue
+- `/feedback id: nota: comentario:` — avalia um pedido entregue (opcional; o fluxo normal e texto no canal)
 - `/avaliacoes produto:` — media e comentarios de um produto
 - `/ticket assunto:` — abre um ticket de atendimento
 
@@ -59,7 +59,8 @@ Staff (exigem Gerenciar Servidor):
 - **Entrega semi-automatica**: produtos `modo: semi` sao entregues pela staff pelo botao **Entregar**.
 - **Cupons**: percentual ou valor fixo, com limite de usos, validade em dias e compra minima. O codigo e opcional no modal de compra.
 - **Cargos temporarios**: defina `cargo` e `cargo-dias` no produto. O cargo e dado na entrega e removido automaticamente ao expirar (mesmo apos reiniciar, pois fica salvo).
-- **Feedbacks**: apos a entrega o cliente recebe um botao de avaliacao na DM. As avaliacoes aparecem no canal de feedback como texto normal (nao embed) e tambem em `/avaliacoes`.
+- **Feedbacks**: apos a entrega o cliente e avisado para avaliar no canal de feedbacks **so com texto** (ex: `5 chegou rapido`), sem botao. A avaliacao publicada no canal tambem e texto, nao embed.
+- **Editar embed (Apps)**: segure a mensagem do bot > Apps > **Editar embed** para alterar titulo, descricao, cor, banner e rodape (loja, ticket, cupons ou qualquer embed do bot).
 - **Tickets**: use `/painel-ticket` num canal. O botao abre um canal privado com o cliente e a staff; o botao **Fechar ticket** trava o canal e o renomeia. Os botoes Meus pedidos e Avaliar pedido nao aparecem no painel de tickets.
 - **Logs completos**: pedido criado, cupom aplicado, pagamento, entrega, cancelamento, expiracao, prazo estourado, cargos e tickets. Todos vao para o canal definido em `/config canal-logs` (nunca para o canal da lojinha) e ficam salvos em `data/store.json` + `data/loja.db`.
 - **Engrenagem so para staff**: o botao ⚙️ nao aparece na vitrine publica; so a staff ve no painel efemero do produto.
