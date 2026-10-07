@@ -260,6 +260,14 @@ if (!store.categorias) {
     boost: { id: "boost", nome: "Boosts", emoji: "🚀", descricao: "Boosts de servidor", posicao: 1, ativo: true }
   };
 }
+for (const cat of Object.values(store.categorias || {})) {
+  if (!cat || typeof cat !== "object") continue;
+  if (cat.banner === undefined) cat.banner = null;
+  if (!cat.bannerPosicao) cat.bannerPosicao = "top";
+  if (cat.imagem === undefined) cat.imagem = null;
+  if (cat.cor === undefined) cat.cor = null;
+  if (cat.rodape === undefined) cat.rodape = null;
+}
 
 function escolhasProdutos() {
   return todosProdutos()
@@ -625,8 +633,22 @@ function catalogoEmbed(categoriaId) {
   const embed = new EmbedBuilder()
     .setTitle(store.config.lojaPausada ? "Loja pausada" : titulo)
     .setDescription(corpo)
-    .setColor(store.config.lojaPausada ? 0xed4245 : 0x9b59b6);
-  aplicarBanner(embed, store.config.banner, store.config.bannerPosicao || "top");
+    .setColor(
+      store.config.lojaPausada
+        ? 0xed4245
+        : (categoria && parseCor(categoria.cor)) || 0x9b59b6
+    );
+  if (categoria && !store.config.lojaPausada) {
+    aplicarBanner(
+      embed,
+      categoria.banner || store.config.banner,
+      categoria.bannerPosicao || store.config.bannerPosicao || "top",
+      categoria.imagem
+    );
+    if (categoria.rodape) embed.setFooter({ text: String(categoria.rodape).slice(0, 2048) });
+  } else {
+    aplicarBanner(embed, store.config.banner, store.config.bannerPosicao || "top");
+  }
   return embed;
 }
 
@@ -807,10 +829,6 @@ function payloadPainelTicket() {
     try { botao.setEmoji(cfg.botaoEmoji); } catch { /* emoji invalido */ }
   }
   components.push(new ActionRowBuilder().addComponents(botao));
-  components.push(new ActionRowBuilder().addComponents(
-    new ButtonBuilder().setCustomId("ticket_meus").setLabel("Meus pedidos").setStyle(ButtonStyle.Secondary),
-    new ButtonBuilder().setCustomId("ticket_avaliar").setLabel("Avaliar pedido").setStyle(ButtonStyle.Secondary)
-  ));
   return { embeds: [embed], components };
 }
 
@@ -1307,7 +1325,12 @@ async function registrarFeedback(pedido, nota, comentario) {
   if (feedbackChannelId) {
     const canal = await client.channels.fetch(feedbackChannelId).catch(() => null);
     if (canal) {
-      await canal.send({ embeds: [embedFeedback(pedido, nota, comentario)] }).catch(() => {});
+      const produto = getProduto(pedido.produtoId);
+      const nomeProduto = produto ? produto.nome : pedido.produtoNome;
+      const comentarioTxt = comentario ? `\n"${comentario}"` : "";
+      await canal.send(
+        `${estrelas(nota)} <@${pedido.userId}> avaliou **${nomeProduto}** (pedido #${pedido.id}) — ${nota}/5${comentarioTxt}`
+      ).catch(() => {});
     }
   }
   registrarLog("feedback", `Pedido #${pedido.id} avaliado com ${nota}/5.`, {
@@ -2420,6 +2443,7 @@ function payloadPainelStaff() {
       "**Loja** — banner, SMTP, PIX, publicar\n" +
       "**Tickets** — texto, midia, publicar painel\n" +
       "**Produto** — preco, estoque, cargo, cupons\n" +
+      "**Categoria** — embed da categoria (titulo, banner, cor)\n" +
       "**Estoque / Cupons / Relatorio**"
     )
     .setColor(0x9b59b6);
@@ -2429,7 +2453,8 @@ function payloadPainelStaff() {
       new ActionRowBuilder().addComponents(
         new ButtonBuilder().setCustomId("hub_loja").setLabel("Loja").setStyle(ButtonStyle.Primary),
         new ButtonBuilder().setCustomId("hub_tickets").setLabel("Tickets").setStyle(ButtonStyle.Primary),
-        new ButtonBuilder().setCustomId("hub_produto").setLabel("Produto").setStyle(ButtonStyle.Primary)
+        new ButtonBuilder().setCustomId("hub_produto").setLabel("Produto").setStyle(ButtonStyle.Primary),
+        new ButtonBuilder().setCustomId("hub_categoria").setLabel("Categoria").setStyle(ButtonStyle.Primary)
       ),
       new ActionRowBuilder().addComponents(
         new ButtonBuilder().setCustomId("hub_estoque").setLabel("Estoque").setStyle(ButtonStyle.Secondary),
@@ -2438,6 +2463,96 @@ function payloadPainelStaff() {
       )
     ]
   };
+}
+
+function selectHubCategorias(customId, placeholder) {
+  const opcoes = Object.values(store.categorias || {})
+    .filter(c => c && c.ativo !== false)
+    .slice(0, 25)
+    .map(c => ({
+      label: String(c.nome || c.id).slice(0, 100),
+      value: String(c.id),
+      description: (c.descricao || "Editar embed da categoria").slice(0, 100)
+    }));
+  if (!opcoes.length) return null;
+  return new ActionRowBuilder().addComponents(
+    new StringSelectMenuBuilder().setCustomId(customId).setPlaceholder(placeholder).addOptions(opcoes)
+  );
+}
+
+function embedPainelCategoria(cat) {
+  return new EmbedBuilder()
+    .setTitle(`Categoria — ${cat.nome}`)
+    .setDescription(
+      `ID: \`${cat.id}\`\n` +
+      `Emoji: ${cat.emoji || "📁"}\n` +
+      `Descricao: ${cat.descricao || "(vazia)"}\n` +
+      `Cor: ${cat.cor || "(padrao)"}\n` +
+      `Banner: ${cat.banner ? "definido" : "nao"}\n` +
+      `Miniatura: ${cat.imagem ? "definida" : "nao"}\n` +
+      `Posicao: ${cat.bannerPosicao || "top"}\n` +
+      `Rodape: ${cat.rodape || "(nenhum)"}\n` +
+      `Produtos: **${produtosDaCategoria(cat.id).length}**`
+    )
+    .setColor(parseCor(cat.cor) || 0x9b59b6);
+}
+
+function payloadPainelCategoria(cat) {
+  return {
+    embeds: [embedPainelCategoria(cat)],
+    components: [
+      new ActionRowBuilder().addComponents(
+        new ButtonBuilder().setCustomId(`gc_nome:${cat.id}`).setLabel("Alterar Nome").setStyle(ButtonStyle.Secondary),
+        new ButtonBuilder().setCustomId(`gc_desc:${cat.id}`).setLabel("Alterar Descricao").setStyle(ButtonStyle.Secondary),
+        new ButtonBuilder().setCustomId(`gc_emoji:${cat.id}`).setLabel("Alterar Emoji").setStyle(ButtonStyle.Secondary)
+      ),
+      new ActionRowBuilder().addComponents(
+        new ButtonBuilder().setCustomId(`gc_miniatura:${cat.id}`).setLabel("Alterar Miniatura").setStyle(ButtonStyle.Secondary),
+        new ButtonBuilder().setCustomId(`gc_banner:${cat.id}`).setLabel("Alterar Banner").setStyle(ButtonStyle.Secondary)
+      ),
+      new ActionRowBuilder().addComponents(
+        new ButtonBuilder().setCustomId(`gc_rodape:${cat.id}`).setLabel("Editar Rodape").setStyle(ButtonStyle.Secondary),
+        new ButtonBuilder().setCustomId(`gc_cor:${cat.id}`).setLabel("Alterar Cor").setStyle(ButtonStyle.Secondary)
+      ),
+      new ActionRowBuilder().addComponents(
+        new ButtonBuilder().setCustomId("hub_categoria").setLabel("Voltar").setStyle(ButtonStyle.Secondary)
+      )
+    ]
+  };
+}
+
+function payloadHubCategorias() {
+  const sel = selectHubCategorias("hub_cat_sel", "Escolha a categoria");
+  const linhas = Object.values(store.categorias || {}).map(c =>
+    `${c.emoji || "📁"} **${c.nome}** (\`${c.id}\`) — ${c.ativo === false ? "inativa" : "ativa"}`
+  );
+  const embed = new EmbedBuilder()
+    .setTitle("Editar embed da categoria")
+    .setDescription(
+      "Selecione uma categoria para editar o embed (titulo, descricao, banner, cor, miniatura), igual ao da vitrine.\n\n" +
+      (linhas.join("\n") || "Nenhuma categoria.")
+    )
+    .setColor(0x9b59b6);
+  return { embeds: [embed], components: sel ? [sel, rowVoltarHub()] : [rowVoltarHub()] };
+}
+
+async function enviarPainelCategoria(interaction, cat) {
+  const payload = { ...payloadPainelCategoria(cat), ephemeral: true };
+  if (interaction.isMessageComponent() && !interaction.replied && !interaction.deferred) {
+    await interaction.update({ embeds: payload.embeds, components: payload.components });
+    return;
+  }
+  if (interaction.replied || interaction.deferred) {
+    await interaction.editReply(payload);
+    return;
+  }
+  await interaction.reply(payload);
+}
+
+function patchCategoria(id, fields) {
+  if (!store.categorias[id]) return;
+  store.categorias[id] = { ...store.categorias[id], ...fields };
+  salvarStore();
 }
 
 function selectHubProdutos(customId, placeholder) {
@@ -2752,7 +2867,12 @@ async function handleCategoria(interaction) {
       emoji: interaction.options.getString("emoji") || "📁",
       descricao: interaction.options.getString("descricao") || "",
       posicao: Object.keys(store.categorias).length,
-      ativo: true
+      ativo: true,
+      banner: null,
+      bannerPosicao: "top",
+      imagem: null,
+      cor: null,
+      rodape: null
     };
     salvarStore();
     await atualizarLojaFixa();
@@ -2767,6 +2887,16 @@ async function handleCategoria(interaction) {
       embeds: [new EmbedBuilder().setTitle("Categorias").setDescription(linhas.join("\n") || "Nenhuma.").setColor(0x9b59b6)],
       ephemeral: true
     });
+    return;
+  }
+  if (sub === "editar") {
+    const id = interaction.options.getString("id").trim();
+    const cat = store.categorias[id];
+    if (!cat) {
+      await interaction.reply({ content: "Categoria nao encontrada.", ephemeral: true });
+      return;
+    }
+    await enviarPainelCategoria(interaction, cat);
     return;
   }
   if (sub === "remover") {
@@ -3208,6 +3338,10 @@ const commands = [
         .addStringOption(o => o.setName("descricao").setDescription("Descricao").setMaxLength(200))
     )
     .addSubcommand(sub => sub.setName("listar").setDescription("Lista as categorias."))
+    .addSubcommand(sub =>
+      sub.setName("editar").setDescription("Abre o painel para editar o embed da categoria (banner, cor, titulo).")
+        .addStringOption(o => o.setName("id").setDescription("ID da categoria").setRequired(true))
+    )
     .addSubcommand(sub =>
       sub.setName("remover").setDescription("Desativa uma categoria.")
         .addStringOption(o => o.setName("id").setDescription("ID da categoria").setRequired(true))
@@ -4223,6 +4357,60 @@ async function handleButton(interaction) {
     return;
   }
 
+  if (acao === "hub_categoria") {
+    if (!isStaff(interaction.member)) {
+      await interaction.reply({ content: "So a staff pode usar o painel.", ephemeral: true });
+      return;
+    }
+    await enviarPainelEphemeral(interaction, payloadHubCategorias());
+    return;
+  }
+
+  if (acao.startsWith("gc_")) {
+    if (!isStaff(interaction.member)) {
+      await interaction.reply({ content: "So a staff pode configurar.", ephemeral: true });
+      return;
+    }
+    const cat = store.categorias[valor];
+    if (!cat) {
+      await interaction.reply({ content: "Categoria nao encontrada.", ephemeral: true });
+      return;
+    }
+    if (acao === "gc_nome") {
+      await interaction.showModal(modalCampoProduto(`gc_nome_modal:${valor}`, "Alterar nome", "nome", "Nome da categoria", cat.nome, TextInputStyle.Short, { required: true, maxLength: 80 }));
+      return;
+    }
+    if (acao === "gc_desc") {
+      await interaction.showModal(modalCampoProduto(`gc_desc_modal:${valor}`, "Alterar descricao", "descricao", "Descricao da categoria", cat.descricao, TextInputStyle.Paragraph, { required: false, maxLength: 400 }));
+      return;
+    }
+    if (acao === "gc_emoji") {
+      await interaction.showModal(modalCampoProduto(`gc_emoji_modal:${valor}`, "Alterar emoji", "emoji", "Emoji", cat.emoji || "📁", TextInputStyle.Short, { required: false, maxLength: 8 }));
+      return;
+    }
+    if (acao === "gc_miniatura") {
+      await interaction.showModal(modalCampoProduto(`gc_miniatura_modal:${valor}`, "Alterar miniatura", "url", "URL da miniatura (vazio remove)", cat.imagem, TextInputStyle.Short, { required: false, maxLength: 400 }));
+      return;
+    }
+    if (acao === "gc_banner") {
+      const modal = new ModalBuilder().setCustomId(`gc_banner_modal:${valor}`).setTitle("Alterar banner");
+      modal.addComponents(
+        new ActionRowBuilder().addComponents(campoTexto("url", "URL do banner (vazio remove)", TextInputStyle.Short, cat.banner, { required: false, maxLength: 400 })),
+        new ActionRowBuilder().addComponents(campoTexto("posicao", "Posicao: top, bottom, thumbnail, float", TextInputStyle.Short, cat.bannerPosicao || "top", { required: false, maxLength: 20 }))
+      );
+      await interaction.showModal(modal);
+      return;
+    }
+    if (acao === "gc_rodape") {
+      await interaction.showModal(modalCampoProduto(`gc_rodape_modal:${valor}`, "Editar rodape", "rodape", "Texto do rodape", cat.rodape, TextInputStyle.Short, { required: false, maxLength: 80 }));
+      return;
+    }
+    if (acao === "gc_cor") {
+      await interaction.showModal(modalCampoProduto(`gc_cor_modal:${valor}`, "Alterar cor", "cor", "Cor hex (ex: 9b59b6)", cat.cor || "9b59b6", TextInputStyle.Short, { required: true, maxLength: 7 }));
+      return;
+    }
+  }
+
   if (acao === "hub_estoque") {
     if (!isStaff(interaction.member)) {
       await interaction.reply({ content: "So a staff pode usar o painel.", ephemeral: true });
@@ -4488,6 +4676,20 @@ async function handleSelect(interaction) {
 
   if (id === "ticket_avaliar_sel") {
     await interaction.showModal(modalAvaliar(valor));
+    return;
+  }
+
+  if (id === "hub_cat_sel") {
+    if (!isStaff(interaction.member)) {
+      await interaction.reply({ content: "So a staff pode usar o painel.", ephemeral: true });
+      return;
+    }
+    const cat = store.categorias[valor];
+    if (!cat) {
+      await interaction.reply({ content: "Categoria nao encontrada.", ephemeral: true });
+      return;
+    }
+    await enviarPainelCategoria(interaction, cat);
     return;
   }
 
@@ -4923,6 +5125,77 @@ async function handleModal(interaction) {
     salvarStore();
 
     await interaction.reply({ ...payloadPainelConfig(interaction.guildId), ephemeral: true });    return;
+  }
+
+  if (acao.startsWith("gc_") && acao.endsWith("_modal")) {
+    if (!isStaff(interaction.member)) {
+      await interaction.reply({ content: "So a staff pode configurar.", ephemeral: true });
+      return;
+    }
+    const cat = store.categorias[valor];
+    if (!cat) {
+      await interaction.reply({ content: "Categoria nao encontrada.", ephemeral: true });
+      return;
+    }
+    const recarregarCat = async () => {
+      await atualizarLojaFixa().catch(() => {});
+      const atual = store.categorias[valor];
+      if (atual) await enviarPainelCategoria(interaction, atual);
+      else await interaction.reply({ content: "Salvo.", ephemeral: true });
+    };
+    if (acao === "gc_nome_modal") {
+      patchCategoria(valor, { nome: interaction.fields.getTextInputValue("nome").trim() });
+      await recarregarCat();
+      return;
+    }
+    if (acao === "gc_desc_modal") {
+      patchCategoria(valor, { descricao: interaction.fields.getTextInputValue("descricao").trim() });
+      await recarregarCat();
+      return;
+    }
+    if (acao === "gc_emoji_modal") {
+      patchCategoria(valor, { emoji: (interaction.fields.getTextInputValue("emoji") || "📁").trim().slice(0, 8) });
+      await recarregarCat();
+      return;
+    }
+    if (acao === "gc_miniatura_modal") {
+      const url = limparUrl(interaction.fields.getTextInputValue("url"));
+      if (url && !urlMidiaValida(url)) {
+        await interaction.reply({ content: "URL invalida.", ephemeral: true });
+        return;
+      }
+      patchCategoria(valor, { imagem: url || null });
+      await recarregarCat();
+      return;
+    }
+    if (acao === "gc_banner_modal") {
+      const url = limparUrl(interaction.fields.getTextInputValue("url"));
+      if (url && !urlMidiaValida(url)) {
+        await interaction.reply({ content: "URL invalida.", ephemeral: true });
+        return;
+      }
+      patchCategoria(valor, {
+        banner: url || null,
+        bannerPosicao: (interaction.fields.getTextInputValue("posicao") || "top").trim().toLowerCase()
+      });
+      await recarregarCat();
+      return;
+    }
+    if (acao === "gc_rodape_modal") {
+      patchCategoria(valor, { rodape: interaction.fields.getTextInputValue("rodape").trim() || null });
+      await recarregarCat();
+      return;
+    }
+    if (acao === "gc_cor_modal") {
+      const cor = interaction.fields.getTextInputValue("cor").trim();
+      if (!parseCor(cor)) {
+        await interaction.reply({ content: "Cor invalida. Use hex, ex: 9b59b6.", ephemeral: true });
+        return;
+      }
+      patchCategoria(valor, { cor: cor.replace(/^#/, "") });
+      await recarregarCat();
+      return;
+    }
   }
 
   if (acao.startsWith("gp_") && acao.endsWith("_modal")) {

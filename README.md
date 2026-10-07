@@ -37,6 +37,7 @@ Staff (exigem Gerenciar Servidor):
 - `/canais exportar` — JSON com categorias e canais deste servidor
 - `/canais colar arquivo:` — cola a estrutura (mesmo nome) em outro servidor
 - `/categoria canal nome: categoria-existente: nova-categoria:` — cria canal em categoria nova ou existente
+- `/categoria editar id:` — painel para editar o embed da categoria (nome, descricao, banner, cor, miniatura, rodape)
 - `/produto listar`
 - `/produto criar id: nome: preco: categoria: modo:` — cria produto novo (aparece na vitrine na hora)
 - `/produto editar produto: modo: cargo: cargo-dias: preco: disponivel:`
@@ -58,15 +59,15 @@ Staff (exigem Gerenciar Servidor):
 - **Entrega semi-automatica**: produtos `modo: semi` sao entregues pela staff pelo botao **Entregar**.
 - **Cupons**: percentual ou valor fixo, com limite de usos, validade em dias e compra minima. O codigo e opcional no modal de compra.
 - **Cargos temporarios**: defina `cargo` e `cargo-dias` no produto. O cargo e dado na entrega e removido automaticamente ao expirar (mesmo apos reiniciar, pois fica salvo).
-- **Feedbacks**: apos a entrega o cliente recebe um botao de avaliacao na DM. As avaliacoes vao para o canal de feedback e/ou sao vistas com `/avaliacoes`.
-- **Tickets**: use `/painel-ticket` num canal. O botao abre um canal privado com o cliente e a staff; o botao **Fechar ticket** trava o canal e o renomeia.
+- **Feedbacks**: apos a entrega o cliente recebe um botao de avaliacao na DM. As avaliacoes aparecem no canal de feedback como texto normal (nao embed) e tambem em `/avaliacoes`.
+- **Tickets**: use `/painel-ticket` num canal. O botao abre um canal privado com o cliente e a staff; o botao **Fechar ticket** trava o canal e o renomeia. Os botoes Meus pedidos e Avaliar pedido nao aparecem no painel de tickets.
 - **Logs completos**: pedido criado, cupom aplicado, pagamento, entrega, cancelamento, expiracao, prazo estourado, cargos e tickets. Todos vao para o canal definido em `/config canal-logs` (nunca para o canal da lojinha) e ficam salvos em `data/store.json` + `data/loja.db`.
 - **Engrenagem so para staff**: o botao ⚙️ nao aparece na vitrine publica; so a staff ve no painel efemero do produto.
 - **Carrinho automatico**: ao gerar o Pix, o bot envia o QR na DM, abre um canal privado **seu-carrinho** (so o comprador) e um botao **Ir ao carrinho**. No Pix aprovado, um GIF de 6s aparece so nesse canal.
 - **Fechar ticket apaga o canal**.
 - **Nome PIX publico**: `/config pix-nome` — o app do banco mostra o nome da loja, nao seu nome completo.
 - **Entrega DM ou e-mail**: o cliente escolhe onde receber. SMTP em `/config smtp`.
-- **Categorias**: `/categoria criar` e seletor na vitrine e no atendimento. `/categoria canal` cria canal Discord em categoria nova ou ja existente.
+- **Categorias**: `/categoria criar` e seletor na vitrine e no atendimento. `/categoria editar` (ou o botao Categoria no `/painel`) edita o embed da categoria, igual ao da vitrine. `/categoria canal` cria canal Discord em categoria nova ou ja existente.
 - **Cupons no canal**: ao criar (`/cupom criar` ou painel do produto) o painel em <#cupons> e atualizado, a menos que `publicar: false` / `nao`.
 - **Estrutura de canais**: `/canais exportar` neste servidor e `/canais colar` no outro; nomes iguais nao sao duplicados.
 - **Banner**: `top`, `bottom`, `thumbnail`, `float` (`/config banner-posicao` e `/produto editar`).
