@@ -19,7 +19,8 @@ const {
   RoleSelectMenuBuilder,
   MessageFlags,
   ContextMenuCommandBuilder,
-  ApplicationCommandType
+  ApplicationCommandType,
+  Partials
 } = require("discord.js");
 const http = require("http");
 const crypto = require("crypto");
@@ -80,6 +81,11 @@ const guildCfg = id => GUILDS[id] || GUILDS[GUILD_ID];
 const PRAZO_ENTREGA_MIN = 120;
 const PRAZO_ENTREGA_LABEL = "2 horas";
 const QR_NOME_PUBLICO = "BAGUNCINHA";
+const FEEDBACK_TITULO_PADRAO = "Obrigado pela compra!";
+const FEEDBACK_MSG_PADRAO =
+  "Obrigado pela compra, {user}!\n\n" +
+  "Seu pedido #{id} ({produto}) foi entregue com sucesso.\n\n" +
+  "Se puder, clique no botao abaixo e deixe seu feedback. Isso ajuda demais a loja.";
 const DIA_MS = 24 * 60 * 60 * 1000;
 const GIF_COMPRA_APROVADA = path.join(__dirname, "assets", "compra-aprovada.gif");
 
@@ -181,8 +187,10 @@ const client = new Client({
   intents: [
     GatewayIntentBits.Guilds,
     GatewayIntentBits.GuildMessages,
+    GatewayIntentBits.DirectMessages,
     GatewayIntentBits.MessageContent
-  ]
+  ],
+  partials: [Partials.Channel]
 });
 
 client.on("error", error => {
@@ -235,6 +243,11 @@ if (store.config.lojaTitulo === undefined) store.config.lojaTitulo = "";
 if (store.config.lojaDescricao === undefined) store.config.lojaDescricao = "";
 if (store.config.lojaCor === undefined) store.config.lojaCor = "";
 if (store.config.lojaRodape === undefined) store.config.lojaRodape = "";
+if (!store.config.feedbackTitulo) store.config.feedbackTitulo = FEEDBACK_TITULO_PADRAO;
+if (!store.config.feedbackMensagem) store.config.feedbackMensagem = FEEDBACK_MSG_PADRAO;
+for (const [id, produto] of Object.entries(PRODUTOS)) {
+  if (!store.produtos[id]) store.produtos[id] = { ...produto };
+}
 if (!store.config.cuponsPainel || typeof store.config.cuponsPainel !== "object") store.config.cuponsPainel = {};
 if (!store.lojaFixa) store.lojaFixa = { channelId: null, messageId: null };
 if (!store.paineisFixos) store.paineisFixos = { ticket: null, cupons: null };
@@ -279,6 +292,7 @@ for (const cat of Object.values(store.categorias || {})) {
   if (cat.cor === undefined) cat.cor = null;
   if (cat.rodape === undefined) cat.rodape = null;
 }
+salvarStore();
 
 function escolhasProdutos() {
   return todosProdutos()
@@ -307,9 +321,8 @@ function proximoPedidoId() {
 function getProduto(id) {
   if (!id) return null;
   const custom = (store.produtos || {})[id];
-  const base = PRODUTOS[id] || custom;
-  if (!base) return null;
-  const merged = { ...base, ...(store.produtoOverrides[id] || {}) };
+  if (!PRODUTOS[id] && !custom) return null;
+  const merged = { ...(PRODUTOS[id] || {}), ...(custom || {}), ...(store.produtoOverrides[id] || {}) };
   if (merged.apagado) return null;
   return merged;
 }
@@ -552,7 +565,7 @@ function avisoComandoBloqueado(interaction) {
     return "Neste canal use o seletor ou o botao do painel para abrir um ticket.";
   }
   if (interaction.channelId === c.feedbacks) {
-    return "Neste canal a avaliacao e so em texto: envie uma nota de 1 a 5 e um comentario apos o pagamento.";
+    return "Neste canal aparecem as avaliacoes. O cliente avalia pelo botao enviado na DM apos a entrega.";
   }
   if (interaction.channelId === c.logs) {
     return "Este canal e so de logs. Comandos ficam apenas para a staff.";
@@ -915,20 +928,35 @@ async function atualizarPaineisTicket() {
   }
 }
 
+function payloadPainelFeedbacks() {
+  const avaliacoes = Object.values(store.pedidos)
+    .filter(p => p.feedback)
+    .sort((a, b) => (b.feedback.em || 0) - (a.feedback.em || 0));
+  const linhas = avaliacoes.slice(0, 8).map(p => {
+    const produto = getProduto(p.produtoId);
+    const nomeProduto = produto ? produto.nome : p.produtoNome;
+    const comentario = p.feedback.comentario ? ` — "${String(p.feedback.comentario).slice(0, 80)}"` : "";
+    return `${estrelas(p.feedback.nota)} <@${p.userId}> · **${nomeProduto}** (#${p.id})${comentario}`;
+  });
+  const media = avaliacoes.length
+    ? (avaliacoes.reduce((s, p) => s + Number(p.feedback.nota || 0), 0) / avaliacoes.length).toFixed(1)
+    : "—";
+  const embed = new EmbedBuilder()
+    .setTitle("Feedbacks da loja")
+    .setDescription(
+      `Apos a entrega, o cliente recebe um **agradecimento na DM** com botao para avaliar.\n` +
+      `A avaliacao aparece aqui automaticamente.\n\n` +
+      `Media: **${media}/5** · **${avaliacoes.length}** avaliacao(oes).\n\n` +
+      (linhas.join("\n") || "Ainda nao ha avaliacoes.")
+    )
+    .setColor(0xf1c40f);
+  return { content: null, embeds: [embed], components: [] };
+}
+
 async function atualizarPainelFeedbacks() {
+  const payload = payloadPainelFeedbacks();
   for (const gid of GUILD_IDS) {
-    const canalId = guildCfg(gid).canais.feedbacks;
-    const salvo = store.guilds[gid]?.paineisFixos?.feedbacks;
-    if (!canalId || !salvo) continue;
-    const canal = await client.channels.fetch(canalId).catch(() => null);
-    if (!canal) continue;
-    const msg = await canal.messages.fetch(salvo).catch(() => null);
-    if (!msg) continue;
-    await msg.edit({
-      content: "Avaliacoes da loja. Depois do pagamento, envie neste canal so texto, ex: `5 chegou rapido`.",
-      embeds: [],
-      components: []
-    }).catch(() => {});
+    await publicarOuAtualizarPainel(gid, "feedbacks", guildCfg(gid).canais.feedbacks, payload).catch(() => {});
   }
 }
 
@@ -1132,6 +1160,7 @@ function embedPedidoAdmin(pedido) {
 
 function botoesAdmin(pedidoId) {
   const pedido = store.pedidos[String(pedidoId)];
+  const rows = [];
   const row = new ActionRowBuilder();
   if (pedido && pedido.status === STATUS.AGUARDANDO_PAGAMENTO) {
     row.addComponents(
@@ -1143,10 +1172,16 @@ function botoesAdmin(pedidoId) {
       new ButtonBuilder().setCustomId(`entregar:${pedidoId}`).setLabel("Entregar").setStyle(ButtonStyle.Success)
     );
   }
+  if (pedido && (pedido.status === STATUS.AGUARDANDO_ENTREGA || (pedido.status === STATUS.ENTREGUE && !pedido.feedback))) {
+    row.addComponents(
+      new ButtonBuilder().setCustomId(`fb_msg:${pedidoId}`).setLabel("Editar msg feedback").setStyle(ButtonStyle.Secondary)
+    );
+  }
   row.addComponents(
     new ButtonBuilder().setCustomId(`cancelar:${pedidoId}`).setLabel("Cancelar").setStyle(ButtonStyle.Danger)
   );
-  return [row];
+  if (row.components.length) rows.push(row);
+  return rows;
 }
 
 function embedFeedback(pedido, nota, comentario) {
@@ -1264,7 +1299,9 @@ async function notificarAdmin(pedido, extra) {
   const payload = {
     content: guildCfg(gid).adminRoleId && pedido.status === STATUS.AGUARDANDO_ENTREGA ? `<@&${guildCfg(gid).adminRoleId}>` : null,
     embeds: [embed],
-    components: [STATUS.AGUARDANDO_ENTREGA, STATUS.AGUARDANDO_PAGAMENTO].includes(pedido.status) ? botoesAdmin(pedido.id) : []
+    components: [STATUS.AGUARDANDO_ENTREGA, STATUS.AGUARDANDO_PAGAMENTO, STATUS.ENTREGUE].includes(pedido.status)
+      ? botoesAdmin(pedido.id)
+      : []
   };
 
   if (pedido.adminMessageId) {
@@ -1299,29 +1336,93 @@ async function avisarCliente(pedido, texto, embed, components) {
   }
 }
 
-function textoPedidoAvaliacao(pedido) {
-  const canalId = guildCfg(pedido.guildId).canais.feedbacks;
-  const onde = canalId ? `<#${canalId}>` : "o canal de feedbacks";
-  return (
-    `Como foi a compra do pedido **#${pedido.id}**?\n` +
-    `Avalie em ${onde} so com texto, sem botao. Exemplo: \`5 chegou rapido\`.`
-  );
+function aplicarPlaceholdersFeedback(texto, pedido, user) {
+  const produto = getProduto(pedido.produtoId);
+  const nomeProduto = produto ? produto.nome : pedido.produtoNome;
+  const mencao = user ? `<@${user.id}>` : `<@${pedido.userId}>`;
+  const nome = user && user.username ? user.username : "cliente";
+  return String(texto || "")
+    .replaceAll("{user}", mencao)
+    .replaceAll("{nome}", nome)
+    .replaceAll("{id}", String(pedido.id))
+    .replaceAll("{produto}", nomeProduto)
+    .replaceAll("{valor}", formatarReais(pedido.valorCentavos));
+}
+
+function mensagemFeedbackPedido(pedido) {
+  if (pedido.feedbackMensagem) return pedido.feedbackMensagem;
+  return store.config.feedbackMensagem || FEEDBACK_MSG_PADRAO;
+}
+
+function tituloFeedbackPedido(pedido) {
+  if (pedido.feedbackTitulo) return pedido.feedbackTitulo;
+  return store.config.feedbackTitulo || FEEDBACK_TITULO_PADRAO;
+}
+
+function embedFeedbackDm(pedido, user) {
+  const texto = aplicarPlaceholdersFeedback(mensagemFeedbackPedido(pedido), pedido, user);
+  return new EmbedBuilder()
+    .setTitle(String(tituloFeedbackPedido(pedido)).slice(0, 256))
+    .setDescription(String(texto).slice(0, 4096))
+    .setColor(0x57f287)
+    .setFooter({ text: `Pedido #${pedido.id}` });
+}
+
+function botoesFeedbackDm(pedidoId) {
+  return [
+    new ActionRowBuilder().addComponents(
+      new ButtonBuilder()
+        .setCustomId(`avaliar:${pedidoId}`)
+        .setLabel("Deixar feedback")
+        .setStyle(ButtonStyle.Success)
+    )
+  ];
 }
 
 async function pedirFeedback(pedido) {
   try {
     const user = await client.users.fetch(pedido.userId);
-    await user.send({ content: textoPedidoAvaliacao(pedido) });
+    const enviada = await user.send({
+      embeds: [embedFeedbackDm(pedido, user)],
+      components: botoesFeedbackDm(pedido.id)
+    });
+    pedido.feedbackDmMessageId = enviada.id;
+    pedido.feedbackDmChannelId = enviada.channelId;
+    salvarStore();
   } catch {
     console.log(`Nao consegui pedir feedback do pedido #${pedido.id}.`);
   }
-  const canalId = guildCfg(pedido.guildId).canais.feedbacks;
-  if (!canalId) return;
-  const canal = await client.channels.fetch(canalId).catch(() => null);
-  if (!canal) return;
-  await canal.send(
-    `<@${pedido.userId}> pedido **#${pedido.id}** entregue. Avalie aqui so com texto, ex: \`5 chegou rapido\`.`
-  ).catch(() => {});
+}
+
+async function atualizarDmFeedback(pedido) {
+  if (!pedido.feedbackDmMessageId || !pedido.userId) return false;
+  try {
+    const user = await client.users.fetch(pedido.userId);
+    const canal = await user.createDM();
+    const msg = await canal.messages.fetch(pedido.feedbackDmMessageId).catch(() => null);
+    const payload = {
+      embeds: [embedFeedbackDm(pedido, user)],
+      components: pedido.feedback ? [] : botoesFeedbackDm(pedido.id)
+    };
+    if (msg) {
+      await msg.edit(payload);
+      return true;
+    }
+    const enviada = await user.send(payload);
+    pedido.feedbackDmMessageId = enviada.id;
+    pedido.feedbackDmChannelId = enviada.channelId;
+    salvarStore();
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function textoFeedbackCanal(pedido, nota, comentario) {
+  const produto = getProduto(pedido.produtoId);
+  const nomeProduto = produto ? produto.nome : pedido.produtoNome;
+  const comentarioTxt = comentario ? `\n"${comentario}"` : "";
+  return `${estrelas(nota)} <@${pedido.userId}> avaliou **${nomeProduto}** (pedido #${pedido.id}) — ${nota}/5${comentarioTxt}`;
 }
 
 async function registrarFeedback(pedido, nota, comentario) {
@@ -1332,12 +1433,7 @@ async function registrarFeedback(pedido, nota, comentario) {
   if (feedbackChannelId) {
     const canal = await client.channels.fetch(feedbackChannelId).catch(() => null);
     if (canal) {
-      const produto = getProduto(pedido.produtoId);
-      const nomeProduto = produto ? produto.nome : pedido.produtoNome;
-      const comentarioTxt = comentario ? `\n"${comentario}"` : "";
-      await canal.send(
-        `${estrelas(nota)} <@${pedido.userId}> avaliou **${nomeProduto}** (pedido #${pedido.id}) — ${nota}/5${comentarioTxt}`
-      ).catch(() => {});
+      await canal.send(textoFeedbackCanal(pedido, nota, comentario)).catch(() => {});
     }
   }
   registrarLog("feedback", `Pedido #${pedido.id} avaliado com ${nota}/5.`, {
@@ -1780,7 +1876,8 @@ async function handleAvaliarModal(interaction, pedidoId) {
   }
   const comentario = interaction.fields.getTextInputValue("comentario").trim();
   await registrarFeedback(pedido, nota, comentario);
-  await interaction.editReply({ content: `${estrelas(nota)} Valeu pela avaliacao!` });
+  await atualizarDmFeedback(pedido).catch(() => {});
+  await interaction.editReply({ content: `${estrelas(nota)} Valeu pela avaliacao! Ela ja aparece no canal de feedbacks.` });
 }
 
 async function overwritesPrivado(guild, userId) {
@@ -2394,7 +2491,8 @@ function resumoConfig(gid = GUILD_ID) {
     `Banner da loja: ${urlMidiaValida(store.config.banner) ? `definido (${store.config.bannerPosicao || "top"})` : "nao definido"}\n` +
     `Nome PIX publico: **${pixNomePublico()}** (ocultar nome completo: ${store.config.ocultarNomePix !== false ? "sim" : "nao"})\n` +
     `SMTP: ${store.config.smtpHost ? `**${store.config.smtpHost}** porta ${store.config.smtpPort || 587}` : "nao configurado"}\n` +
-    `Loja: **${store.config.lojaPausada ? "PAUSADA" : "aberta"}**${store.config.lojaPausaMotivo ? ` (${store.config.lojaPausaMotivo})` : ""}`
+    `Loja: **${store.config.lojaPausada ? "PAUSADA" : "aberta"}**${store.config.lojaPausaMotivo ? ` (${store.config.lojaPausaMotivo})` : ""}\n` +
+    `Msg feedback DM: **${String(store.config.feedbackTitulo || FEEDBACK_TITULO_PADRAO).slice(0, 40)}**`
   );
 }
 
@@ -2425,7 +2523,8 @@ function payloadPainelConfig(gid = GUILD_ID) {
       new ActionRowBuilder().addComponents(
         new ButtonBuilder().setCustomId("cfg_ticket_painel").setLabel("Texto do ticket").setStyle(ButtonStyle.Secondary),
         new ButtonBuilder().setCustomId("cfg_ticket_midia").setLabel("Midia do ticket").setStyle(ButtonStyle.Secondary),
-        new ButtonBuilder().setCustomId("cfg_ticket_publicar").setLabel("Publicar tickets").setStyle(ButtonStyle.Success)
+        new ButtonBuilder().setCustomId("cfg_ticket_publicar").setLabel("Publicar tickets").setStyle(ButtonStyle.Success),
+        new ButtonBuilder().setCustomId("cfg_feedback").setLabel("Msg feedback DM").setStyle(ButtonStyle.Secondary)
       ),
       new ActionRowBuilder().addComponents(
         new ChannelSelectMenuBuilder()
@@ -2838,24 +2937,58 @@ async function handleFila(interaction) {
   });
 }
 
+function snapshotStoreCompleto() {
+  return JSON.parse(JSON.stringify(store));
+}
+
+function restaurarStore(dump) {
+  if (!dump || typeof dump !== "object") throw new Error("JSON invalido.");
+  const keys = [
+    "pedidos", "pagamentos", "cupons", "estoque", "produtos", "produtoOverrides",
+    "tickets", "carrinhos", "categorias", "guilds", "config", "cargosTemporarios",
+    "logs", "lojaFixa", "paineisFixos"
+  ];
+  for (const key of keys) {
+    if (dump[key] !== undefined) store[key] = dump[key];
+  }
+  if (dump.nextPedidoId) store.nextPedidoId = dump.nextPedidoId;
+  if (dump.nextEstoqueItemId) store.nextEstoqueItemId = dump.nextEstoqueItemId;
+  if (!store.config || typeof store.config !== "object") store.config = {};
+  if (!store.config.feedbackTitulo) store.config.feedbackTitulo = FEEDBACK_TITULO_PADRAO;
+  if (!store.config.feedbackMensagem) store.config.feedbackMensagem = FEEDBACK_MSG_PADRAO;
+  salvarStore();
+}
+
 async function handleBackup(interaction) {
   const sub = interaction.options.getSubcommand();
   if (sub === "exportar") {
     await interaction.deferReply({ ephemeral: true });
-    const dump = {
-      savedAt: Date.now(),
-      config: { ...store.config, smtpPass: store.config.smtpPass ? "(oculto)" : null },
-      produtos: store.produtos,
-      produtoOverrides: store.produtoOverrides,
-      categorias: store.categorias,
-      cupons: store.cupons,
-      nextPedidoId: store.nextPedidoId,
-      estoqueResumo: Object.fromEntries(Object.entries(store.estoque || {}).map(([k, v]) => [k, Array.isArray(v) ? v.length : 0]))
-    };
+    const dump = snapshotStoreCompleto();
     await interaction.editReply({
-      content: "Backup da loja (sem senha SMTP e sem estoque secreto).",
+      content: "Backup completo da loja (pedidos, estoque, config, cupons, tickets). Restaure com `/backup importar`.",
       files: [new AttachmentBuilder(Buffer.from(JSON.stringify(dump, null, 2), "utf8"), { name: `backup-loja-${Date.now()}.json` })]
     });
+    return;
+  }
+  if (sub === "importar") {
+    const arquivo = interaction.options.getAttachment("arquivo", true);
+    await interaction.deferReply({ ephemeral: true });
+    let dump;
+    try {
+      const res = await fetch(arquivo.url);
+      dump = JSON.parse(await res.text());
+    } catch {
+      await interaction.editReply({ content: "Nao consegui ler o JSON." });
+      return;
+    }
+    try {
+      restaurarStore(dump);
+    } catch (error) {
+      await interaction.editReply({ content: `Backup invalido: ${error.message}` });
+      return;
+    }
+    await publicarCanaisFixos().catch(() => {});
+    await interaction.editReply({ content: "Backup restaurado. Pedidos, produtos, estoque e config foram recarregados." });
   }
 }
 
@@ -3058,6 +3191,7 @@ async function handleFeedback(interaction) {
     return;
   }
   await registrarFeedback(pedido, nota, comentario);
+  await atualizarDmFeedback(pedido).catch(() => {});
   await interaction.reply({ content: `${estrelas(nota)} Valeu pela avaliacao!`, ephemeral: true });
 }
 
@@ -3411,7 +3545,11 @@ const commands = [
     .setName("backup")
     .setDescription("Backup da loja (staff).")
     .setDefaultMemberPermissions(PermissionFlagsBits.ManageGuild)
-    .addSubcommand(sub => sub.setName("exportar").setDescription("Baixa JSON de config, produtos, categorias e cupons.")),
+    .addSubcommand(sub => sub.setName("exportar").setDescription("Baixa JSON completo da loja (pedidos, estoque, config)."))
+    .addSubcommand(sub =>
+      sub.setName("importar").setDescription("Restaura o JSON completo exportado antes.")
+        .addAttachmentOption(o => o.setName("arquivo").setDescription("JSON do /backup exportar").setRequired(true))
+    ),
   new ContextMenuCommandBuilder()
     .setName("Editar embed")
     .setType(ApplicationCommandType.Message)
@@ -3654,6 +3792,7 @@ function origemMensagemBot(message) {
   if (st?.lojaFixa?.messageId === message.id) return { tipo: "loja", gid };
   if (st?.paineisFixos?.ticket === message.id) return { tipo: "ticket", gid };
   if (st?.paineisFixos?.cupons === message.id) return { tipo: "cupons", gid };
+  if (st?.paineisFixos?.feedbacks === message.id) return { tipo: "feedbacks", gid };
   return { tipo: "livre", gid };
 }
 
@@ -3781,6 +3920,9 @@ function persistirEmbedEditado(origem, campos) {
     salvarStore();
     return { tipo: "cupons" };
   }
+  if (origem.tipo === "feedbacks") {
+    return { tipo: "feedbacks" };
+  }
   return { tipo: "livre" };
 }
 
@@ -3794,14 +3936,17 @@ function parseAvaliacaoTexto(texto) {
 }
 
 async function handleAvaliacaoPorTexto(message) {
-  if (!message.guildId || !guildPermitida(message.guildId)) return;
-  const canalId = guildCfg(message.guildId).canais.feedbacks;
-  if (!canalId || message.channelId !== canalId) return;
   if (message.author.bot) return;
+  const ehDm = !message.guildId;
+  if (!ehDm) {
+    if (!guildPermitida(message.guildId)) return;
+    const canalId = guildCfg(message.guildId).canais.feedbacks;
+    if (!canalId || message.channelId !== canalId) return;
+  }
   const parsed = parseAvaliacaoTexto(message.content);
   if (!parsed) {
-    if (/^[1-5]/.test(String(message.content || "").trim())) {
-      await message.reply("Envie so texto, ex: `5 chegou rapido` (nota de 1 a 5 + comentario).").catch(() => {});
+    if (!ehDm && /^[1-5]/.test(String(message.content || "").trim())) {
+      await message.reply("Use o botao **Deixar feedback** na DM, ou envie `5 chegou rapido`.").catch(() => {});
     }
     return;
   }
@@ -3810,11 +3955,16 @@ async function handleAvaliacaoPorTexto(message) {
     .sort((a, b) => Number(b.id) - Number(a.id));
   const pedido = pendentes[0];
   if (!pedido) {
-    await message.reply("Voce nao tem pedido entregue pendente de avaliacao.").catch(() => {});
+    if (!ehDm) await message.reply("Voce nao tem pedido entregue pendente de avaliacao.").catch(() => {});
     return;
   }
   await registrarFeedback(pedido, parsed.nota, parsed.comentario);
-  await message.delete().catch(() => {});
+  await atualizarDmFeedback(pedido).catch(() => {});
+  if (ehDm) {
+    await message.reply(`${estrelas(parsed.nota)} Valeu pela avaliacao! Ela ja aparece no canal de feedbacks.`).catch(() => {});
+  } else {
+    await message.delete().catch(() => {});
+  }
 }
 
 async function handleAppEditarEmbed(interaction) {
@@ -4257,7 +4407,50 @@ async function handleButton(interaction) {
   }
 
   if (acao === "avaliar") {
+    const eph = interaction.inGuild() ? { ephemeral: true } : {};
+    const pedido = store.pedidos[String(valor)];
+    if (!pedido) {
+      await interaction.reply({ content: "Pedido nao encontrado.", ...eph });
+      return;
+    }
+    if (pedido.userId !== interaction.user.id && !isStaff(interaction.member)) {
+      await interaction.reply({ content: "Voce so pode avaliar os seus pedidos.", ...eph });
+      return;
+    }
+    if (pedido.feedback) {
+      await interaction.reply({ content: "Voce ja avaliou esse pedido. Obrigado!", ...eph });
+      return;
+    }
     await interaction.showModal(modalAvaliar(valor));
+    return;
+  }
+
+  if (acao === "fb_msg") {
+    if (!isStaff(interaction.member)) {
+      await interaction.reply({ content: "So a staff pode editar a mensagem.", ephemeral: true });
+      return;
+    }
+    const pedido = store.pedidos[String(valor)];
+    if (!pedido) {
+      await interaction.reply({ content: "Pedido nao encontrado.", ephemeral: true });
+      return;
+    }
+    const modal = new ModalBuilder().setCustomId(`fb_msg_modal:${valor}`).setTitle(`Msg feedback #${valor}`.slice(0, 45));
+    modal.addComponents(
+      new ActionRowBuilder().addComponents(
+        campoTexto("titulo", "Titulo da DM", TextInputStyle.Short, tituloFeedbackPedido(pedido), { required: true, maxLength: 80 })
+      ),
+      new ActionRowBuilder().addComponents(
+        campoTexto(
+          "mensagem",
+          "Texto ({user} {id} {produto} {valor})",
+          TextInputStyle.Paragraph,
+          mensagemFeedbackPedido(pedido),
+          { required: true, maxLength: 1000 }
+        )
+      )
+    );
+    await interaction.showModal(modal);
     return;
   }
 
@@ -4475,6 +4668,30 @@ async function handleButton(interaction) {
           required: false,
           maxLength: 200
         })
+      )
+    );
+    await interaction.showModal(modal);
+    return;
+  }
+
+  if (acao === "cfg_feedback") {
+    if (!isStaff(interaction.member)) {
+      await interaction.reply({ content: "So a staff pode configurar.", ephemeral: true });
+      return;
+    }
+    const modal = new ModalBuilder().setCustomId("cfg_feedback_modal").setTitle("Mensagem de feedback DM");
+    modal.addComponents(
+      new ActionRowBuilder().addComponents(
+        campoTexto("titulo", "Titulo padrao da DM", TextInputStyle.Short, store.config.feedbackTitulo || FEEDBACK_TITULO_PADRAO, { required: true, maxLength: 80 })
+      ),
+      new ActionRowBuilder().addComponents(
+        campoTexto(
+          "mensagem",
+          "Texto ({user} {id} {produto} {valor})",
+          TextInputStyle.Paragraph,
+          store.config.feedbackMensagem || FEEDBACK_MSG_PADRAO,
+          { required: true, maxLength: 1000 }
+        )
       )
     );
     await interaction.showModal(modal);
@@ -4983,6 +5200,41 @@ async function handleModal(interaction) {
     return;
   }
 
+  if (acao === "fb_msg_modal") {
+    if (!isStaff(interaction.member)) {
+      await interaction.reply({ content: "So a staff pode editar a mensagem.", ephemeral: true });
+      return;
+    }
+    const pedido = store.pedidos[String(valor)];
+    if (!pedido) {
+      await interaction.reply({ content: "Pedido nao encontrado.", ephemeral: true });
+      return;
+    }
+    pedido.feedbackTitulo = (interaction.fields.getTextInputValue("titulo") || "").trim().slice(0, 80);
+    pedido.feedbackMensagem = (interaction.fields.getTextInputValue("mensagem") || "").trim().slice(0, 1000);
+    salvarStore();
+    const enviou = await atualizarDmFeedback(pedido);
+    await interaction.reply({
+      content: enviou
+        ? `Mensagem de feedback do pedido #${pedido.id} atualizada na DM de <@${pedido.userId}>.`
+        : `Mensagem salva para o pedido #${pedido.id}, mas nao consegui editar a DM. Ela sera usada no proximo envio.`,
+      ephemeral: true
+    });
+    return;
+  }
+
+  if (acao === "cfg_feedback_modal") {
+    if (!isStaff(interaction.member)) {
+      await interaction.reply({ content: "So a staff pode configurar.", ephemeral: true });
+      return;
+    }
+    store.config.feedbackTitulo = (interaction.fields.getTextInputValue("titulo") || "").trim().slice(0, 80) || FEEDBACK_TITULO_PADRAO;
+    store.config.feedbackMensagem = (interaction.fields.getTextInputValue("mensagem") || "").trim().slice(0, 1000) || FEEDBACK_MSG_PADRAO;
+    salvarStore();
+    await interaction.reply({ ...payloadPainelConfig(interaction.guildId), ephemeral: true });
+    return;
+  }
+
   if (acao === "app_embed_modal") {
     if (!isStaff(interaction.member)) {
       await interaction.reply({ content: "So a staff pode editar o embed.", ephemeral: true });
@@ -5022,6 +5274,8 @@ async function handleModal(interaction) {
       await atualizarPaineisTicket().catch(() => {});
     } else if (salvo.tipo === "cupons") {
       await atualizarPainelCupons().catch(() => {});
+    } else if (salvo.tipo === "feedbacks") {
+      await atualizarPainelFeedbacks().catch(() => {});
     } else {
       const novo = EmbedBuilder.from(embedAtual);
       aplicarCamposEmbed(novo, campos);
