@@ -10,7 +10,7 @@ const SQLITE_FILE = path.join(DATA_DIR, "loja.db");
 
 const OBJECT_KEYS = [
   "pedidos", "pagamentos", "cupons", "estoque", "produtos", "produtoOverrides",
-  "tickets", "carrinhos", "categorias", "guilds"
+  "tickets", "carrinhos", "categorias", "guilds", "lojaFixa", "paineisFixos"
 ];
 
 const VISUAL_CONFIG_KEYS = [
@@ -250,7 +250,224 @@ function mergeStores(a, b) {
   if (Array.isArray(base.logs) || Array.isArray(other.logs)) {
     merged.logs = Array.isArray(base.logs) ? base.logs : other.logs;
   }
+  merged.nextPedidoId = Math.max(Number(a.nextPedidoId || 0), Number(b.nextPedidoId || 0));
+  merged.nextEstoqueItemId = Math.max(Number(a.nextEstoqueItemId || 0), Number(b.nextEstoqueItemId || 0));
   return merged;
+}
+
+function limparSegredo(valor) {
+  if (!valor) return "";
+  return String(valor)
+    .trim()
+    .replace(/^["']|["']$/g, "")
+    .replace(/^(Bearer|token)\s+/i, "");
+}
+
+function normalizarRepo(repo) {
+  return limparSegredo(repo)
+    .replace(/^https?:\/\/github\.com\//i, "")
+    .replace(/\.git$/i, "");
+}
+
+const GITHUB_TOKEN = limparSegredo(process.env.GITHUB_TOKEN);
+const GITHUB_REPO = normalizarRepo(process.env.GITHUB_REPO || "thurPC/Bot-vendas-baguncinha");
+const GITHUB_DATA_BRANCH = limparSegredo(process.env.GITHUB_DATA_BRANCH) || "dados";
+const GITHUB_DATA_PATH = "data/store.json";
+const GITHUB_SAVE_INTERVAL_MS = 2 * 60 * 1000;
+
+let githubSha = null;
+let githubSalvando = false;
+let githubTimer = null;
+let githubPendente = null;
+let githubUltimoTexto = null;
+
+function githubErroAuth(status, json) {
+  if (status !== 401 && status !== 403) return null;
+  const detalhe = json?.message || "sem detalhes";
+  return `GitHub recusou o token (${status}: ${detalhe}). Confere GITHUB_TOKEN: Contents Read and write no repo ${GITHUB_REPO}.`;
+}
+
+async function githubRequest(metodo, caminho, corpo) {
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), 20000);
+  try {
+    const headers = {
+      Accept: "application/vnd.github+json",
+      "X-GitHub-Api-Version": "2022-11-28",
+      "User-Agent": "bot-vendas-baguncinha"
+    };
+    if (GITHUB_TOKEN) headers.Authorization = `Bearer ${GITHUB_TOKEN}`;
+    if (corpo) headers["Content-Type"] = "application/json";
+    const resposta = await fetch(`https://api.github.com${caminho}`, {
+      method: metodo,
+      headers,
+      body: corpo ? JSON.stringify(corpo) : undefined,
+      signal: controller.signal
+    });
+    let json = null;
+    try {
+      json = await resposta.json();
+    } catch {
+      json = null;
+    }
+    return { status: resposta.status, ok: resposta.ok, json };
+  } finally {
+    clearTimeout(timeoutId);
+  }
+}
+
+function githubChecarResposta(r, acao) {
+  const erroAuth = githubErroAuth(r.status, r.json);
+  if (erroAuth) throw new Error(erroAuth);
+  if (!r.ok) {
+    throw new Error(`GitHub respondeu ${r.status} ao ${acao} (${r.json?.message || "sem detalhes"})`);
+  }
+}
+
+async function githubShaDaBranchPadrao() {
+  const repo = await githubRequest("GET", `/repos/${GITHUB_REPO}`);
+  githubChecarResposta(repo, `ler o repositorio ${GITHUB_REPO}`);
+  const nomes = [];
+  if (repo.json?.default_branch) nomes.push(repo.json.default_branch);
+  for (const nome of ["main", "master"]) {
+    if (!nomes.includes(nome)) nomes.push(nome);
+  }
+  for (const nome of nomes) {
+    const ref = await githubRequest("GET", `/repos/${GITHUB_REPO}/git/ref/heads/${encodeURIComponent(nome)}`);
+    const erroAuth = githubErroAuth(ref.status, ref.json);
+    if (erroAuth) throw new Error(erroAuth);
+    if (ref.ok && ref.json?.object?.sha) return ref.json.object.sha;
+  }
+  throw new Error(`Nao achei a branch padrao do GitHub (tentei: ${nomes.join(", ")}).`);
+}
+
+async function githubGarantirBranch() {
+  const existe = await githubRequest(
+    "GET",
+    `/repos/${GITHUB_REPO}/git/ref/heads/${encodeURIComponent(GITHUB_DATA_BRANCH)}`
+  );
+  if (existe.ok) return;
+  const erroAuth = githubErroAuth(existe.status, existe.json);
+  if (erroAuth) throw new Error(erroAuth);
+  if (existe.status !== 404) {
+    throw new Error(`Nao consegui verificar a branch "${GITHUB_DATA_BRANCH}" (${existe.status}).`);
+  }
+  const shaBase = await githubShaDaBranchPadrao();
+  const criada = await githubRequest("POST", `/repos/${GITHUB_REPO}/git/refs`, {
+    ref: `refs/heads/${GITHUB_DATA_BRANCH}`,
+    sha: shaBase
+  });
+  if (!criada.ok && criada.status !== 422) {
+    const auth = githubErroAuth(criada.status, criada.json);
+    if (auth) throw new Error(auth);
+    throw new Error(`Nao consegui criar a branch "${GITHUB_DATA_BRANCH}" (${criada.status}).`);
+  }
+  console.log(`Branch "${GITHUB_DATA_BRANCH}" criada no GitHub para backup da loja.`);
+}
+
+async function githubCarregar() {
+  if (!GITHUB_TOKEN) return null;
+  const r = await githubRequest(
+    "GET",
+    `/repos/${GITHUB_REPO}/contents/${GITHUB_DATA_PATH}?ref=${encodeURIComponent(GITHUB_DATA_BRANCH)}`
+  );
+  if (r.status === 404) return null;
+  githubChecarResposta(r, "carregar backup");
+  githubSha = r.json.sha;
+  const texto = Buffer.from(r.json.content.replace(/\n/g, ""), "base64").toString("utf-8");
+  const objeto = JSON.parse(texto);
+  githubUltimoTexto = JSON.stringify(objeto);
+  return objeto && typeof objeto === "object" && !Array.isArray(objeto) ? objeto : null;
+}
+
+async function githubSalvarAgora(store) {
+  if (!GITHUB_TOKEN || !store) return false;
+  const texto = JSON.stringify(store, null, 2);
+  if (texto === githubUltimoTexto) return true;
+  if (githubSalvando) {
+    githubPendente = store;
+    return false;
+  }
+  githubSalvando = true;
+  try {
+    if (githubSha === null) {
+      await githubGarantirBranch();
+      const atual = await githubRequest(
+        "GET",
+        `/repos/${GITHUB_REPO}/contents/${GITHUB_DATA_PATH}?ref=${encodeURIComponent(GITHUB_DATA_BRANCH)}`
+      );
+      if (atual.ok) githubSha = atual.json.sha;
+    }
+    const enviar = () =>
+      githubRequest("PUT", `/repos/${GITHUB_REPO}/contents/${GITHUB_DATA_PATH}`, {
+        message: `backup automatico da loja (${Object.keys(store.pedidos || {}).length} pedidos)`,
+        content: Buffer.from(texto).toString("base64"),
+        branch: GITHUB_DATA_BRANCH,
+        ...(githubSha ? { sha: githubSha } : {})
+      });
+    let r = await enviar();
+    if (r.status === 409 || r.status === 422) {
+      const atual = await githubRequest(
+        "GET",
+        `/repos/${GITHUB_REPO}/contents/${GITHUB_DATA_PATH}?ref=${encodeURIComponent(GITHUB_DATA_BRANCH)}`
+      );
+      githubSha = atual.ok ? atual.json.sha : null;
+      r = await enviar();
+    }
+    githubChecarResposta(r, "salvar backup");
+    githubSha = r.json.content.sha;
+    githubUltimoTexto = texto;
+    console.log("Progresso da loja salvo no GitHub.");
+    return true;
+  } finally {
+    githubSalvando = false;
+    if (githubPendente) {
+      const proximo = githubPendente;
+      githubPendente = null;
+      githubSalvarAgora(proximo).catch(error => {
+        console.error("Erro ao salvar backup no GitHub:", error.message);
+      });
+    }
+  }
+}
+
+function agendarGithub(store) {
+  if (!GITHUB_TOKEN || !store) return;
+  githubPendente = store;
+  if (githubTimer) return;
+  githubTimer = setTimeout(() => {
+    githubTimer = null;
+    const alvo = githubPendente;
+    githubPendente = null;
+    githubSalvarAgora(alvo).catch(error => {
+      console.error("Erro ao salvar backup no GitHub:", error.message);
+    });
+  }, GITHUB_SAVE_INTERVAL_MS);
+}
+
+async function sincronizarDoGithub(store) {
+  if (!GITHUB_TOKEN) {
+    console.log("GITHUB_TOKEN nao configurado — o progresso some no proximo deploy do Render.");
+    return false;
+  }
+  try {
+    const remote = await githubCarregar();
+    if (!remote) {
+      console.log("Ainda nao tem backup no GitHub — vai ser criado no primeiro salvamento.");
+      agendarGithub(store);
+      return false;
+    }
+    const merged = mergeStores(store, remote);
+    for (const key of Object.keys(merged)) store[key] = merged[key];
+    applyVisual(store, loadVisual());
+    saveJson(store);
+    saveSqlite(store);
+    console.log(`Loja carregada do GitHub (${Object.keys(store.pedidos || {}).length} pedido(s)).`);
+    return true;
+  } catch (error) {
+    console.error("Erro ao carregar backup do GitHub:", error.message);
+    return false;
+  }
 }
 
 function carregarStore() {
@@ -269,6 +486,15 @@ function salvarStore(store) {
   if (store && typeof store === "object") store.savedAt = Date.now();
   saveJson(store);
   saveSqlite(store);
+  agendarGithub(store);
 }
 
-module.exports = { carregarStore, salvarStore, JSON_FILE, SQLITE_FILE, VISUAL_FILE };
+module.exports = {
+  carregarStore,
+  salvarStore,
+  sincronizarDoGithub,
+  githubSalvarAgora,
+  JSON_FILE,
+  SQLITE_FILE,
+  VISUAL_FILE
+};

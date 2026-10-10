@@ -1211,7 +1211,7 @@ function botoesAdmin(pedidoId) {
       new ButtonBuilder().setCustomId(`entregar:${pedidoId}`).setLabel("Entregar").setStyle(ButtonStyle.Success)
     );
   }
-  if (pedido && (pedido.status === STATUS.AGUARDANDO_ENTREGA || (pedido.status === STATUS.ENTREGUE && !pedido.feedback))) {
+  if (pedido && (pedido.status === STATUS.AGUARDANDO_ENTREGA || pedido.status === STATUS.ENTREGUE)) {
     row.addComponents(
       new ButtonBuilder().setCustomId(`fb_msg:${pedidoId}`).setLabel("Editar msg feedback").setStyle(ButtonStyle.Secondary)
     );
@@ -1400,20 +1400,49 @@ function tituloFeedbackPedido(pedido) {
 
 function embedFeedbackDm(pedido, user) {
   const texto = aplicarPlaceholdersFeedback(mensagemFeedbackPedido(pedido), pedido, user);
-  return new EmbedBuilder()
+  const embed = new EmbedBuilder()
     .setTitle(String(tituloFeedbackPedido(pedido)).slice(0, 256))
     .setDescription(String(texto).slice(0, 4096))
     .setColor(0x57f287)
     .setFooter({ text: `Pedido #${pedido.id}` });
+  if (pedido.feedback) {
+    const comentario = pedido.feedback.comentario
+      ? `\n\n"${String(pedido.feedback.comentario).slice(0, 800)}"`
+      : "";
+    embed.addFields({
+      name: "Sua avaliacao",
+      value: `${estrelas(pedido.feedback.nota)}  **${pedido.feedback.nota}/5**${comentario}`
+    });
+  }
+  return embed;
 }
 
-function botoesFeedbackDm(pedidoId) {
+function botoesFeedbackDm(pedido) {
+  if (pedido.feedback) {
+    if (pedido.feedback.comentario) return [];
+    return [
+      new ActionRowBuilder().addComponents(
+        new ButtonBuilder()
+          .setCustomId(`fb_comentario:${pedido.id}`)
+          .setLabel("Adicionar comentario")
+          .setStyle(ButtonStyle.Secondary)
+      )
+    ];
+  }
   return [
     new ActionRowBuilder().addComponents(
+      [1, 2, 3, 4, 5].map(n =>
+        new ButtonBuilder()
+          .setCustomId(`fb_nota:${pedido.id}-${n}`)
+          .setLabel(`${n} ⭐`)
+          .setStyle(n >= 4 ? ButtonStyle.Success : n === 3 ? ButtonStyle.Primary : ButtonStyle.Secondary)
+      )
+    ),
+    new ActionRowBuilder().addComponents(
       new ButtonBuilder()
-        .setCustomId(`avaliar:${pedidoId}`)
-        .setLabel("Deixar feedback")
-        .setStyle(ButtonStyle.Success)
+        .setCustomId(`avaliar:${pedido.id}`)
+        .setLabel("Avaliar com comentario")
+        .setStyle(ButtonStyle.Secondary)
     )
   ];
 }
@@ -1423,7 +1452,7 @@ async function pedirFeedback(pedido) {
     const user = await client.users.fetch(pedido.userId);
     const enviada = await user.send({
       embeds: [embedFeedbackDm(pedido, user)],
-      components: botoesFeedbackDm(pedido.id)
+      components: botoesFeedbackDm(pedido)
     });
     pedido.feedbackDmMessageId = enviada.id;
     pedido.feedbackDmChannelId = enviada.channelId;
@@ -1434,18 +1463,20 @@ async function pedirFeedback(pedido) {
 }
 
 async function atualizarDmFeedback(pedido) {
-  if (!pedido.feedbackDmMessageId || !pedido.userId) return false;
+  if (!pedido.userId) return false;
   try {
     const user = await client.users.fetch(pedido.userId);
-    const canal = await user.createDM();
-    const msg = await canal.messages.fetch(pedido.feedbackDmMessageId).catch(() => null);
     const payload = {
       embeds: [embedFeedbackDm(pedido, user)],
-      components: pedido.feedback ? [] : botoesFeedbackDm(pedido.id)
+      components: botoesFeedbackDm(pedido)
     };
-    if (msg) {
-      await msg.edit(payload);
-      return true;
+    if (pedido.feedbackDmMessageId) {
+      const canal = await user.createDM();
+      const msg = await canal.messages.fetch(pedido.feedbackDmMessageId).catch(() => null);
+      if (msg) {
+        await msg.edit(payload);
+        return true;
+      }
     }
     const enviada = await user.send(payload);
     pedido.feedbackDmMessageId = enviada.id;
@@ -1460,28 +1491,60 @@ async function atualizarDmFeedback(pedido) {
 function embedAvaliacaoCanal(pedido, nota, comentario) {
   const produto = getProduto(pedido.produtoId);
   const nomeProduto = produto ? produto.nome : pedido.produtoNome;
-  const texto = comentario ? String(comentario).slice(0, 4096) : "";
-  return new EmbedBuilder()
-    .setTitle(`${estrelas(nota)}  ${nomeProduto}`)
-    .setDescription(texto || "\u200b")
-    .setColor(0xf1c40f);
+  const texto = comentario ? `"${String(comentario).slice(0, 1000)}"` : "Sem comentario.";
+  const embed = new EmbedBuilder()
+    .setTitle(`${estrelas(nota)}  ${nota}/5`)
+    .setDescription(texto)
+    .addFields(
+      { name: "Produto", value: String(nomeProduto).slice(0, 256), inline: true },
+      { name: "Cliente", value: `<@${pedido.userId}>`, inline: true },
+      { name: "Pedido", value: `#${pedido.id}`, inline: true }
+    )
+    .setColor(0xf1c40f)
+    .setTimestamp(pedido.feedback && pedido.feedback.em ? pedido.feedback.em : Date.now())
+    .setFooter({ text: "Avaliacao da loja Baguncinha" });
+  if (pedido.userTag) embed.setAuthor({ name: pedido.userTag });
+  return embed;
+}
+
+async function publicarAvaliacaoCanal(pedido) {
+  const nota = pedido.feedback && pedido.feedback.nota;
+  if (!nota) return;
+  const comentario = (pedido.feedback && pedido.feedback.comentario) || "";
+  const payload = { embeds: [embedAvaliacaoCanal(pedido, nota, comentario)] };
+  const feedbackChannelId = guildCfg(pedido.guildId).canais.feedbacks;
+  if (!feedbackChannelId) return;
+  const canal = await client.channels.fetch(feedbackChannelId).catch(() => null);
+  if (!canal) return;
+  if (pedido.feedbackChannelMessageId) {
+    const msg = await canal.messages.fetch(pedido.feedbackChannelMessageId).catch(() => null);
+    if (msg) {
+      await msg.edit(payload).catch(() => {});
+      return;
+    }
+  }
+  const enviada = await canal.send(payload).catch(() => null);
+  if (enviada) {
+    pedido.feedbackChannelMessageId = enviada.id;
+    salvarStore();
+  }
 }
 
 async function registrarFeedback(pedido, nota, comentario) {
-  pedido.feedback = { nota, comentario: comentario || "", em: Date.now() };
+  const jaTinha = !!pedido.feedback;
+  pedido.feedback = {
+    nota,
+    comentario: comentario || (pedido.feedback && pedido.feedback.comentario) || "",
+    em: (pedido.feedback && pedido.feedback.em) || Date.now()
+  };
   salvarStore();
-
-  const feedbackChannelId = guildCfg(pedido.guildId).canais.feedbacks;
-  if (feedbackChannelId) {
-    const canal = await client.channels.fetch(feedbackChannelId).catch(() => null);
-    if (canal) {
-      await canal.send({ embeds: [embedAvaliacaoCanal(pedido, nota, comentario)] }).catch(() => {});
-    }
+  await publicarAvaliacaoCanal(pedido);
+  if (!jaTinha) {
+    registrarLog("feedback", `Pedido #${pedido.id} avaliado com ${nota}/5.`, {
+      pedidoId: pedido.id,
+      userId: pedido.userId
+    });
   }
-  registrarLog("feedback", `Pedido #${pedido.id} avaliado com ${nota}/5.`, {
-    pedidoId: pedido.id,
-    userId: pedido.userId
-  });
 }
 
 async function concederCargo(pedido, produto) {
@@ -4442,7 +4505,7 @@ async function handleButton(interaction) {
     return;
   }
 
-  if (acao === "avaliar") {
+  if (acao === "avaliar" || acao === "fb_comentario") {
     const eph = interaction.inGuild() ? { ephemeral: true } : {};
     const pedido = store.pedidos[String(valor)];
     if (!pedido) {
@@ -4453,11 +4516,69 @@ async function handleButton(interaction) {
       await interaction.reply({ content: "Voce so pode avaliar os seus pedidos.", ...eph });
       return;
     }
+    if (acao === "avaliar" && pedido.feedback) {
+      await interaction.reply({ content: "Voce ja avaliou esse pedido. Obrigado!", ...eph });
+      return;
+    }
+    if (acao === "fb_comentario" && !pedido.feedback) {
+      await interaction.showModal(modalAvaliar(valor));
+      return;
+    }
+    if (acao === "fb_comentario") {
+      const modal = new ModalBuilder()
+        .setCustomId(`fb_comentario_modal:${valor}`)
+        .setTitle(`Comentario pedido #${valor}`.slice(0, 45));
+      modal.addComponents(
+        new ActionRowBuilder().addComponents(
+          campoTexto("comentario", "Comentario", TextInputStyle.Paragraph, pedido.feedback.comentario || "", {
+            required: true,
+            maxLength: 500
+          })
+        )
+      );
+      await interaction.showModal(modal);
+      return;
+    }
+    await interaction.showModal(modalAvaliar(valor));
+    return;
+  }
+
+  if (acao === "fb_nota") {
+    const eph = interaction.inGuild() ? { ephemeral: true } : {};
+    const partes = String(valor || "").split("-");
+    const notaTxt = partes.pop();
+    const pedidoId = partes.join("-");
+    const nota = Number(notaTxt);
+    const pedido = store.pedidos[String(pedidoId)];
+    if (!pedido) {
+      await interaction.reply({ content: "Pedido nao encontrado.", ...eph });
+      return;
+    }
+    if (pedido.userId !== interaction.user.id) {
+      await interaction.reply({ content: "Voce so pode avaliar os seus pedidos.", ...eph });
+      return;
+    }
     if (pedido.feedback) {
       await interaction.reply({ content: "Voce ja avaliou esse pedido. Obrigado!", ...eph });
       return;
     }
-    await interaction.showModal(modalAvaliar(valor));
+    if (!Number.isInteger(nota) || nota < 1 || nota > 5) {
+      await interaction.reply({ content: "Nota invalida.", ...eph });
+      return;
+    }
+    pedido.userTag = interaction.user.username;
+    if (interaction.inGuild()) {
+      await interaction.deferReply({ ephemeral: true });
+    } else {
+      await interaction.deferUpdate();
+    }
+    await registrarFeedback(pedido, nota, "");
+    await atualizarDmFeedback(pedido).catch(() => {});
+    if (interaction.inGuild()) {
+      await interaction.editReply({
+        content: `${estrelas(nota)} Valeu pela avaliacao ${nota}/5! Se quiser, adicione um comentario na DM.`
+      });
+    }
     return;
   }
 
@@ -5255,6 +5376,31 @@ async function handleModal(interaction) {
         ? `Mensagem de feedback do pedido #${pedido.id} atualizada na DM de <@${pedido.userId}>.`
         : `Mensagem salva para o pedido #${pedido.id}, mas nao consegui editar a DM. Ela sera usada no proximo envio.`,
       ephemeral: true
+    });
+    return;
+  }
+
+  if (acao === "fb_comentario_modal") {
+    const eph = interaction.inGuild() ? { ephemeral: true } : {};
+    const pedido = store.pedidos[String(valor)];
+    if (!pedido) {
+      await interaction.reply({ content: "Pedido nao encontrado.", ...eph });
+      return;
+    }
+    if (pedido.userId !== interaction.user.id) {
+      await interaction.reply({ content: "Voce so pode avaliar os seus pedidos.", ...eph });
+      return;
+    }
+    if (!pedido.feedback) {
+      await interaction.reply({ content: "Avalie com as estrelas primeiro.", ...eph });
+      return;
+    }
+    const comentario = (interaction.fields.getTextInputValue("comentario") || "").trim().slice(0, 500);
+    await registrarFeedback(pedido, pedido.feedback.nota, comentario);
+    await atualizarDmFeedback(pedido).catch(() => {});
+    await interaction.reply({
+      content: `${estrelas(pedido.feedback.nota)} Comentario publicado no canal de feedbacks.`,
+      ...eph
     });
     return;
   }
@@ -6109,6 +6255,26 @@ async function start() {
     console.error("Faltam TOKEN, CLIENT_ID ou GUILD_ID.");
     return;
   }
+  if (persist.sincronizarDoGithub) {
+    await persist.sincronizarDoGithub(store).catch(error => {
+      console.error("Falha ao sincronizar backup do GitHub:", error.message);
+    });
+  }
+  if (!store.pedidos) store.pedidos = {};
+  if (!store.produtos) store.produtos = {};
+  if (!store.config || typeof store.config !== "object") store.config = {};
+  if (!store.guilds) store.guilds = {};
+  if (!store.nextPedidoId) store.nextPedidoId = 1001;
+  if (!store.config.feedbackTitulo) store.config.feedbackTitulo = FEEDBACK_TITULO_PADRAO;
+  if (!store.config.feedbackMensagem) store.config.feedbackMensagem = FEEDBACK_MSG_PADRAO;
+  for (const [id, produto] of Object.entries(PRODUTOS)) {
+    if (!store.produtos[id]) store.produtos[id] = { ...produto };
+  }
+  for (const gid of GUILD_IDS) {
+    const g = store.guilds[gid] || (store.guilds[gid] = {});
+    if (!g.lojaFixa) g.lojaFixa = { channelId: null, messageId: null };
+    if (!g.paineisFixos) g.paineisFixos = { ticket: null, cupons: null, feedbacks: null };
+  }
   await diagnosticoInicial();
   await registerCommands().catch(error => {
     console.error("Falha ao registrar comandos:", error.message);
@@ -6120,6 +6286,22 @@ setInterval(async () => {
   verificarPrazos();
   await removerCargosExpirados().catch(() => {});
 }, 5 * 60 * 1000);
+
+let encerrando = false;
+async function encerrarComSalvamento() {
+  if (encerrando) return;
+  encerrando = true;
+  console.log("Salvando loja antes de encerrar...");
+  salvarStore();
+  if (persist.githubSalvarAgora) {
+    await persist.githubSalvarAgora(store).catch(error => {
+      console.error("Falha ao salvar backup no GitHub:", error.message);
+    });
+  }
+  process.exit(0);
+}
+process.on("SIGINT", encerrarComSalvamento);
+process.on("SIGTERM", encerrarComSalvamento);
 
 start().catch(error => {
   console.error("Falha ao iniciar:", error);
