@@ -928,35 +928,21 @@ async function atualizarPaineisTicket() {
   }
 }
 
-function payloadPainelFeedbacks() {
-  const avaliacoes = Object.values(store.pedidos)
-    .filter(p => p.feedback)
-    .sort((a, b) => (b.feedback.em || 0) - (a.feedback.em || 0));
-  const linhas = avaliacoes.slice(0, 8).map(p => {
-    const produto = getProduto(p.produtoId);
-    const nomeProduto = produto ? produto.nome : p.produtoNome;
-    const comentario = p.feedback.comentario ? ` — "${String(p.feedback.comentario).slice(0, 80)}"` : "";
-    return `${estrelas(p.feedback.nota)} <@${p.userId}> · **${nomeProduto}** (#${p.id})${comentario}`;
-  });
-  const media = avaliacoes.length
-    ? (avaliacoes.reduce((s, p) => s + Number(p.feedback.nota || 0), 0) / avaliacoes.length).toFixed(1)
-    : "—";
-  const embed = new EmbedBuilder()
-    .setTitle("Feedbacks da loja")
-    .setDescription(
-      `Apos a entrega, o cliente recebe um **agradecimento na DM** com botao para avaliar.\n` +
-      `A avaliacao aparece aqui automaticamente.\n\n` +
-      `Media: **${media}/5** · **${avaliacoes.length}** avaliacao(oes).\n\n` +
-      (linhas.join("\n") || "Ainda nao ha avaliacoes.")
-    )
-    .setColor(0xf1c40f);
-  return { content: null, embeds: [embed], components: [] };
-}
-
-async function atualizarPainelFeedbacks() {
-  const payload = payloadPainelFeedbacks();
+async function removerPainelFeedbacks() {
   for (const gid of GUILD_IDS) {
-    await publicarOuAtualizarPainel(gid, "feedbacks", guildCfg(gid).canais.feedbacks, payload).catch(() => {});
+    const canalId = guildCfg(gid).canais.feedbacks;
+    const pf = store.guilds[gid] && store.guilds[gid].paineisFixos;
+    const salvo = pf && pf.feedbacks;
+    if (!canalId || !salvo) continue;
+    const canal = await client.channels.fetch(canalId).catch(() => null);
+    if (canal) {
+      const msg = await canal.messages.fetch(salvo).catch(() => null);
+      if (msg && msg.author && msg.author.id === client.user.id) {
+        await msg.delete().catch(() => {});
+      }
+    }
+    pf.feedbacks = null;
+    salvarStore();
   }
 }
 
@@ -1088,7 +1074,7 @@ async function publicarCanaisFixos() {
   }
   await atualizarPaineisTicket();
   await atualizarPainelCupons();
-  await atualizarPainelFeedbacks();
+  await removerPainelFeedbacks().catch(() => {});
 }
 
 function embedPedidoCliente(pedido, extra, opcoes = {}) {
@@ -1418,11 +1404,14 @@ async function atualizarDmFeedback(pedido) {
   }
 }
 
-function textoFeedbackCanal(pedido, nota, comentario) {
+function embedAvaliacaoCanal(pedido, nota, comentario) {
   const produto = getProduto(pedido.produtoId);
   const nomeProduto = produto ? produto.nome : pedido.produtoNome;
-  const comentarioTxt = comentario ? `\n"${comentario}"` : "";
-  return `${estrelas(nota)} <@${pedido.userId}> avaliou **${nomeProduto}** (pedido #${pedido.id}) — ${nota}/5${comentarioTxt}`;
+  const texto = comentario ? String(comentario).slice(0, 4096) : "";
+  return new EmbedBuilder()
+    .setTitle(`${estrelas(nota)}  ${nomeProduto}`)
+    .setDescription(texto || "\u200b")
+    .setColor(0xf1c40f);
 }
 
 async function registrarFeedback(pedido, nota, comentario) {
@@ -1433,14 +1422,13 @@ async function registrarFeedback(pedido, nota, comentario) {
   if (feedbackChannelId) {
     const canal = await client.channels.fetch(feedbackChannelId).catch(() => null);
     if (canal) {
-      await canal.send(textoFeedbackCanal(pedido, nota, comentario)).catch(() => {});
+      await canal.send({ embeds: [embedAvaliacaoCanal(pedido, nota, comentario)] }).catch(() => {});
     }
   }
   registrarLog("feedback", `Pedido #${pedido.id} avaliado com ${nota}/5.`, {
     pedidoId: pedido.id,
     userId: pedido.userId
   });
-  await atualizarPainelFeedbacks().catch(() => {});
 }
 
 async function concederCargo(pedido, produto) {
@@ -1875,9 +1863,10 @@ async function handleAvaliarModal(interaction, pedidoId) {
     return;
   }
   const comentario = interaction.fields.getTextInputValue("comentario").trim();
+  pedido.userTag = interaction.user.username;
   await registrarFeedback(pedido, nota, comentario);
   await atualizarDmFeedback(pedido).catch(() => {});
-  await interaction.editReply({ content: `${estrelas(nota)} Valeu pela avaliacao! Ela ja aparece no canal de feedbacks.` });
+  await interaction.editReply({ content: `${estrelas(nota)} Valeu pela avaliacao!` });
 }
 
 async function overwritesPrivado(guild, userId) {
@@ -3190,6 +3179,7 @@ async function handleFeedback(interaction) {
     await interaction.reply({ content: "Esse pedido ja foi avaliado.", ephemeral: true });
     return;
   }
+  pedido.userTag = interaction.user.username;
   await registrarFeedback(pedido, nota, comentario);
   await atualizarDmFeedback(pedido).catch(() => {});
   await interaction.reply({ content: `${estrelas(nota)} Valeu pela avaliacao!`, ephemeral: true });
@@ -3944,24 +3934,17 @@ async function handleAvaliacaoPorTexto(message) {
     if (!canalId || message.channelId !== canalId) return;
   }
   const parsed = parseAvaliacaoTexto(message.content);
-  if (!parsed) {
-    if (!ehDm && /^[1-5]/.test(String(message.content || "").trim())) {
-      await message.reply("Use o botao **Deixar feedback** na DM, ou envie `5 chegou rapido`.").catch(() => {});
-    }
-    return;
-  }
+  if (!parsed) return;
   const pendentes = Object.values(store.pedidos)
     .filter(p => p.userId === message.author.id && p.status === STATUS.ENTREGUE && !p.feedback)
     .sort((a, b) => Number(b.id) - Number(a.id));
   const pedido = pendentes[0];
-  if (!pedido) {
-    if (!ehDm) await message.reply("Voce nao tem pedido entregue pendente de avaliacao.").catch(() => {});
-    return;
-  }
+  if (!pedido) return;
+  pedido.userTag = message.author.username;
   await registrarFeedback(pedido, parsed.nota, parsed.comentario);
   await atualizarDmFeedback(pedido).catch(() => {});
   if (ehDm) {
-    await message.reply(`${estrelas(parsed.nota)} Valeu pela avaliacao! Ela ja aparece no canal de feedbacks.`).catch(() => {});
+    await message.reply(`${estrelas(parsed.nota)} Valeu pela avaliacao!`).catch(() => {});
   } else {
     await message.delete().catch(() => {});
   }
@@ -5274,8 +5257,6 @@ async function handleModal(interaction) {
       await atualizarPaineisTicket().catch(() => {});
     } else if (salvo.tipo === "cupons") {
       await atualizarPainelCupons().catch(() => {});
-    } else if (salvo.tipo === "feedbacks") {
-      await atualizarPainelFeedbacks().catch(() => {});
     } else {
       const novo = EmbedBuilder.from(embedAtual);
       aplicarCamposEmbed(novo, campos);
