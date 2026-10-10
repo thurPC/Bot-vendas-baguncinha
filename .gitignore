@@ -3,6 +3,7 @@ node_modules/
 data/store.json
 data/store.json.bak
 data/store.json.tmp
+data/visual.json
 data/*.db
 data/*.db-wal
 data/*.db-shm
