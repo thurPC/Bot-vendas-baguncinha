@@ -243,8 +243,12 @@ if (store.config.lojaTitulo === undefined) store.config.lojaTitulo = "";
 if (store.config.lojaDescricao === undefined) store.config.lojaDescricao = "";
 if (store.config.lojaCor === undefined) store.config.lojaCor = "";
 if (store.config.lojaRodape === undefined) store.config.lojaRodape = "";
-if (!store.config.feedbackTitulo) store.config.feedbackTitulo = FEEDBACK_TITULO_PADRAO;
-if (!store.config.feedbackMensagem) store.config.feedbackMensagem = FEEDBACK_MSG_PADRAO;
+if (store.config.feedbackTitulo === undefined || store.config.feedbackTitulo === "") {
+  store.config.feedbackTitulo = FEEDBACK_TITULO_PADRAO;
+}
+if (store.config.feedbackMensagem === undefined || store.config.feedbackMensagem === "") {
+  store.config.feedbackMensagem = FEEDBACK_MSG_PADRAO;
+}
 for (const [id, produto] of Object.entries(PRODUTOS)) {
   if (!store.produtos[id]) store.produtos[id] = { ...produto };
 }
@@ -267,14 +271,11 @@ if (GUILD_ID && store.guilds[GUILD_ID]) {
   if (store.config.ticketCategoryId && !g1.ticketCategoryId) g1.ticketCategoryId = store.config.ticketCategoryId;
 }
 if (!store.config.ticketPainel || typeof store.config.ticketPainel !== "object") store.config.ticketPainel = {};
-if (!store.config.ticketPainel.titulo) store.config.ticketPainel.titulo = "ATENDIMENTO AO CLIENTE";
-if (!store.config.ticketPainel.descricao) {
-  store.config.ticketPainel.descricao =
-    "Se voce estiver enfrentando algum problema ou precisar de ajuda com nossos servicos, abra um ticket. Nossa equipe responde o mais breve possivel.\n\n*(Podendo haver atrasos e lentidao no atendimento Sab/Dom)*";
-}
+if (store.config.ticketPainel.titulo === undefined) store.config.ticketPainel.titulo = "";
+if (store.config.ticketPainel.descricao === undefined) store.config.ticketPainel.descricao = "";
 if (!store.config.ticketPainel.botaoLabel) store.config.ticketPainel.botaoLabel = "Abrir ticket";
 if (store.config.ticketPainel.botaoEmoji === undefined) store.config.ticketPainel.botaoEmoji = "🎫";
-if (!store.config.ticketPainel.cor) store.config.ticketPainel.cor = "5865F2";
+if (store.config.ticketPainel.cor === undefined) store.config.ticketPainel.cor = "";
 if (store.config.ticketPainel.miniatura === undefined) store.config.ticketPainel.miniatura = null;
 if (store.config.ticketPainel.banner === undefined) store.config.ticketPainel.banner = null;
 if (store.config.ticketPainel.rodape === undefined) store.config.ticketPainel.rodape = null;
@@ -292,7 +293,6 @@ for (const cat of Object.values(store.categorias || {})) {
   if (cat.cor === undefined) cat.cor = null;
   if (cat.rodape === undefined) cat.rodape = null;
 }
-salvarStore();
 
 function escolhasProdutos() {
   return todosProdutos()
@@ -340,6 +340,8 @@ function parseCor(cor) {
 
 function patchProduto(id, fields) {
   store.produtoOverrides[id] = { ...(store.produtoOverrides[id] || {}), ...fields };
+  if (!store.produtos[id]) store.produtos[id] = { id, ...(PRODUTOS[id] || {}) };
+  store.produtos[id] = { ...store.produtos[id], ...fields };
   salvarStore();
 }
 
@@ -640,21 +642,21 @@ function catalogoEmbed(categoriaId) {
   const titulo = categoria
     ? `${categoria.emoji || "📁"} ${categoria.nome}`
     : (store.config.lojaTitulo || "Loja Baguncinha");
-  const intro = store.config.lojaPausada
-    ? motivoLojaPausada()
-    : categoria
-      ? (categoria.descricao || "Escolha um produto desta categoria.")
-      : (store.config.lojaDescricao || (cats.length
-        ? "Selecione uma categoria para ver os produtos. O bot gera o Pix, confirma o pagamento e entrega."
-        : "Escolha um produto. O bot gera o Pix, confirma o pagamento e entrega."));
-  let corpo = intro;
-  if (!store.config.lojaPausada) {
-    if (categoriaId) {
-      corpo += `\n\n${linhas.length ? linhas.join("\n\n") : "Nenhum produto nesta categoria."}`;
-    } else if (!cats.length) {
-      corpo += `\n\n${linhas.length ? linhas.join("\n\n") : "Nenhum produto no momento."}`;
-    }
-    corpo += `\n\nPrazo: ate **${PRAZO_ENTREGA_LABEL}** depois do Pix confirmado.`;
+  let corpo;
+  if (store.config.lojaPausada) {
+    corpo = motivoLojaPausada();
+  } else if (categoria) {
+    corpo = (categoria.descricao || "Escolha um produto desta categoria.") +
+      `\n\n${linhas.length ? linhas.join("\n\n") : "Nenhum produto nesta categoria."}` +
+      `\n\nPrazo: ate **${PRAZO_ENTREGA_LABEL}** depois do Pix confirmado.`;
+  } else if (store.config.lojaDescricao) {
+    corpo = store.config.lojaDescricao;
+  } else {
+    corpo = (cats.length
+      ? "Selecione uma categoria para ver os produtos. O bot gera o Pix, confirma o pagamento e entrega."
+      : "Escolha um produto. O bot gera o Pix, confirma o pagamento e entrega.") +
+      (!cats.length ? `\n\n${linhas.length ? linhas.join("\n\n") : "Nenhum produto no momento."}` : "") +
+      `\n\nPrazo: ate **${PRAZO_ENTREGA_LABEL}** depois do Pix confirmado.`;
   }
   const embed = new EmbedBuilder()
     .setTitle(store.config.lojaPausada ? "Loja pausada" : titulo)
@@ -791,23 +793,77 @@ async function atualizarLojaFixa() {
   }
 }
 
+function hidratarVisualDaMensagem(msg, tipo) {
+  const embed = embedDaMensagem(msg);
+  if (!embed) return false;
+  let mudou = false;
+  if (tipo === "loja") {
+    if (!store.config.lojaTitulo && embed.title) {
+      store.config.lojaTitulo = embed.title;
+      mudou = true;
+    }
+    if (!store.config.lojaDescricao && embed.description) {
+      store.config.lojaDescricao = embed.description;
+      mudou = true;
+    }
+    if (!store.config.lojaCor && embed.hexColor) {
+      store.config.lojaCor = String(embed.hexColor).replace(/^#/, "");
+      mudou = true;
+    }
+    if (!store.config.lojaRodape && embed.footer?.text) {
+      store.config.lojaRodape = embed.footer.text;
+      mudou = true;
+    }
+    if (!store.config.banner && (embed.image?.url || embed.thumbnail?.url)) {
+      store.config.banner = embed.image?.url || embed.thumbnail?.url;
+      mudou = true;
+    }
+  }
+  if (tipo === "ticket") {
+    const cfg = store.config.ticketPainel;
+    if (!cfg.titulo && embed.title) { cfg.titulo = embed.title; mudou = true; }
+    if (!cfg.descricao && embed.description) { cfg.descricao = embed.description; mudou = true; }
+    if (!cfg.banner && embed.image?.url) { cfg.banner = embed.image.url; mudou = true; }
+    if (!cfg.miniatura && embed.thumbnail?.url) { cfg.miniatura = embed.thumbnail.url; mudou = true; }
+    if (!cfg.rodape && embed.footer?.text) { cfg.rodape = embed.footer.text; mudou = true; }
+  }
+  if (tipo === "cupons") {
+    const cfg = store.config.cuponsPainel;
+    if (!cfg.titulo && embed.title) { cfg.titulo = embed.title; mudou = true; }
+    if (!cfg.banner && embed.image?.url) { cfg.banner = embed.image.url; mudou = true; }
+    if (!cfg.rodape && embed.footer?.text) { cfg.rodape = embed.footer.text; mudou = true; }
+  }
+  return mudou;
+}
+
+async function acharMensagemPainel(canal, messageId) {
+  if (messageId) {
+    const msg = await canal.messages.fetch(messageId).catch(() => null);
+    if (msg && msg.author && msg.author.id === client.user.id && embedDaMensagem(msg)) return msg;
+  }
+  const recentes = await canal.messages.fetch({ limit: 50 }).catch(() => null);
+  if (!recentes) return null;
+  return recentes.find(m => m.author && m.author.id === client.user.id && embedDaMensagem(m)) || null;
+}
+
 async function atualizarLojaFixaGuild(gid) {
   const st = store.guilds[gid];
   const canalId = st.lojaFixa.channelId || guildCfg(gid).canais.loja;
   if (!canalId) return;
   const canal = await client.channels.fetch(canalId).catch(() => null);
   if (!canal) return;
-  if (st.lojaFixa.messageId) {
-    const msg = await canal.messages.fetch(st.lojaFixa.messageId).catch(() => null);
-    if (msg) {
-      await msg.edit(payloadLoja()).catch(() => {});
-      return;
-    }
+    const msg = await acharMensagemPainel(canal, st.lojaFixa.messageId);
+  if (msg) {
+    if (hidratarVisualDaMensagem(msg, "loja")) salvarStore();
+    st.lojaFixa = { channelId: canal.id, messageId: msg.id };
+    salvarStore();
+    await msg.edit(payloadLoja()).catch(() => {});
+    return;
   }
-  await publicarLojaFixa(gid);
+  await publicarLojaFixa(gid, false);
 }
 
-async function publicarLojaFixa(gid = GUILD_ID) {
+async function publicarLojaFixa(gid = GUILD_ID, forcar = false) {
   const st = store.guilds[gid] || store.guilds[GUILD_ID];
   const lojaId = guildCfg(gid).canais.loja;
   const destino = lojaId ? await client.channels.fetch(lojaId).catch(() => null) : null;
@@ -815,15 +871,13 @@ async function publicarLojaFixa(gid = GUILD_ID) {
     console.error(`Canal da lojinha nao encontrado (servidor ${gid}).`);
     return null;
   }
-  if (st.lojaFixa.channelId && st.lojaFixa.messageId) {
-    const antigo = await client.channels.fetch(st.lojaFixa.channelId).catch(() => null);
-    if (antigo) {
-      const msg = await antigo.messages.fetch(st.lojaFixa.messageId).catch(() => null);
-      if (msg) {
-        await msg.edit(payloadLoja()).catch(() => {});
-        return msg;
-      }
-    }
+  const msg = await acharMensagemPainel(destino, st.lojaFixa && st.lojaFixa.messageId);
+  if (msg) {
+    if (hidratarVisualDaMensagem(msg, "loja")) salvarStore();
+    st.lojaFixa = { channelId: destino.id, messageId: msg.id };
+    salvarStore();
+    if (forcar) await msg.edit(payloadLoja()).catch(() => {});
+    return msg;
   }
   const enviada = await destino.send(payloadLoja());
   st.lojaFixa = { channelId: destino.id, messageId: enviada.id };
@@ -838,7 +892,6 @@ function ticketPainel() {
 function payloadPainelTicket() {
   const cfg = ticketPainel();
   const embed = new EmbedBuilder()
-
     .setTitle(String(cfg.titulo || "ATENDIMENTO AO CLIENTE").slice(0, 256))
     .setDescription(String(cfg.descricao || "Abra um ticket para falar com a equipe.").slice(0, 4096))
     .setColor(parseCor(cfg.cor) || 0x5865f2);
@@ -895,20 +948,20 @@ function payloadPainelCupons() {
   return { embeds: [embed], components: [] };
 }
 
-async function publicarOuAtualizarPainel(gid, chave, canalId, payload) {
+async function publicarOuAtualizarPainel(gid, chave, canalId, payload, forcar = false) {
   const canal = canalId ? await client.channels.fetch(canalId).catch(() => null) : null;
   if (!canal) {
     console.error(`Canal ${chave} (${canalId}) nao encontrado no servidor ${gid}.`);
     return;
   }
   const pf = store.guilds[gid].paineisFixos;
-  const salvo = pf[chave];
-  if (salvo) {
-    const msg = await canal.messages.fetch(salvo).catch(() => null);
-    if (msg) {
-      await msg.edit(payload).catch(() => {});
-      return msg;
-    }
+  const msg = await acharMensagemPainel(canal, pf[chave]);
+  if (msg) {
+    if (hidratarVisualDaMensagem(msg, chave)) salvarStore();
+    pf[chave] = msg.id;
+    salvarStore();
+    if (forcar) await msg.edit(payload).catch(() => {});
+    return msg;
   }
   const enviada = await canal.send(payload);
   pf[chave] = enviada.id;
@@ -916,15 +969,15 @@ async function publicarOuAtualizarPainel(gid, chave, canalId, payload) {
   return enviada;
 }
 
-async function atualizarPainelCupons() {
+async function atualizarPainelCupons(forcar = true) {
   for (const gid of GUILD_IDS) {
-    await publicarOuAtualizarPainel(gid, "cupons", guildCfg(gid).canais.cupons, payloadPainelCupons()).catch(() => {});
+    await publicarOuAtualizarPainel(gid, "cupons", guildCfg(gid).canais.cupons, payloadPainelCupons(), forcar).catch(() => {});
   }
 }
 
-async function atualizarPaineisTicket() {
+async function atualizarPaineisTicket(forcar = true) {
   for (const gid of GUILD_IDS) {
-    await publicarOuAtualizarPainel(gid, "ticket", guildCfg(gid).canais.ticket, payloadPainelTicket()).catch(() => {});
+    await publicarOuAtualizarPainel(gid, "ticket", guildCfg(gid).canais.ticket, payloadPainelTicket(), forcar).catch(() => {});
   }
 }
 
@@ -1070,10 +1123,10 @@ async function aplicarSnapshotCanais(guild, snapshot) {
 
 async function publicarCanaisFixos() {
   for (const gid of GUILD_IDS) {
-    await publicarLojaFixa(gid).catch(err => console.error(`Loja (${gid}):`, err.message));
+    await publicarLojaFixa(gid, false).catch(err => console.error(`Loja (${gid}):`, err.message));
   }
-  await atualizarPaineisTicket();
-  await atualizarPainelCupons();
+  await atualizarPaineisTicket(false);
+  await atualizarPainelCupons(false);
   await removerPainelFeedbacks().catch(() => {});
 }
 
@@ -2818,7 +2871,7 @@ async function handleConfig(interaction) {
   }
 
   if (sub === "canal-loja") {
-    await publicarLojaFixa(interaction.guildId);
+    await publicarLojaFixa(interaction.guildId, true);
     await interaction.reply({ content: `✅ Loja fixa publicada em <#${guildCfg(interaction.guildId).canais.loja}>.`, ephemeral: true });
     return;
   }
@@ -3980,14 +4033,14 @@ async function handleCommand(interaction) {
   switch (interaction.commandName) {
     case "loja":
       if (isStaff(interaction.member)) {
-        await publicarLojaFixa(interaction.guildId);
+        await publicarLojaFixa(interaction.guildId, true);
         await interaction.reply({ content: `Loja fixa publicada em <#${guildCfg(interaction.guildId).canais.loja}>.`, ephemeral: true });
       } else {
         await interaction.reply({ content: `A loja fica em <#${guildCfg(interaction.guildId).canais.loja}>.`, ephemeral: true });
       }
       return;
     case "catalogo":
-      await publicarLojaFixa(interaction.guildId);
+      await publicarLojaFixa(interaction.guildId, true);
       await interaction.reply({ content: `Loja fixa publicada em <#${guildCfg(interaction.guildId).canais.loja}>.`, ephemeral: true });
       return;
     case "meuspedidos": {
@@ -4625,7 +4678,7 @@ async function handleButton(interaction) {
       return;
     }
     await interaction.deferUpdate();
-    await publicarLojaFixa(interaction.guildId);
+    await publicarLojaFixa(interaction.guildId, true);
     await interaction.editReply(payloadPainelConfig(interaction.guildId));
     return;
   }
