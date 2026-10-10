@@ -6,6121 +6,4476 @@ const {
   SlashCommandBuilder,
   EmbedBuilder,
   PermissionFlagsBits,
+  ChannelType,
   ActionRowBuilder,
   ButtonBuilder,
   ButtonStyle,
+  StringSelectMenuBuilder,
+  ChannelSelectMenuBuilder,
   ModalBuilder,
   TextInputBuilder,
   TextInputStyle,
-  ChannelType,
-  AttachmentBuilder,
-  StringSelectMenuBuilder,
-  ChannelSelectMenuBuilder,
-  RoleSelectMenuBuilder,
-  MessageFlags,
+  Partials,
   ContextMenuCommandBuilder,
-  ApplicationCommandType,
-  Partials
+  ApplicationCommandType
 } = require("discord.js");
 const http = require("http");
-const crypto = require("crypto");
 const fs = require("fs");
 const path = require("path");
-const persist = require("./src/persist");
-const { ocultarNomePix } = require("./src/pixNome");
-const { gerarQrComLogo } = require("./src/qrLogo");
-const { enviarProdutoPorEmail, testarSmtp } = require("./src/mailer");
+
+// =========================
+// CONFIGURAÇÃO
+// =========================
 const TOKEN = process.env.TOKEN;
 const CLIENT_ID = process.env.CLIENT_ID;
-const GUILD_ID = process.env.GUILD_ID;
-const GUILD_ID_2 = process.env.GUILD_ID_2;
+const GUILD_ID = "1370256381701128192";
+const PORT = process.env.PORT || 10000;
+const THESPORTSDB_KEY = process.env.THESPORTSDB_KEY || "3";
+
+// ID do Discord de quem pode mudar as imagens da loja (só você).
+// Configure a variável OWNER_ID no Render.
 const OWNER_ID = process.env.OWNER_ID;
-const PORT = Number(process.env.PORT || 10000);
-const PUBLIC_URL = (process.env.PUBLIC_URL || "").replace(/\/$/, "");
-const MP_ACCESS_TOKEN = process.env.MERCADOPAGO_ACCESS_TOKEN;
-const MP_WEBHOOK_SECRET = process.env.MERCADOPAGO_WEBHOOK_SECRET;
-const PAYER_EMAIL = process.env.PAYER_EMAIL || "pagamentos@baguncinha.local";
 
-// ===== Multi-servidor: o bot funciona somente nestes 2 servidores =====
-const CANAIS_1 = {
-  loja: "1554894024849104926",
-  feedbacks: "1555479807926468639",
-  logs: "1555479669082427412",
-  cupons: "1555484389754798161",
-  ticket: "1555489336139579492"
-};
-const CANAIS_2 = {
-  loja: process.env.CANAL_LOJA_2,
-  feedbacks: process.env.CANAL_FEEDBACKS_2,
-  logs: process.env.CANAL_LOGS_2,
-  cupons: process.env.CANAL_CUPONS_2,
-  ticket: process.env.CANAL_TICKET_2
-};
+// itemId -> URL da imagem mostrada na prévia/compra (só o dono altera via /lojaimagem)
+let lojaImagens = {};
 
-
-const GUILDS = {};
-if (GUILD_ID) {
-  GUILDS[GUILD_ID] = {
-    id: GUILD_ID,
-    canais: CANAIS_1,
-    adminChannelId: process.env.ADMIN_CHANNEL_ID,
-    adminRoleId: process.env.ADMIN_ROLE_ID
-  };
+// =========================
+// VERIFICAÇÃO
+// =========================
+if (!TOKEN) {
+  console.error("❌ TOKEN não configurado!");
 }
-if (GUILD_ID_2) {
-  GUILDS[GUILD_ID_2] = {
-    id: GUILD_ID_2,
-    canais: CANAIS_2,
-    adminChannelId: process.env.ADMIN_CHANNEL_ID_2,
-    adminRoleId: process.env.ADMIN_ROLE_ID_2
-  };
+if (!CLIENT_ID) {
+  console.error("❌ CLIENT_ID não configurado!");
 }
-const GUILD_IDS = Object.keys(GUILDS);
-const guildPermitida = id => !!GUILDS[id];
-const guildCfg = id => GUILDS[id] || GUILDS[GUILD_ID];
-const PRAZO_ENTREGA_MIN = 120;
-const PRAZO_ENTREGA_LABEL = "2 horas";
-const QR_NOME_PUBLICO = "BAGUNCINHA";
-const FEEDBACK_TITULO_PADRAO = "Obrigado pela compra!";
-const FEEDBACK_MSG_PADRAO =
-  "Obrigado pela compra, {user}!\n\n" +
-  "Seu pedido #{id} ({produto}) foi entregue com sucesso.\n\n" +
-  "Se puder, clique no botao abaixo e deixe seu feedback. Isso ajuda demais a loja.";
-const DIA_MS = 24 * 60 * 60 * 1000;
-const GIF_COMPRA_APROVADA = path.join(__dirname, "assets", "compra-aprovada.gif");
 
-const PRODUTOS = {
-  nitro_1m: {
-    id: "nitro_1m",
-    nome: "Discord Nitro 1 mes",
-    descricao: "Nitro Classic/Full sob encomenda. Entrega do codigo apos o Pix.",
-    precoCentavos: 2490,
-    emoji: "💎",
-    disponivel: true,
-    modo: "auto",
-    cargoId: null,
-    cargoDias: 0,
-    imagem: null,
-    banner: null,
-    bannerPosicao: "bottom",
-    categoriaId: "nitro",
-    instrucoes: "Apos receber o codigo, abra discord.com/nitro e resgate.",
-    precoOriginalCentavos: 0
-  },
-  nitro_3m: {
-    id: "nitro_3m",
-    nome: "Discord Nitro 3 meses",
-    descricao: "Nitro sob encomenda. Entrega do codigo apos o Pix.",
-    precoCentavos: 6490,
-    emoji: "💎",
-    disponivel: true,
-    modo: "auto",
-    cargoId: null,
-    cargoDias: 0,
-    imagem: null,
-    banner: null,
-    bannerPosicao: "bottom",
-    categoriaId: "nitro",
-    instrucoes: "Apos receber o codigo, abra discord.com/nitro e resgate.",
-    precoOriginalCentavos: 0
-  },
-  boost_2: {
-    id: "boost_2",
-    nome: "2 Boosts de servidor",
-    descricao: "Boosts sob encomenda. Entrega apos o Pix.",
-    precoCentavos: 1990,
-    emoji: "🚀",
-    disponivel: true,
-    modo: "semi",
-    cargoId: null,
-    cargoDias: 0,
-    imagem: null,
-    banner: null,
-    bannerPosicao: "bottom",
-    categoriaId: "boost",
-    instrucoes: "A staff envia o procedimento de boost apos o pagamento.",
-    precoOriginalCentavos: 0
-  }
-};
-
-const STATUS = {
-  AGUARDANDO_PAGAMENTO: "aguardando_pagamento",
-  AGUARDANDO_ENTREGA: "aguardando_entrega",
-  ENTREGUE: "entregue",
-  CANCELADO: "cancelado",
-  EXPIRADO: "expirado"
-};
-
-const STATUS_LABEL = {
-  aguardando_pagamento: "⏳ Aguardando pagamento ⏳",
-  aguardando_entrega: "🟡 Aguardando entrega 🟡",
-  entregue: "Entregue ✅",
-  cancelado: "❌ Cancelado ❌",
-  expirado: "Expirado"
-};
-
-const LOG_LABEL = {
-  pedido_criado: "🧾 Pedido criado",
-  cupom_aplicado: "Cupom aplicado ✅",
-  pagamento_confirmado: "Pagamento confirmado ✅",
-  aguardando_entrega: "🟡 Aguardando entrega ",
-  entregue: "Entrega concluida ✅",
-  cancelado: "❌ Pedido cancelado ❌",
-  expirado: "Pedido expirado",
-  prazo_estourado: " Prazo de entrega estourado",
-  cargo_concedido: "🛡️ Cargo temporario concedido",
-  cargo_removido: "🛡️ Cargo temporario removido",
-  cargo_erro: "⚠️ Falha ao aplicar cargo",
-  feedback: "Nova avaliacao",
-  ticket_aberto: "🎫 Ticket aberto",
-  loja_pausada: "Loja pausada",
-  loja_reativada: "Loja reativada",
-  pagamento_manual: "Pagamento marcado pela staff",
-  ticket_fechado: "🎫 Ticket fechado"
-};
-
-if (!TOKEN) console.error("TOKEN nao configurado.");
-if (!CLIENT_ID) console.error("CLIENT_ID nao configurado.");
-if (!GUILD_ID) console.error("GUILD_ID nao configurado.");
-
+// =========================
+// CLIENTE DISCORD
+// =========================
 const client = new Client({
   intents: [
     GatewayIntentBits.Guilds,
     GatewayIntentBits.GuildMessages,
-    GatewayIntentBits.DirectMessages,
-    GatewayIntentBits.MessageContent
+    GatewayIntentBits.MessageContent,
+    GatewayIntentBits.GuildMembers,
+    GatewayIntentBits.GuildVoiceStates,
+    GatewayIntentBits.GuildMessageReactions
   ],
-  partials: [Partials.Channel]
+  partials: [Partials.Message, Partials.Channel, Partials.Reaction]
 });
 
-client.on("error", error => {
-  console.error("Erro no client do Discord:", error.message);
-});
+// =========================
+// "BANCO DE DADOS" EM MEMÓRIA (XP)
+// ⚠️ Isso zera toda vez que o bot reinicia.
+// Pra persistir de verdade, depois dá pra trocar por um arquivo JSON ou um banco (SQLite/Supabase).
+// =========================
+// XP de texto e de voz são contados separadamente (níveis independentes),
+// mas os dois somam pro "nível total", que é o que libera os cargos por atividade.
+const xpData = new Map(); // key: userId, value: { textXp, textLevel, voiceXp, voiceLevel, lastMessageTimestamp }
 
-process.on("unhandledRejection", motivo => {
-  console.error("Promise rejeitada sem tratamento:", motivo);
-});
+// =========================
+// PERSISTÊNCIA EM JSON
+// =========================
+// ⚠️ O disco do Render é temporário: sobrevive a "dormir e acordar", mas
+// some quando você faz um novo deploy (o container é recriado do zero).
+const DATA_FILE = path.join(__dirname, "database.json");
 
-process.on("uncaughtException", error => {
-  console.error("Excecao nao tratada:", error);
-});
-
-function carregarStore() {
-  return persist.carregarStore();
+// =========================
+// BACKUP PERMANENTE NO GITHUB
+// =========================
+// O disco do Render é apagado a cada deploy, então o progresso também é salvo
+// num arquivo dentro do seu repositório do GitHub, numa branch separada
+// (GITHUB_DATA_BRANCH, padrão "dados"). Branch separada = o Render NÃO faz
+// redeploy a cada salvamento (ele só observa a "main").
+//
+// Variáveis de ambiente no Render:
+//   GITHUB_TOKEN        (obrigatória) token com permissão de escrever em "Contents"
+//   GITHUB_REPO         (opcional)    padrão: thurPC/Bot-discord-baguncinha
+//   GITHUB_DATA_BRANCH  (opcional)    padrão: dados
+//
+// ⚠️ Repositório PÚBLICO = os dados (IDs do Discord e moedas) ficam visíveis pra
+// qualquer um. Se isso incomodar, aponte GITHUB_REPO pra um repositório PRIVADO.
+function limparSegredo(valor) {
+  if (!valor) return "";
+  return String(valor)
+    .trim()
+    .replace(/^["']|["']$/g, "")
+    .replace(/^(Bearer|token)\s+/i, "");
 }
 
-function salvarStore() {
-  persist.salvarStore(store);
+function normalizarRepo(repo) {
+  return limparSegredo(repo)
+    .replace(/^https?:\/\/github\.com\//i, "")
+    .replace(/\.git$/i, "");
 }
 
-const store = carregarStore();
-if (!store.pedidos) store.pedidos = {};
-if (!store.pagamentos) store.pagamentos = {};
-if (!store.nextPedidoId) store.nextPedidoId = 1001;
-if (!store.cupons) store.cupons = {};
-if (!store.estoque) store.estoque = {};
-if (!store.nextEstoqueItemId) store.nextEstoqueItemId = 1;
-if (!store.cargosTemporarios) store.cargosTemporarios = [];
-if (!store.logs) store.logs = [];
-if (!store.produtoOverrides) store.produtoOverrides = {};
-if (!store.produtos) store.produtos = {};
-if (!store.tickets) store.tickets = {};
-if (!store.carrinhos) store.carrinhos = {};
-if (!store.config || typeof store.config !== "object") store.config = {};
-if (store.config.banner === undefined) store.config.banner = null;
-if (store.config.bannerPosicao == null || store.config.bannerPosicao === "") store.config.bannerPosicao = "top";
-if (store.config.pixNomePublico == null || store.config.pixNomePublico === "") store.config.pixNomePublico = QR_NOME_PUBLICO;
-if (store.config.ocultarNomePix === undefined) store.config.ocultarNomePix = true;
-if (store.config.ticketCategoryId === undefined) store.config.ticketCategoryId = null;
-if (store.config.smtpHost === undefined) store.config.smtpHost = null;
-if (store.config.smtpPort == null) store.config.smtpPort = 587;
-if (store.config.smtpUser === undefined) store.config.smtpUser = null;
-if (store.config.smtpPass === undefined) store.config.smtpPass = null;
-if (store.config.smtpFrom === undefined) store.config.smtpFrom = null;
-if (store.config.lojaPausada === undefined) store.config.lojaPausada = false;
-if (store.config.lojaPausaMotivo === undefined) store.config.lojaPausaMotivo = "";
-if (store.config.lojaTitulo === undefined) store.config.lojaTitulo = "";
-if (store.config.lojaDescricao === undefined) store.config.lojaDescricao = "";
-if (store.config.lojaCor === undefined) store.config.lojaCor = "";
-if (store.config.lojaRodape === undefined) store.config.lojaRodape = "";
-if (store.config.feedbackTitulo === undefined || store.config.feedbackTitulo === "") {
-  store.config.feedbackTitulo = FEEDBACK_TITULO_PADRAO;
+const GITHUB_TOKEN = limparSegredo(process.env.GITHUB_TOKEN);
+const GITHUB_REPO = normalizarRepo(process.env.GITHUB_REPO || "thurPC/Bot-discord-baguncinha");
+const GITHUB_DATA_BRANCH = limparSegredo(process.env.GITHUB_DATA_BRANCH) || "dados";
+const GITHUB_DATA_PATH = "database.json";
+const GITHUB_SAVE_INTERVAL_MS = 5 * 60 * 1000; // no máximo 1 commit a cada 5 min
+
+let githubSha = null;        // "versão" atual do arquivo no GitHub (necessária pra atualizar)
+let dadosAlterados = false;  // true = tem coisa nova que ainda não foi pro GitHub
+let salvandoGithub = false;  // evita dois salvamentos ao mesmo tempo
+let ultimoTextoEnviado = null; // conteúdo do último envio (pra não commitar sem mudança)
+let economiaResetVersao = 0;   // versão do último reset de saldos aplicado (ver resetarEconomia)
+let top1Estado = { userId: null, since: 0, roleGranted: false };
+
+// Reset único da economia: zera os saldos que ficaram inflados pelo bug dos
+// marcos de moedas. Guardamos a versão aplicada junto dos dados pra rodar só uma
+// vez — suba esse número caso precise resetar de novo no futuro.
+const ECONOMIA_RESET_VERSAO = 1;
+
+function resetarEconomia() {
+  let afetados = 0;
+  for (const data of xpData.values()) {
+    if (data.coins !== 0 || data.banco !== 0 || (data.milestonesAlcancados && data.milestonesAlcancados.length > 0)) {
+      afetados++;
+    }
+    data.coins = 0;
+    data.banco = 0;
+    data.milestonesAlcancados = [];
+  }
+  return afetados;
 }
-if (store.config.feedbackMensagem === undefined || store.config.feedbackMensagem === "") {
-  store.config.feedbackMensagem = FEEDBACK_MSG_PADRAO;
-}
-for (const [id, produto] of Object.entries(PRODUTOS)) {
-  if (!store.produtos[id]) store.produtos[id] = { ...produto };
-}
-if (!store.config.cuponsPainel || typeof store.config.cuponsPainel !== "object") store.config.cuponsPainel = {};
-if (!store.lojaFixa) store.lojaFixa = { channelId: null, messageId: null };
-if (!store.paineisFixos) store.paineisFixos = { ticket: null, cupons: null };
-if (!store.guilds) store.guilds = {};
-for (const gid of GUILD_IDS) {
-  const g = store.guilds[gid] || (store.guilds[gid] = {});
-  if (!g.lojaFixa) g.lojaFixa = { channelId: null, messageId: null };
-  if (!g.paineisFixos) g.paineisFixos = { ticket: null, cupons: null, feedbacks: null };
-  if (g.paineisFixos.feedbacks === undefined) g.paineisFixos.feedbacks = null;
-  if (g.ticketCategoryId === undefined) g.ticketCategoryId = null;
-}
-// migra os dados antigos (servidor unico) para o servidor 1
-if (GUILD_ID && store.guilds[GUILD_ID]) {
-  const g1 = store.guilds[GUILD_ID];
-  if (store.lojaFixa && store.lojaFixa.messageId && !g1.lojaFixa.messageId) g1.lojaFixa = { ...store.lojaFixa };
-  if (store.paineisFixos && !g1.paineisFixos.ticket && !g1.paineisFixos.cupons) g1.paineisFixos = { ...store.paineisFixos };
-  if (store.config.ticketCategoryId && !g1.ticketCategoryId) g1.ticketCategoryId = store.config.ticketCategoryId;
-}
-if (!store.config.ticketPainel || typeof store.config.ticketPainel !== "object") store.config.ticketPainel = {};
-if (store.config.ticketPainel.titulo === undefined) store.config.ticketPainel.titulo = "";
-if (store.config.ticketPainel.descricao === undefined) store.config.ticketPainel.descricao = "";
-if (!store.config.ticketPainel.botaoLabel) store.config.ticketPainel.botaoLabel = "Abrir ticket";
-if (store.config.ticketPainel.botaoEmoji === undefined) store.config.ticketPainel.botaoEmoji = "🎫";
-if (store.config.ticketPainel.cor === undefined) store.config.ticketPainel.cor = "";
-if (store.config.ticketPainel.miniatura === undefined) store.config.ticketPainel.miniatura = null;
-if (store.config.ticketPainel.banner === undefined) store.config.ticketPainel.banner = null;
-if (store.config.ticketPainel.rodape === undefined) store.config.ticketPainel.rodape = null;
-if (!store.categorias) {
-  store.categorias = {
-    nitro: { id: "nitro", nome: "Nitro", emoji: "💎", descricao: "Discord Nitro", posicao: 0, ativo: true },
-    boost: { id: "boost", nome: "Boosts", emoji: "🚀", descricao: "Boosts de servidor", posicao: 1, ativo: true }
+
+// Tudo que vai pro disco/GitHub: dados dos usuários + imagens da loja + a versão
+// do último reset de economia aplicado (pra rodar o reset uma única vez).
+function dadosParaSalvar() {
+  return {
+    ...Object.fromEntries(xpData),
+    __lojaImagens: lojaImagens,
+    __economiaReset: economiaResetVersao,
+    __top1: top1Estado
   };
 }
-for (const cat of Object.values(store.categorias || {})) {
-  if (!cat || typeof cat !== "object") continue;
-  if (cat.banner === undefined) cat.banner = null;
-  if (!cat.bannerPosicao) cat.bannerPosicao = "top";
-  if (cat.imagem === undefined) cat.imagem = null;
-  if (cat.cor === undefined) cat.cor = null;
-  if (cat.rodape === undefined) cat.rodape = null;
-}
-
-function escolhasProdutos() {
-  return todosProdutos()
-    .slice(0, 25)
-    .map(p => ({ name: String(p.nome).slice(0, 100), value: p.id }));
-}
-
-function formatarReais(centavos) {
-  return (Number(centavos) / 100).toLocaleString("pt-BR", {
-    style: "currency",
-    currency: "BRL"
-  });
-}
-
-function estrelas(nota) {
-  const n = Math.max(0, Math.min(5, Number(nota) || 0));
-  return "⭐".repeat(n) + "☆".repeat(5 - n);
-}
-
-function proximoPedidoId() {
-  const id = store.nextPedidoId;
-  store.nextPedidoId += 1;
-  return id;
-}
-
-function getProduto(id) {
-  if (!id) return null;
-  const custom = (store.produtos || {})[id];
-  if (!PRODUTOS[id] && !custom) return null;
-  const merged = { ...(PRODUTOS[id] || {}), ...(custom || {}), ...(store.produtoOverrides[id] || {}) };
-  if (merged.apagado) return null;
-  return merged;
-}
-
-function todosProdutos() {
-  const ids = [...new Set([...Object.keys(PRODUTOS), ...Object.keys(store.produtos || {})])];
-  return ids.map(getProduto).filter(Boolean);
-}
-
-function parseCor(cor) {
-  const s = String(cor || "").trim().replace(/^#/, "");
-  if (!/^[0-9a-fA-F]{6}$/.test(s)) return null;
-  return Number.parseInt(s, 16);
-}
-
-function patchProduto(id, fields) {
-  store.produtoOverrides[id] = { ...(store.produtoOverrides[id] || {}), ...fields };
-  if (!store.produtos[id]) store.produtos[id] = { id, ...(PRODUTOS[id] || {}) };
-  store.produtos[id] = { ...store.produtos[id], ...fields };
-  salvarStore();
-}
-
-function estoqueDe(produtoId) {
-  if (!store.estoque[produtoId]) store.estoque[produtoId] = [];
-  return store.estoque[produtoId];
-}
-
-function produtoEsgotado(produto) {
-  return !!(produto && produto.modo === "auto" && estoqueDe(produto.id).length === 0);
-}
-
-function produtoPodeComprar(produto) {
-  return !!(produto && produto.disponivel && !produtoEsgotado(produto) && !store.config.lojaPausada);
-}
-
-function motivoLojaPausada() {
-  const extra = store.config.lojaPausaMotivo ? ` Motivo: ${store.config.lojaPausaMotivo}` : "";
-  return `A loja esta pausada no momento.${extra}`;
-}
-
-function opcoesAutocompleteProduto(focused) {
-  const q = String(focused || "").toLowerCase();
-  return todosProdutos()
-    .filter(p => !q || p.id.toLowerCase().includes(q) || String(p.nome).toLowerCase().includes(q))
-    .slice(0, 25)
-    .map(p => ({ name: `${p.nome} (${p.id})`.slice(0, 100), value: p.id }));
-}
-
-function categoriasAtivas() {
-  return Object.values(store.categorias || {})
-    .filter(c => c && c.ativo !== false)
-    .sort((a, b) => (a.posicao || 0) - (b.posicao || 0));
-}
-
-function produtosDaCategoria(categoriaId) {
-  return todosProdutos().filter(p => (p.categoriaId || "geral") === categoriaId);
-}
-
-function aplicarBanner(embed, url, posicao, thumbnailUrl) {
-  const pos = String(posicao || "bottom").toLowerCase();
-  if (pos === "float" || pos === "flutuante") {
-    if (thumbnailUrl || url) embed.setThumbnail(thumbnailUrl || url);
-    if (urlMidiaValida(url)) embed.setImage(url);
-    return embed;
-  }
-  if (pos === "top" && urlMidiaValida(url)) embed.setImage(url);
-  else if (pos === "bottom" && urlMidiaValida(url)) embed.setImage(url);
-  else if (pos === "thumbnail" && urlMidiaValida(url)) embed.setThumbnail(url);
-  else if (pos === "author" && urlMidiaValida(url)) embed.setAuthor({ name: "\u200b", iconURL: url });
-  if (urlMidiaValida(thumbnailUrl) && pos !== "thumbnail") embed.setThumbnail(thumbnailUrl);
-  return embed;
-}
-
-function pixNomePublico() {
-  if (store.config.ocultarNomePix === false) return store.config.pixNomePublico || QR_NOME_PUBLICO;
-  return store.config.pixNomePublico || QR_NOME_PUBLICO;
-}
-
-function limparUrl(url) {
-  return String(url || "").trim().replace(/^<|>$/g, "").trim();
-}
-
-function urlMidiaValida(url) {
-  if (!url) return false;
-  try {
-    const u = new URL(limparUrl(url));
-    return u.protocol === "http:" || u.protocol === "https:";
-  } catch {
-    return false;
-  }
-}
-
-function precoVitrine(produto) {
-  const atual = Number(produto.precoCentavos) || 0;
-  const original = Number(produto.precoOriginalCentavos) || 0;
-  if (original > atual && atual > 0) {
-    const pct = Math.round(((original - atual) / original) * 100);
-    return `**${formatarReais(atual)}**  ~~${formatarReais(original)}~~ (−${pct}%)`;
-  }
-  return `**${formatarReais(atual)}**`;
-}
-
-function linhaPrecoProduto(produto) {
-  const qtd = estoqueDe(produto.id).length;
-  let extra = "";
-  if (produto.modo === "auto") extra = qtd > 0 ? ` — ${qtd} em estoque` : " — **esgotado**";
-  else extra = produto.disponivel ? "" : " — indisponivel";
-  return `${produto.emoji} **${produto.nome}** — ${precoVitrine(produto)}${extra}\n${produto.descricao}`;
-}
-
-function limparPixCopiaECola(codigo) {
-  if (!codigo) return "";
-  return String(codigo)
-    .replace(/^\uFEFF/, "")
-    .replace(/[\r\n\t]/g, "")
-    .trim();
-}
-
-
-function botoesPix(pedidoId, canalCarrinhoId, guildId = GUILD_ID) {
-  const row = new ActionRowBuilder().addComponents(
-    new ButtonBuilder()
-      .setCustomId(`pix_copiar:${pedidoId}`)
-      .setLabel("Copiar Pix")
-      .setStyle(ButtonStyle.Success)
-  );
-  if (PUBLIC_URL) {
-    row.addComponents(
-      new ButtonBuilder()
-        .setLabel("Abrir e copiar no celular")
-        .setStyle(ButtonStyle.Link)
-        .setURL(`${PUBLIC_URL}/pix/${pedidoId}`)
-    );
-  }
-  if (canalCarrinhoId && guildId) {
-    row.addComponents(
-      new ButtonBuilder()
-        .setLabel("Ir ao carrinho")
-        .setStyle(ButtonStyle.Link)
-        .setURL(`https://discord.com/channels/${guildId}/${canalCarrinhoId}`)
-    );
-  }
-  return [row];
-}
-
-function botaoIrCarrinho(canalId, guildId = GUILD_ID) {
-  if (!canalId || !guildId) return [];
-  return [
-    new ActionRowBuilder().addComponents(
-      new ButtonBuilder()
-        .setLabel("Ir ao carrinho")
-        .setStyle(ButtonStyle.Link)
-        .setURL(`https://discord.com/channels/${guildId}/${canalId}`)
-    )
-  ];
-}
-
-function modalPix(pedido) {
-  const modal = new ModalBuilder()
-    .setCustomId(`pix_copiar_modal:${pedido.id}`)
-    .setTitle(`Pix #${pedido.id} — selecione e copie`.slice(0, 45));
-  modal.addComponents(
-    new ActionRowBuilder().addComponents(
-      new TextInputBuilder()
-        .setCustomId("pix")
-        .setLabel("Segure o texto e toque em Copiar")
-        .setStyle(TextInputStyle.Paragraph)
-        .setValue(String(pedido.pixCopiaECola).slice(0, 4000))
-        .setRequired(true)
-    )
-  );
-  return modal;
-}
-
-function paginaCopiarPix(pedido) {
-  const codigo = String(pedido.pixCopiaECola)
-    .replace(/&/g, "&amp;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;");
-  const valor = formatarReais(pedido.valorCentavos);
-  return `<!doctype html><html lang="pt-BR"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Pix #${pedido.id}</title>
-<style>
-body{font-family:system-ui,sans-serif;background:#111;color:#fff;margin:0;padding:24px}
-.box{max-width:560px;margin:0 auto;background:#1e1e24;border-radius:16px;padding:20px}
-h1{font-size:1.2rem;margin:0 0 8px}p{opacity:.8}
-textarea{width:100%;min-height:140px;border-radius:12px;border:0;padding:12px;font-size:14px;box-sizing:border-box}
-button{width:100%;margin-top:12px;padding:14px;border:0;border-radius:12px;background:#57f287;color:#111;font-weight:700;font-size:16px}
-.ok{background:#3ba55d;color:#fff}
-</style></head><body><div class="box">
-<h1>Pedido #${pedido.id}</h1>
-<p>Valor: ${valor}</p>
-<textarea id="pix" readonly>${codigo}</textarea>
-<button id="btn" onclick="copiar()">Copiar Pix</button>
-<p id="msg"></p>
-</div>
-<script>
-async function copiar(){
-  const t=document.getElementById("pix");
-  t.select();t.setSelectionRange(0,99999);
-  try{await navigator.clipboard.writeText(t.value);ok()}
-  catch(e){try{document.execCommand("copy");ok()}catch(err){document.getElementById("msg").textContent="Segure o texto e copie."}}
-}
-function ok(){const b=document.getElementById("btn");b.textContent="Copiado";b.className="ok";document.getElementById("msg").textContent="Cole no app do banco."}
-</script></body></html>`;
-}
-
-function valorPixReais(centavos) {
-  return Number((Math.max(1, Math.round(Number(centavos) || 0)) / 100).toFixed(2));
-}
-
-function consumirEstoque(produtoId) {
-  const fila = estoqueDe(produtoId);
-  const item = fila.shift();
-  return item || null;
-}
-
-function isStaff(member) {
-  if (!member) return false;
-  if (OWNER_ID && member.id === OWNER_ID) return true;
-  const adminRoleId = guildCfg(member.guild && member.guild.id).adminRoleId;
-  if (adminRoleId && member.roles.cache.has(adminRoleId)) return true;
-  return member.permissions.has(PermissionFlagsBits.ManageGuild);
-}
-
-function canaisComandoRestrito(guildId) {
-  const c = (guildCfg(guildId) || {}).canais || {};
-  return [c.loja, c.feedbacks, c.logs, c.ticket, c.cupons].filter(Boolean);
-}
-
-function canalBloqueiaComandoCliente(interaction) {
-  if (!interaction.guildId || !interaction.channelId) return false;
-  if (isStaff(interaction.member)) return false;
-  return canaisComandoRestrito(interaction.guildId).includes(interaction.channelId);
-}
-
-function avisoComandoBloqueado(interaction) {
-  const c = (guildCfg(interaction.guildId) || {}).canais || {};
-  if (interaction.channelId === c.loja) {
-    return "Neste canal use os botoes da vitrine para comprar.";
-  }
-  if (interaction.channelId === c.ticket) {
-    return "Neste canal use o seletor ou o botao do painel para abrir um ticket.";
-  }
-  if (interaction.channelId === c.feedbacks) {
-    return "Neste canal aparecem as avaliacoes. O cliente avalia pelo botao enviado na DM apos a entrega.";
-  }
-  if (interaction.channelId === c.logs) {
-    return "Este canal e so de logs. Comandos ficam apenas para a staff.";
-  }
-  if (interaction.channelId === c.cupons) {
-    return "Neste canal os cupons ja aparecem no painel. Comandos ficam apenas para a staff.";
-  }
-  return "Neste canal use os botoes do painel. Comandos ficam so para a staff.";
-}
-
-function logCanalPublico(tipo) {
-  return tipo === "entregue";
-}
-
-function registrarLog(tipo, detalhe, dados = {}) {
-  const entrada = {
-    em: Date.now(),
-    tipo,
-    detalhe: detalhe || "",
-    pedidoId: dados.pedidoId || null,
-    userId: dados.userId || null,
-    staffId: dados.staffId || null,
-    guildId: dados.guildId || (store.pedidos[String(dados.pedidoId)] || {}).guildId || GUILD_ID
-  };
-  store.logs.push(entrada);
-  if (store.logs.length > 2000) store.logs.splice(0, store.logs.length - 2000);
-  salvarStore();
-  if (logCanalPublico(tipo)) enviarLogCanal(entrada).catch(() => {});
-}
-
-function embedLog(entrada) {
-  const linhas = [];
-  if (entrada.pedidoId) linhas.push(`Pedido: **#${entrada.pedidoId}**`);
-  if (entrada.userId) linhas.push(`Usuario: <@${entrada.userId}>`);
-  if (entrada.staffId) linhas.push(`Fechado por: <@${entrada.staffId}>`);
-  return new EmbedBuilder()
-    .setTitle(LOG_LABEL[entrada.tipo] || entrada.tipo)
-    .setDescription(`${entrada.detalhe}${linhas.length ? `\n\n${linhas.join("\n")}` : ""}`)
-    .setColor(0x5865f2)
-    .setTimestamp(entrada.em);
-}
-
-async function enviarLogCanal(entrada) {
-
-  const cfg = guildCfg(entrada.guildId);
-  const logId = cfg.canais.logs;
-  if (!logId || logId === cfg.canais.loja) return;
-  const canal = await client.channels.fetch(logId).catch(() => null);
-  if (!canal || canalEhLoja(canal)) return;
-  await canal.send({ embeds: [embedLog(entrada)] }).catch(() => {});
-}
-
-function validarCupom(codigo, valorCentavos) {
-  const chave = String(codigo).trim().toUpperCase();
-  const cupom = store.cupons[chave];
-  if (!cupom || !cupom.ativo) return { ok: false, motivo: "Cupom inexistente ou inativo." };
-  if (cupom.expiraEm && Date.now() > cupom.expiraEm) return { ok: false, motivo: "Esse cupom expirou." };
-  if (cupom.usosMax > 0 && cupom.usos >= cupom.usosMax) return { ok: false, motivo: "Esse cupom atingiu o limite de usos." };
-  if (cupom.minCentavos > 0 && valorCentavos < cupom.minCentavos) {
-    return { ok: false, motivo: `Esse cupom exige compra minima de ${formatarReais(cupom.minCentavos)}.` };
-  }
-  const bruto = cupom.tipo === "percent" ? Math.floor((valorCentavos * cupom.valor) / 100) : cupom.valor;
-  const desconto = Math.min(bruto, Math.max(0, valorCentavos - 1));
-  return { ok: true, cupom, descontoCentavos: desconto };
-}
-
-function catalogoEmbed(categoriaId) {
-  const cats = categoriasAtivas();
-  const categoria = categoriaId ? store.categorias[categoriaId] : null;
-  const produtos = categoriaId ? produtosDaCategoria(categoriaId) : todosProdutos();
-  const linhas = produtos.map(linhaPrecoProduto);
-  const titulo = categoria
-    ? `${categoria.emoji || "📁"} ${categoria.nome}`
-    : (store.config.lojaTitulo || "Loja Baguncinha");
-  let corpo;
-  if (store.config.lojaPausada) {
-    corpo = motivoLojaPausada();
-  } else if (categoria) {
-    corpo = (categoria.descricao || "Escolha um produto desta categoria.") +
-      `\n\n${linhas.length ? linhas.join("\n\n") : "Nenhum produto nesta categoria."}` +
-      `\n\nPrazo: ate **${PRAZO_ENTREGA_LABEL}** depois do Pix confirmado.`;
-  } else if (store.config.lojaDescricao) {
-    corpo = store.config.lojaDescricao;
-  } else {
-    corpo = (cats.length
-      ? "Selecione uma categoria para ver os produtos. O bot gera o Pix, confirma o pagamento e entrega."
-      : "Escolha um produto. O bot gera o Pix, confirma o pagamento e entrega.") +
-      (!cats.length ? `\n\n${linhas.length ? linhas.join("\n\n") : "Nenhum produto no momento."}` : "") +
-      `\n\nPrazo: ate **${PRAZO_ENTREGA_LABEL}** depois do Pix confirmado.`;
-  }
-  const embed = new EmbedBuilder()
-    .setTitle(store.config.lojaPausada ? "Loja pausada" : titulo)
-    .setDescription(corpo)
-    .setColor(
-      store.config.lojaPausada
-        ? 0xed4245
-        : (categoria && parseCor(categoria.cor)) || parseCor(store.config.lojaCor) || 0x9b59b6
-    );
-  if (categoria && !store.config.lojaPausada) {
-    aplicarBanner(
-      embed,
-      categoria.banner || store.config.banner,
-      categoria.bannerPosicao || store.config.bannerPosicao || "top",
-      categoria.imagem
-    );
-    if (categoria.rodape) embed.setFooter({ text: String(categoria.rodape).slice(0, 2048) });
-  } else {
-    aplicarBanner(embed, store.config.banner, store.config.bannerPosicao || "top");
-    if (store.config.lojaRodape) embed.setFooter({ text: String(store.config.lojaRodape).slice(0, 2048) });
-  }
-  return embed;
-}
-
-function embedProdutoVitrine(produto) {
-  const embed = new EmbedBuilder()
-    .setTitle(`${produto.emoji || ""} ${produto.nome}`.trim())
-    .setDescription(`${produto.descricao}\n\n${precoVitrine(produto)}`)
-    .setColor(parseCor(produto.cor) || 0x9b59b6);
-  aplicarBanner(embed, produto.banner, produto.bannerPosicao || "bottom", produto.imagem);
-  if (produto.instrucoes) {
-    embed.addFields({ name: "Instrucoes", value: String(produto.instrucoes).slice(0, 1024) });
-  }
-  const rodape = [];
-  if (produto.rodape) rodape.push(String(produto.rodape).slice(0, 80));
-  if (produto.modo === "auto") {
-    const qtd = estoqueDe(produto.id).length;
-    rodape.push(qtd > 0 ? `${qtd} em estoque` : "Esgotado");
-  }
-  if (rodape.length) embed.setFooter({ text: rodape.join(" • ").slice(0, 2048) });
-  return embed;
-}
-
-function selectCategorias(customId = "cat") {
-  const cats = categoriasAtivas();
-  if (!cats.length) return null;
-  return new ActionRowBuilder().addComponents(
-    new StringSelectMenuBuilder()
-      .setCustomId(`${customId}:${Date.now()}`)
-      .setPlaceholder("Selecione uma categoria")
-      .addOptions(
-        cats.slice(0, 25).map(c => ({
-          label: c.nome.slice(0, 100),
-          value: String(c.id),
-          description: (c.descricao || "Ver produtos").slice(0, 100),
-          emoji: c.emoji && String(c.emoji).length <= 8 ? c.emoji : undefined
-        }))
-      )
-  );
-}
-
-function botoesCatalogo(categoriaId) {
-  const rows = [];
-  if (store.config.lojaPausada) {
-    rows.push(
-      new ActionRowBuilder().addComponents(
-        new ButtonBuilder().setCustomId("loja_pausada").setLabel("Loja pausada").setStyle(ButtonStyle.Danger).setDisabled(true)
-      )
-    );
-    return rows;
-  }
-  const produtos = categoriaId ? produtosDaCategoria(categoriaId) : todosProdutos();
-  if (categoriaId) {
-    const botoes = produtos.slice(0, 20).map(produto =>
-      new ButtonBuilder()
-        .setCustomId(`ver:${produto.id}`)
-        .setLabel(produto.nome.slice(0, 80))
-        .setStyle(ButtonStyle.Primary)
-    );
-    for (let i = 0; i < botoes.length && rows.length < 4; i += 5) {
-      rows.push(new ActionRowBuilder().addComponents(...botoes.slice(i, i + 5)));
-    }
-    rows.push(
-      new ActionRowBuilder().addComponents(
-        new ButtonBuilder().setCustomId("loja_home").setLabel("Voltar").setStyle(ButtonStyle.Secondary)
-      )
-    );
-    return rows;
-  }
-  for (const produto of produtos.slice(0, 5)) {
-    const esgotado = produtoEsgotado(produto);
-    const row = new ActionRowBuilder().addComponents(
-      new ButtonBuilder()
-        .setCustomId(`ver:${produto.id}`)
-        .setLabel(produto.nome.slice(0, 80))
-        .setStyle(ButtonStyle.Primary),
-      new ButtonBuilder()
-        .setCustomId(`comprar:${produto.id}`)
-        .setLabel(esgotado ? "Esgotado" : "Comprar")
-        .setStyle(esgotado ? ButtonStyle.Secondary : ButtonStyle.Success)
-        .setDisabled(!produtoPodeComprar(produto))
-    );
-    rows.push(row);
-  }
-  return rows.slice(0, 5);
-}
-
-function payloadLoja(categoriaId) {
-  const components = [];
-  if (store.config.lojaPausada) {
-    components.push(...botoesCatalogo());
-    return { content: null, embeds: [catalogoEmbed(categoriaId)], components };
-  }
-  if (!categoriaId) {
-    const sel = selectCategorias("cat");
-    if (sel) {
-      components.push(sel);
-    } else {
-      const rows = botoesCatalogo();
-      if (rows.length >= 5) rows.pop();
-      components.push(...rows);
-    }
-  } else {
-    components.push(...botoesCatalogo(categoriaId));
-  }
-  return { content: null, embeds: [catalogoEmbed(categoriaId)], components };
-}
-
-async function atualizarLojaFixa() {
-
-  // atualiza a vitrine nos 2 servidores
-  for (const gid of GUILD_IDS) {
-    await atualizarLojaFixaGuild(gid).catch(error => console.error(`Falha ao atualizar loja (${gid}):`, error.message));
-  }
-}
-
-function hidratarVisualDaMensagem(msg, tipo) {
-  const embed = embedDaMensagem(msg);
-  if (!embed) return false;
-  let mudou = false;
-  if (tipo === "loja") {
-    if (!store.config.lojaTitulo && embed.title) {
-      store.config.lojaTitulo = embed.title;
-      mudou = true;
-    }
-    if (!store.config.lojaDescricao && embed.description) {
-      store.config.lojaDescricao = embed.description;
-      mudou = true;
-    }
-    if (!store.config.lojaCor && embed.hexColor) {
-      store.config.lojaCor = String(embed.hexColor).replace(/^#/, "");
-      mudou = true;
-    }
-    if (!store.config.lojaRodape && embed.footer?.text) {
-      store.config.lojaRodape = embed.footer.text;
-      mudou = true;
-    }
-    if (!store.config.banner && (embed.image?.url || embed.thumbnail?.url)) {
-      store.config.banner = embed.image?.url || embed.thumbnail?.url;
-      mudou = true;
-    }
-  }
-  if (tipo === "ticket") {
-    const cfg = store.config.ticketPainel;
-    if (!cfg.titulo && embed.title) { cfg.titulo = embed.title; mudou = true; }
-    if (!cfg.descricao && embed.description) { cfg.descricao = embed.description; mudou = true; }
-    if (!cfg.banner && embed.image?.url) { cfg.banner = embed.image.url; mudou = true; }
-    if (!cfg.miniatura && embed.thumbnail?.url) { cfg.miniatura = embed.thumbnail.url; mudou = true; }
-    if (!cfg.rodape && embed.footer?.text) { cfg.rodape = embed.footer.text; mudou = true; }
-  }
-  if (tipo === "cupons") {
-    const cfg = store.config.cuponsPainel;
-    if (!cfg.titulo && embed.title) { cfg.titulo = embed.title; mudou = true; }
-    if (!cfg.banner && embed.image?.url) { cfg.banner = embed.image.url; mudou = true; }
-    if (!cfg.rodape && embed.footer?.text) { cfg.rodape = embed.footer.text; mudou = true; }
-  }
-  return mudou;
-}
-
-async function acharMensagemPainel(canal, messageId) {
-  if (messageId) {
-    const msg = await canal.messages.fetch(messageId).catch(() => null);
-    if (msg && msg.author && msg.author.id === client.user.id && embedDaMensagem(msg)) return msg;
-  }
-  const recentes = await canal.messages.fetch({ limit: 50 }).catch(() => null);
-  if (!recentes) return null;
-  return recentes.find(m => m.author && m.author.id === client.user.id && embedDaMensagem(m)) || null;
-}
-
-async function atualizarLojaFixaGuild(gid) {
-  const st = store.guilds[gid];
-  const canalId = st.lojaFixa.channelId || guildCfg(gid).canais.loja;
-  if (!canalId) return;
-  const canal = await client.channels.fetch(canalId).catch(() => null);
-  if (!canal) return;
-    const msg = await acharMensagemPainel(canal, st.lojaFixa.messageId);
-  if (msg) {
-    if (hidratarVisualDaMensagem(msg, "loja")) salvarStore();
-    st.lojaFixa = { channelId: canal.id, messageId: msg.id };
-    salvarStore();
-    await msg.edit(payloadLoja()).catch(() => {});
-    return;
-  }
-  await publicarLojaFixa(gid, false);
-}
-
-async function publicarLojaFixa(gid = GUILD_ID, forcar = false) {
-  const st = store.guilds[gid] || store.guilds[GUILD_ID];
-  const lojaId = guildCfg(gid).canais.loja;
-  const destino = lojaId ? await client.channels.fetch(lojaId).catch(() => null) : null;
-  if (!destino) {
-    console.error(`Canal da lojinha nao encontrado (servidor ${gid}).`);
-    return null;
-  }
-  const msg = await acharMensagemPainel(destino, st.lojaFixa && st.lojaFixa.messageId);
-  if (msg) {
-    if (hidratarVisualDaMensagem(msg, "loja")) salvarStore();
-    st.lojaFixa = { channelId: destino.id, messageId: msg.id };
-    salvarStore();
-    if (forcar) await msg.edit(payloadLoja()).catch(() => {});
-    return msg;
-  }
-  const enviada = await destino.send(payloadLoja());
-  st.lojaFixa = { channelId: destino.id, messageId: enviada.id };
-  salvarStore();
-  return enviada;
-}
-
-function ticketPainel() {
-  return store.config.ticketPainel || {};
-}
-
-function payloadPainelTicket() {
-  const cfg = ticketPainel();
-  const embed = new EmbedBuilder()
-    .setTitle(String(cfg.titulo || "ATENDIMENTO AO CLIENTE").slice(0, 256))
-    .setDescription(String(cfg.descricao || "Abra um ticket para falar com a equipe.").slice(0, 4096))
-    .setColor(parseCor(cfg.cor) || 0x5865f2);
-  if (urlMidiaValida(cfg.miniatura)) embed.setThumbnail(cfg.miniatura);
-  if (urlMidiaValida(cfg.banner)) embed.setImage(cfg.banner);
-  if (cfg.rodape) embed.setFooter({ text: String(cfg.rodape).slice(0, 2048) });
-  const components = [];
-  const sel = selectCategorias("ticket_cat");
-  if (sel) components.push(sel);
-  const botao = new ButtonBuilder()
-    .setCustomId("ticket_abrir")
-    .setLabel(String(cfg.botaoLabel || "Abrir ticket").slice(0, 80))
-    .setStyle(ButtonStyle.Secondary);
-  if (cfg.botaoEmoji) {
-    try { botao.setEmoji(cfg.botaoEmoji); } catch { /* emoji invalido */ }
-  }
-  components.push(new ActionRowBuilder().addComponents(botao));
-  return { embeds: [embed], components };
-}
-
-function modalMotivoTicket(categoriaId) {
-  const modal = new ModalBuilder()
-    .setCustomId(categoriaId ? `ticket_motivo_modal:${categoriaId}` : "ticket_motivo_modal")
-    .setTitle("Abrir ticket");
-  modal.addComponents(
-    new ActionRowBuilder().addComponents(
-      campoTexto("motivo", "Qual o motivo do ticket?", TextInputStyle.Paragraph, "", {
-        required: true,
-        maxLength: 400,
-        placeholder: "Descreva o motivo com o maximo de detalhes"
-      })
-    )
-  );
-  return modal;
-}
-
-function payloadPainelCupons() {
-  const cfg = store.config.cuponsPainel || {};
-  const cupons = Object.values(store.cupons).filter(c => c.ativo);
-  const linhas = cupons.length
-    ? cupons.map(c => {
-      const desconto = c.tipo === "percent" ? `${c.valor}%` : formatarReais(c.valor);
-      const exp = c.expiraEm ? `<t:${Math.floor(c.expiraEm / 1000)}:R>` : "sem expiracao";
-      return `\`${c.codigo}\` — ${desconto} — ${exp}`;
-    })
-    : ["Nenhum cupom ativo no momento."];
-  const descExtra = cfg.descricao ? `${cfg.descricao}\n\n` : "";
-  const embed = new EmbedBuilder()
-    .setTitle(String(cfg.titulo || "Cupons da loja").slice(0, 256))
-    .setDescription((descExtra + linhas.join("\n")).slice(0, 4096))
-    .setColor(parseCor(cfg.cor) || 0xe67e22);
-  if (urlMidiaValida(cfg.banner)) embed.setImage(cfg.banner);
-  if (cfg.rodape) embed.setFooter({ text: String(cfg.rodape).slice(0, 2048) });
-  return { embeds: [embed], components: [] };
-}
-
-async function publicarOuAtualizarPainel(gid, chave, canalId, payload, forcar = false) {
-  const canal = canalId ? await client.channels.fetch(canalId).catch(() => null) : null;
-  if (!canal) {
-    console.error(`Canal ${chave} (${canalId}) nao encontrado no servidor ${gid}.`);
-    return;
-  }
-  const pf = store.guilds[gid].paineisFixos;
-  const msg = await acharMensagemPainel(canal, pf[chave]);
-  if (msg) {
-    if (hidratarVisualDaMensagem(msg, chave)) salvarStore();
-    pf[chave] = msg.id;
-    salvarStore();
-    if (forcar) await msg.edit(payload).catch(() => {});
-    return msg;
-  }
-  const enviada = await canal.send(payload);
-  pf[chave] = enviada.id;
-  salvarStore();
-  return enviada;
-}
-
-async function atualizarPainelCupons(forcar = true) {
-  for (const gid of GUILD_IDS) {
-    await publicarOuAtualizarPainel(gid, "cupons", guildCfg(gid).canais.cupons, payloadPainelCupons(), forcar).catch(() => {});
-  }
-}
-
-async function atualizarPaineisTicket(forcar = true) {
-  for (const gid of GUILD_IDS) {
-    await publicarOuAtualizarPainel(gid, "ticket", guildCfg(gid).canais.ticket, payloadPainelTicket(), forcar).catch(() => {});
-  }
-}
-
-async function removerPainelFeedbacks() {
-  for (const gid of GUILD_IDS) {
-    const canalId = guildCfg(gid).canais.feedbacks;
-    const pf = store.guilds[gid] && store.guilds[gid].paineisFixos;
-    const salvo = pf && pf.feedbacks;
-    if (!canalId || !salvo) continue;
-    const canal = await client.channels.fetch(canalId).catch(() => null);
-    if (canal) {
-      const msg = await canal.messages.fetch(salvo).catch(() => null);
-      if (msg && msg.author && msg.author.id === client.user.id) {
-        await msg.delete().catch(() => {});
-      }
-    }
-    pf.feedbacks = null;
-    salvarStore();
-  }
-}
-
-async function responderMesmaMensagem(interaction, payload) {
-  const data = { ...payload };
-  if (interaction.isModalSubmit()) {
-    if (interaction.replied || interaction.deferred) return interaction.editReply({ ...data, ephemeral: true });
-    return interaction.reply({ ...data, ephemeral: true });
-  }
-  if (interaction.isMessageComponent()) {
-    if (interaction.replied || interaction.deferred) {
-      return interaction.editReply({ embeds: data.embeds, components: data.components, content: data.content ?? null });
-    }
-    return interaction.update({ embeds: data.embeds, components: data.components, content: data.content ?? null });
-  }
-  if (interaction.replied || interaction.deferred) return interaction.editReply({ ...data, ephemeral: true });
-  return interaction.reply({ ...data, ephemeral: true });
-}
-
-function mensagemEfmera(interaction) {
-  try {
-    return interaction.message?.flags?.has(MessageFlags.Ephemeral) === true;
-  } catch {
-    return false;
-  }
-}
-
-function canalTemporario(nome) {
-  const n = String(nome || "").toLowerCase();
-  return n.startsWith("ticket-") || n.startsWith("seu-carrinho") || n.startsWith("carrinho-");
-}
-
-function tipoCanalSnapshot(ch) {
-  if (ch.type === ChannelType.GuildVoice) return "voice";
-  if (ch.type === ChannelType.GuildAnnouncement || ch.type === ChannelType.GuildText) return "text";
-  return null;
-}
-
-function slugCanal(nome) {
-  return String(nome || "canal")
-    .toLowerCase()
-    .normalize("NFD")
-    .replace(/[\u0300-\u036f]/g, "")
-    .replace(/[^a-z0-9-]+/g, "-")
-    .replace(/^-+|-+$/g, "")
-    .slice(0, 100) || "canal";
-}
-
-function snapshotCanais(guild) {
-  const categorias = guild.channels.cache
-    .filter(c => c.type === ChannelType.GuildCategory)
-    .sort((a, b) => a.position - b.position)
-    .map(cat => ({
-      type: "category",
-      name: cat.name,
-      position: cat.position,
-      channels: guild.channels.cache
-        .filter(ch => ch.parentId === cat.id && tipoCanalSnapshot(ch) && !canalTemporario(ch.name))
-        .sort((a, b) => a.position - b.position)
-        .map(ch => ({
-          type: tipoCanalSnapshot(ch),
-          name: ch.name,
-          topic: ch.topic || null,
-          position: ch.position
-        }))
-    }));
-  const semCategoria = guild.channels.cache
-    .filter(ch => !ch.parentId && tipoCanalSnapshot(ch) && !canalTemporario(ch.name))
-    .sort((a, b) => a.position - b.position)
-    .map(ch => ({
-      type: tipoCanalSnapshot(ch),
-      name: ch.name,
-      topic: ch.topic || null,
-      position: ch.position
-    }));
-  return { guild: guild.name, guildId: guild.id, categorias, semCategoria };
-}
-
-async function aplicarSnapshotCanais(guild, snapshot) {
-  const criados = [];
-  const pulados = [];
-  const existentes = guild.channels.cache;
-  const acharCategoria = nome => existentes.find(c => c.type === ChannelType.GuildCategory && c.name === nome);
-  const acharFilho = (nome, parentId) => existentes.find(c => c.name === nome && (c.parentId || null) === (parentId || null));
-
-  for (const cat of snapshot.categorias || []) {
-    let categoria = acharCategoria(cat.name);
-    if (!categoria) {
-      categoria = await guild.channels.create({
-        name: cat.name,
-        type: ChannelType.GuildCategory
-      });
-      criados.push(`categoria ${cat.name}`);
-    } else {
-      pulados.push(`categoria ${cat.name}`);
-    }
-    for (const ch of cat.channels || []) {
-      if (acharFilho(ch.name, categoria.id)) {
-        pulados.push(`#${ch.name}`);
-        continue;
-      }
-      await guild.channels.create({
-        name: ch.name,
-        type: ch.type === "voice" ? ChannelType.GuildVoice : ChannelType.GuildText,
-        parent: categoria.id,
-        topic: ch.topic || undefined
-      });
-      criados.push(`#${ch.name}`);
-    }
-  }
-  for (const ch of snapshot.semCategoria || []) {
-    if (acharFilho(ch.name, null)) {
-      pulados.push(`#${ch.name}`);
-      continue;
-    }
-    await guild.channels.create({
-      name: ch.name,
-      type: ch.type === "voice" ? ChannelType.GuildVoice : ChannelType.GuildText,
-      topic: ch.topic || undefined
-    });
-    criados.push(`#${ch.name}`);
-  }
-  return { criados, pulados };
-}
-
-async function publicarCanaisFixos() {
-  for (const gid of GUILD_IDS) {
-    await publicarLojaFixa(gid, false).catch(err => console.error(`Loja (${gid}):`, err.message));
-  }
-  await atualizarPaineisTicket(false);
-  await atualizarPainelCupons(false);
-  await removerPainelFeedbacks().catch(() => {});
-}
-
-function embedPedidoCliente(pedido, extra, opcoes = {}) {
-  const produto = getProduto(pedido.produtoId);
-  const embed = new EmbedBuilder()
-    .setTitle(`${STATUS_LABEL[pedido.status] || pedido.status}`)
-    .setDescription(
-      `${extra || ""}\n\n` +
-      `🆔 Pedido: **#${pedido.id}**\n` +
-      `${produto ? produto.emoji : "📦"} Produto: **${pedido.produtoNome}**\n` +
-      `💰 Valor a pagar: **${formatarReais(pedido.valorCentavos)}**\n` +
-      (pedido.descontoCentavos > 0 ? `🏷️ De ${formatarReais(pedido.valorOriginalCentavos)} com cupom ${pedido.cupom ? `\`${pedido.cupom}\`` : ""}\n` : "") +
-      `📦 Prazo: ate **${PRAZO_ENTREGA_LABEL}** apos o Pix confirmado.`
-    )
-    .setColor(
-      pedido.status === STATUS.ENTREGUE ? 0x57f287 :
-      pedido.status === STATUS.CANCELADO || pedido.status === STATUS.EXPIRADO ? 0xed4245 :
-      pedido.status === STATUS.AGUARDANDO_ENTREGA ? 0xfee75c : 0x5865f2
-    )
-    .setFooter({ text: `Pedido #${pedido.id}` });
-
-  if (pedido.descontoCentavos > 0) {
-    embed.addFields({
-      name: "🎟️ Cupom",
-      value: `${pedido.cupom ? `\`${pedido.cupom}\`` : "aplicado"} — desconto de ${formatarReais(pedido.descontoCentavos)}\nDe ${formatarReais(pedido.valorOriginalCentavos)} por **${formatarReais(pedido.valorCentavos)}**`
-    });
-  }
-  if (pedido.pixCopiaECola && pedido.status === STATUS.AGUARDANDO_PAGAMENTO) {
-    embed.addFields({
-      name: "Como pagar",
-      value: "Escaneie o QR Code ou toque em **Copiar Pix**. No celular, o codigo abre num campo pra voce selecionar e copiar."
-    });
-    if (opcoes.qrNome) {
-      embed.setImage(`attachment://${opcoes.qrNome}`);
-    }
-  }
-  if (pedido.entregaMetodo) {
-    embed.addFields({
-      name: "Entrega",
-      value: pedido.entregaMetodo === "email"
-        ? `E-mail: ${pedido.entregaEmail || "-"}`
-        : "DM do Discord",
-      inline: true
-    });
-  }
-  const produtoInfo = getProduto(pedido.produtoId);
-  if (produtoInfo?.instrucoes) {
-    embed.addFields({ name: "Instrucoes", value: String(produtoInfo.instrucoes).slice(0, 1024) });
-  }
-  return embed;
-}
-
-function embedPedidoAdmin(pedido) {
-  const embed = new EmbedBuilder()
-    .setTitle(pedido.status === STATUS.ENTREGUE ? "✅ PEDIDO ENTREGUE" : "🔔 NOVO PEDIDO")
-    .setDescription(
-      `Cliente: <@${pedido.userId}>\n` +
-      `Produto: **${pedido.produtoNome}**\n` +
-      `Valor: **${formatarReais(pedido.valorCentavos)}**\n` +
-      `Pedido: **#${pedido.id}**\n` +
-      `Modo: **${pedido.modo === "auto" ? "automatico" : "staff"}**\n` +
-      `Status: ${STATUS_LABEL[pedido.status]}\n` +
-      `📦 Entrega em ate ${PRAZO_ENTREGA_LABEL} apos o pagamento.`
-    )
-    .setColor(pedido.status === STATUS.ENTREGUE ? 0x57f287 : 0xfee75c)
-    .setFooter({ text: `Pedido #${pedido.id}` });
-  return embed;
-}
-
-function botoesAdmin(pedidoId) {
-  const pedido = store.pedidos[String(pedidoId)];
-  const rows = [];
-  const row = new ActionRowBuilder();
-  if (pedido && pedido.status === STATUS.AGUARDANDO_PAGAMENTO) {
-    row.addComponents(
-      new ButtonBuilder().setCustomId(`marcarpago:${pedidoId}`).setLabel("Marcar Pix pago").setStyle(ButtonStyle.Primary)
-    );
-  }
-  if (!pedido || pedido.status === STATUS.AGUARDANDO_ENTREGA) {
-    row.addComponents(
-      new ButtonBuilder().setCustomId(`entregar:${pedidoId}`).setLabel("Entregar").setStyle(ButtonStyle.Success)
-    );
-  }
-  if (pedido && (pedido.status === STATUS.AGUARDANDO_ENTREGA || (pedido.status === STATUS.ENTREGUE && !pedido.feedback))) {
-    row.addComponents(
-      new ButtonBuilder().setCustomId(`fb_msg:${pedidoId}`).setLabel("Editar msg feedback").setStyle(ButtonStyle.Secondary)
-    );
-  }
-  row.addComponents(
-    new ButtonBuilder().setCustomId(`cancelar:${pedidoId}`).setLabel("Cancelar").setStyle(ButtonStyle.Danger)
-  );
-  if (row.components.length) rows.push(row);
-  return rows;
-}
 
-function embedFeedback(pedido, nota, comentario) {
-  const produto = getProduto(pedido.produtoId);
-  return new EmbedBuilder()
-    .setTitle(`⭐ Avaliacao — ${nota}/5`)
-    .setDescription(`${estrelas(nota)}\n\n${comentario ? `"${comentario}"` : "Sem comentario."}`)
-    .addFields(
-      { name: "Produto", value: produto ? produto.nome : pedido.produtoNome, inline: true },
-      { name: "Cliente", value: `<@${pedido.userId}>`, inline: true },
-      { name: "Pedido", value: `#${pedido.id}`, inline: true }
-    )
-    .setColor(0xf1c40f)
-    .setTimestamp(pedido.feedback.em);
+function githubErroAuth(status, json) {
+  if (status !== 401 && status !== 403) return null;
+  const detalhe = json?.message || "sem detalhes";
+  return `GitHub recusou o token (${status}: ${detalhe}). Confere GITHUB_TOKEN no Render: precisa ser um Personal Access Token com permissão Contents (leitura e escrita) no repo ${GITHUB_REPO}. Tokens fine-grained precisam marcar Contents: Read and write; tokens clássicos precisam do scope "repo".`;
 }
 
-async function mpRequest(metodo, caminho, corpo) {
+async function githubRequest(metodo, caminho, corpo) {
   const controller = new AbortController();
   const timeoutId = setTimeout(() => controller.abort(), 15000);
+
   try {
-    const resposta = await fetch(`https://api.mercadopago.com${caminho}`, {
+    const headers = {
+      Accept: "application/vnd.github+json",
+      "X-GitHub-Api-Version": "2022-11-28",
+      "User-Agent": "bot-baguncinha"
+    };
+
+    if (GITHUB_TOKEN) {
+      headers.Authorization = `Bearer ${GITHUB_TOKEN}`;
+    }
+
+    if (corpo) {
+      headers["Content-Type"] = "application/json";
+    }
+
+    const resposta = await fetch(`https://api.github.com${caminho}`, {
       method: metodo,
-      headers: {
-        Authorization: `Bearer ${MP_ACCESS_TOKEN}`,
-        "Content-Type": "application/json",
-        "X-Idempotency-Key": crypto.randomUUID()
-      },
+      headers,
       body: corpo ? JSON.stringify(corpo) : undefined,
       signal: controller.signal
     });
-    const json = await resposta.json().catch(() => null);
-    return { ok: resposta.ok, status: resposta.status, json };
+
+    let json = null;
+    try {
+      json = await resposta.json();
+    } catch {
+      json = null;
+    }
+
+    return { status: resposta.status, ok: resposta.ok, json };
   } finally {
     clearTimeout(timeoutId);
   }
 }
 
-async function criarPix(pedido) {
-  if (!MP_ACCESS_TOKEN) {
-    throw new Error("MERCADOPAGO_ACCESS_TOKEN nao configurado.");
+function githubChecarResposta(r, acao) {
+  const erroAuth = githubErroAuth(r.status, r.json);
+  if (erroAuth) throw new Error(erroAuth);
+  if (!r.ok) {
+    throw new Error(`GitHub respondeu ${r.status} ao ${acao} (${r.json?.message || "sem detalhes"})`);
+  }
+}
+
+// Baixa o banco de dados do GitHub. Retorna o objeto, ou null se não existir ainda.
+async function githubCarregar() {
+  const r = await githubRequest(
+    "GET",
+    `/repos/${GITHUB_REPO}/contents/${GITHUB_DATA_PATH}?ref=${encodeURIComponent(GITHUB_DATA_BRANCH)}`
+  );
+
+  if (r.status === 404) return null; // branch ou arquivo ainda não existem
+
+  githubChecarResposta(r, "carregar");
+
+  githubSha = r.json.sha;
+  const texto = Buffer.from(r.json.content, "base64").toString("utf-8");
+  const objeto = JSON.parse(texto);
+  ultimoTextoEnviado = JSON.stringify(objeto, null, 2);
+  return objeto;
+}
+
+async function githubShaDaBranchPadrao() {
+  const repo = await githubRequest("GET", `/repos/${GITHUB_REPO}`);
+  githubChecarResposta(repo, `ler o repositório ${GITHUB_REPO}`);
+
+  const nomes = [];
+  if (repo.json?.default_branch) nomes.push(repo.json.default_branch);
+  for (const nome of ["main", "master"]) {
+    if (!nomes.includes(nome)) nomes.push(nome);
   }
 
-  const notificationUrl = PUBLIC_URL ? `${PUBLIC_URL}/webhook/mercadopago` : undefined;
-  const r = await mpRequest("POST", "/v1/payments", {
-    transaction_amount: valorPixReais(pedido.valorCentavos),
-    description: `${pedido.produtoNome} #${pedido.id}`,
-    payment_method_id: "pix",
-    payer: { email: PAYER_EMAIL },
-    external_reference: String(pedido.id),
-    notification_url: notificationUrl,
-    metadata: { pedidoId: String(pedido.id), userId: pedido.userId }
+  for (const nome of nomes) {
+    const ref = await githubRequest("GET", `/repos/${GITHUB_REPO}/git/ref/heads/${encodeURIComponent(nome)}`);
+    const erroAuth = githubErroAuth(ref.status, ref.json);
+    if (erroAuth) throw new Error(erroAuth);
+    if (ref.ok && ref.json?.object?.sha) return ref.json.object.sha;
+  }
+
+  throw new Error(`Não achei a branch padrão do GitHub (tentei: ${nomes.join(", ")}). Confere GITHUB_REPO (${GITHUB_REPO}).`);
+}
+
+// Cria a branch de dados (a partir da branch padrão) se ela ainda não existir
+async function githubGarantirBranch() {
+  const existe = await githubRequest(
+    "GET",
+    `/repos/${GITHUB_REPO}/git/ref/heads/${encodeURIComponent(GITHUB_DATA_BRANCH)}`
+  );
+  if (existe.ok) return;
+
+  const erroAuth = githubErroAuth(existe.status, existe.json);
+  if (erroAuth) throw new Error(erroAuth);
+
+  if (existe.status !== 404) {
+    throw new Error(`Não consegui verificar a branch "${GITHUB_DATA_BRANCH}" (${existe.status}: ${existe.json?.message || "sem detalhes"}).`);
+  }
+
+  const shaBase = await githubShaDaBranchPadrao();
+  const criada = await githubRequest("POST", `/repos/${GITHUB_REPO}/git/refs`, {
+    ref: `refs/heads/${GITHUB_DATA_BRANCH}`,
+    sha: shaBase
   });
 
-  if (!r.ok) {
-    const detalhe = r.json?.message || r.json?.error || JSON.stringify(r.json);
-    throw new Error(`Mercado Pago ${r.status}: ${detalhe}`);
+  if (!criada.ok && criada.status !== 422) {
+    const auth = githubErroAuth(criada.status, criada.json);
+    if (auth) throw new Error(auth);
+    throw new Error(`Não consegui criar a branch "${GITHUB_DATA_BRANCH}" (${criada.status}: ${criada.json?.message || "sem detalhes"}).`);
   }
 
-  const tx = r.json.point_of_interaction?.transaction_data || {};
-  let pixCopiaECola = limparPixCopiaECola(tx.qr_code || "");
-  if (!pixCopiaECola) {
-    throw new Error("Mercado Pago nao devolveu o codigo Pix (qr_code).");
-  }
-  if (store.config.ocultarNomePix !== false) {
-    pixCopiaECola = limparPixCopiaECola(ocultarNomePix(pixCopiaECola, pixNomePublico()));
-  }
-  return {
-    paymentId: String(r.json.id),
-    pixCopiaECola,
-    pixQrBase64: tx.qr_code_base64 || "",
-    valorCobranca: Number(r.json.transaction_amount)
-  };
+  console.log(`🌿 Branch "${GITHUB_DATA_BRANCH}" criada no GitHub.`);
 }
 
-async function consultarPagamento(paymentId) {
-  const r = await mpRequest("GET", `/v1/payments/${paymentId}`);
-  if (!r.ok) throw new Error(`Consulta MP ${r.status}`);
-  return r.json;
-}
+async function githubSalvar() {
+  if (!GITHUB_TOKEN || salvandoGithub) return;
 
-async function canalAdmin(guild) {
-  const adminChannelId = guildCfg(guild.id).adminChannelId;
-  if (adminChannelId) {
-    const canal = await guild.channels.fetch(adminChannelId).catch(() => null);
-    if (canal) return canal;
-  }
-  return guild.channels.cache.find(c => c.name === "pedidos-admin" && c.type === ChannelType.GuildText) || null;
-}
+  salvandoGithub = true;
+  dadosAlterados = false; // se alguém mexer durante o envio, vira true de novo
 
-function canalEhLoja(canal) {
-  if (!canal) return false;
+  try {
+    const texto = JSON.stringify(dadosParaSalvar(), null, 2);
 
-  return Object.values(GUILDS).some(g => g.canais.loja === canal.id) ||
-    Object.values(store.guilds).some(st => st.lojaFixa.channelId === canal.id);}
-
-async function notificarAdmin(pedido, extra) {
-  const gid = pedido.guildId || GUILD_ID;
-  const guild = await client.guilds.fetch(gid).catch(() => null);
-  if (!guild) return;
-  const canal = await canalAdmin(guild);
-  if (!canal) {
-    console.error("Canal admin de pedidos nao encontrado. Configure ADMIN_CHANNEL_ID.");
-    return;
-  }
-  if (canalEhLoja(canal)) {
-    console.error("Canal admin coincide com a lojinha; entrega/log nao sera enviado la.");
-    return;
-  }
-
-  const embed = embedPedidoAdmin(pedido);
-  if (extra) {
-    embed.setDescription(`${embed.data.description}\n${extra}`);
-  }
-
-  const payload = {
-    content: guildCfg(gid).adminRoleId && pedido.status === STATUS.AGUARDANDO_ENTREGA ? `<@&${guildCfg(gid).adminRoleId}>` : null,
-    embeds: [embed],
-    components: [STATUS.AGUARDANDO_ENTREGA, STATUS.AGUARDANDO_PAGAMENTO, STATUS.ENTREGUE].includes(pedido.status)
-      ? botoesAdmin(pedido.id)
-      : []
-  };
-
-  if (pedido.adminMessageId) {
-    const msg = await canal.messages.fetch(pedido.adminMessageId).catch(() => null);
-    if (msg) {
-      await msg.edit(payload).catch(() => {});
+    // nada mudou desde o último envio? então não gasta um commit à toa
+    if (texto === ultimoTextoEnviado) {
       return;
+    }
+
+    const conteudo = Buffer.from(texto).toString("base64");
+
+    if (githubSha === null) {
+      await githubGarantirBranch();
+
+      // pode já existir um arquivo lá que a gente ainda não conhecia — pega o sha dele
+      const atual = await githubRequest(
+        "GET",
+        `/repos/${GITHUB_REPO}/contents/${GITHUB_DATA_PATH}?ref=${encodeURIComponent(GITHUB_DATA_BRANCH)}`
+      );
+      if (atual.ok) githubSha = atual.json.sha;
+    }
+
+    const enviar = () =>
+      githubRequest("PUT", `/repos/${GITHUB_REPO}/contents/${GITHUB_DATA_PATH}`, {
+        message: `backup automático (${xpData.size} usuários)`,
+        content: conteudo,
+        branch: GITHUB_DATA_BRANCH,
+        ...(githubSha ? { sha: githubSha } : {})
+      });
+
+    let r = await enviar();
+
+    // Se o sha estava desatualizado, busca o atual e tenta uma vez de novo
+    if (r.status === 409 || r.status === 422) {
+      const atual = await githubRequest(
+        "GET",
+        `/repos/${GITHUB_REPO}/contents/${GITHUB_DATA_PATH}?ref=${encodeURIComponent(GITHUB_DATA_BRANCH)}`
+      );
+      githubSha = atual.ok ? atual.json.sha : null;
+      r = await enviar();
+    }
+
+    githubChecarResposta(r, "salvar");
+
+    githubSha = r.json.content.sha;
+    ultimoTextoEnviado = texto;
+    console.log(`☁️ Progresso salvo no GitHub (${xpData.size} usuário(s)).`);
+  } catch (error) {
+    dadosAlterados = true; // tenta de novo no próximo ciclo
+    console.error("❌ Erro ao salvar no GitHub:", error.message);
+  } finally {
+    salvandoGithub = false;
+  }
+}
+
+function aplicarDadosCarregados(objeto) {
+  for (const [chave, valor] of Object.entries(objeto)) {
+    // chave especial: imagens da loja (não é um usuário)
+    if (chave === "__lojaImagens") {
+      lojaImagens = valor || {};
+      continue;
+    }
+    // chave especial: versão do reset de economia já aplicado
+    if (chave === "__economiaReset") {
+      economiaResetVersao = Number(valor) || 0;
+      continue;
+    }
+    if (chave === "__top1") {
+      top1Estado = {
+        userId: valor?.userId || null,
+        since: Number(valor?.since) || 0,
+        roleGranted: valor?.roleGranted === true
+      };
+      continue;
+    }
+    xpData.set(chave, normalizarDadosUsuario(valor));
+  }
+}
+
+// Roda o reset de economia só uma vez por versão. Precisa ser chamado depois de
+// carregar os dados (GitHub ou disco) e antes do bot começar a responder.
+function aplicarResetEconomiaSeNecessario() {
+  if (economiaResetVersao >= ECONOMIA_RESET_VERSAO) return;
+
+  const afetados = resetarEconomia();
+  economiaResetVersao = ECONOMIA_RESET_VERSAO;
+  salvarDados(); // já persiste o reset no disco e agenda o envio pro GitHub
+  console.log(`♻️ Reset de economia aplicado (v${ECONOMIA_RESET_VERSAO}) — ${afetados} carteira(s) zerada(s).`);
+}
+
+async function githubValidarAcesso() {
+  const repo = await githubRequest("GET", `/repos/${GITHUB_REPO}`);
+  githubChecarResposta(repo, `acessar o repositório ${GITHUB_REPO}`);
+
+  const permissoes = repo.json?.permissions || {};
+  if (permissoes.push === false) {
+    throw new Error(
+      `O token acessa ${GITHUB_REPO}, mas não tem permissão de escrita. No GitHub: Settings > Developer settings > Personal access tokens — Contents precisa ser Read and write (fine-grained) ou scope "repo" (clássico).`
+    );
+  }
+
+  console.log(`☁️ GitHub ok: ${GITHUB_REPO} (branch de dados: ${GITHUB_DATA_BRANCH}).`);
+}
+
+async function carregarDados() {
+  // 1) GitHub é a fonte principal (sobrevive a deploy)
+  if (GITHUB_TOKEN) {
+    try {
+      await githubValidarAcesso();
+      const doGithub = await githubCarregar();
+      if (doGithub) {
+        aplicarDadosCarregados(doGithub);
+        console.log(`☁️ Banco de dados carregado do GitHub (${xpData.size} usuário(s)).`);
+        return;
+      }
+      console.log("☁️ Ainda não tem backup no GitHub — vai ser criado no primeiro salvamento.");
+    } catch (error) {
+      console.error("❌ Erro ao carregar do GitHub (tentando o arquivo local):", error.message);
+    }
+  } else {
+    console.log("⚠️ GITHUB_TOKEN não configurado — o progresso só fica salvo no disco do Render (some a cada deploy).");
+  }
+
+  // 2) Plano B: arquivo local
+  try {
+    if (fs.existsSync(DATA_FILE)) {
+      aplicarDadosCarregados(JSON.parse(fs.readFileSync(DATA_FILE, "utf-8")));
+      console.log(`💾 Banco de dados carregado do disco (${xpData.size} usuário(s)).`);
+    } else {
+      console.log("💾 Nenhum banco de dados encontrado, começando do zero.");
+    }
+  } catch (error) {
+    console.error("❌ Erro ao carregar banco de dados local:", error);
+  }
+}
+
+// Salva no disco na hora e marca pra subir pro GitHub no próximo ciclo
+function salvarDados() {
+  try {
+    fs.writeFileSync(DATA_FILE, JSON.stringify(dadosParaSalvar(), null, 2));
+    dadosAlterados = true;
+  } catch (error) {
+    console.error("❌ Erro ao salvar banco de dados:", error);
+  }
+}
+
+// Garante que TODO usuário (inclusive os antigos, carregados do GitHub/disco)
+// tenha todos os campos com tipo/valor válidos. Sem isso, contas criadas por
+// versões anteriores ficavam com `coins` indefinido, e qualquer ganho virava
+// NaN — que aparecia como "undefined" no /rankmoedas e estourava os totais.
+function normalizarDadosUsuario(data) {
+  if (!data || typeof data !== "object") data = {};
+  const numero = (valor, padrao = 0) =>
+    typeof valor === "number" && Number.isFinite(valor) ? valor : padrao;
+
+  data.textXp = numero(data.textXp);
+  data.textLevel = numero(data.textLevel, 1);
+  data.voiceXp = numero(data.voiceXp);
+  data.voiceLevel = numero(data.voiceLevel, 1);
+  data.lastMessageTimestamp = numero(data.lastMessageTimestamp);
+  data.coins = numero(data.coins);
+  data.banco = numero(data.banco);
+  data.lastDaily = numero(data.lastDaily);
+  data.lastTrabalhar = numero(data.lastTrabalhar);
+  data.lastPescar = numero(data.lastPescar);
+  data.lastRoubar = numero(data.lastRoubar);
+  data.lastRoleta = numero(data.lastRoleta);
+  data.presoAte = numero(data.presoAte);
+  data.turboTrabalhar = data.turboTrabalhar === true;
+  data.xpBoostAte = numero(data.xpBoostAte);
+  data.ticketsSorteio = numero(data.ticketsSorteio);
+  data.conquistas = Array.isArray(data.conquistas) ? data.conquistas : [];
+  data.itemLendario = data.itemLendario === true;
+  data.milestonesAlcancados = Array.isArray(data.milestonesAlcancados) ? data.milestonesAlcancados : [];
+  data.comandosDesdeRank = numero(data.comandosDesdeRank);
+
+  return data;
+}
+
+function getUserData(userId) {
+  if (!xpData.has(userId)) {
+    xpData.set(userId, {
+      textXp: 0,
+      textLevel: 1,
+      voiceXp: 0,
+      voiceLevel: 1,
+      lastMessageTimestamp: 0,
+      coins: 0,
+      banco: 0,                // moedas guardadas no banco (protegidas de roubo)
+      lastDaily: 0,
+      lastTrabalhar: 0,
+      lastPescar: 0,
+      lastRoubar: 0,
+      lastRoleta: 0,           // cooldown da /roleta
+      presoAte: 0,             // timestamp — enquanto Date.now() < isso, não dá pra trabalhar/pescar/roubar
+      turboTrabalhar: false,   // true depois de comprar o item que reduz o cooldown do /trabalhar
+      xpBoostAte: 0,           // timestamp — enquanto Date.now() < isso, XP em dobro
+      ticketsSorteio: 0,       // quantos bilhetes de sorteio a pessoa tem
+      conquistas: [],          // ids de conquistas já desbloqueadas
+      itemLendario: false,     // flag de quem já tirou o prêmio raro da caixa/roleta
+      milestonesAlcancados: [], // marcos de moeda (10k, 20k...) já anunciados/recompensados
+      comandosDesdeRank: 0     // ranking aparece a cada 8 comandos por pessoa
+    });
+  }
+
+  // Compatibilidade: normaliza contas antigas/incompletas e devolve o objeto.
+  return normalizarDadosUsuario(xpData.get(userId));
+}
+
+function xpForNextLevel(level, type) {
+  // Meta de voz é maior que a de texto, pra call longa não subir de nível rápido demais.
+  const base = type === "voice" ? 200 : 100;
+  return level * base;
+}
+
+function getTotalLevel(data) {
+  // Cargo por atividade considera o MAIOR nível entre texto e voz
+  // (não soma os dois, pra call longa não destravar cargo rápido demais)
+  return Math.max(data.textLevel, data.voiceLevel);
+}
+
+function obterRankingXp(limite = 10) {
+  return [...xpData.entries()]
+    .filter(([userId]) => userId && !String(userId).startsWith("__"))
+    .sort((a, b) => {
+      const totalA = getTotalLevel(a[1]);
+      const totalB = getTotalLevel(b[1]);
+      if (totalB !== totalA) return totalB - totalA;
+      return (b[1].textXp + b[1].voiceXp) - (a[1].textXp + a[1].voiceXp);
+    })
+    .slice(0, limite);
+}
+
+async function montarEmbedRanking(limite = 10) {
+  const ranking = obterRankingXp(limite);
+
+  if (ranking.length === 0) {
+    return new EmbedBuilder()
+      .setTitle("Ranking")
+      .setDescription("Ainda nao rolou nada por aqui. Manda umas mensagens ou entra em call!")
+      .setColor(0xfee75c);
+  }
+
+  const MEDALHAS = ["🥇", "🥈", "🥉"];
+  const usuarios = await Promise.all(
+    ranking.map(([userId]) => client.users.fetch(userId).catch(() => null))
+  );
+
+  const linhas = ranking.map(([, data], index) => {
+    const user = usuarios[index];
+    const nome = user ? user.username : "Usuário desconhecido";
+    const posicao = MEDALHAS[index] || `**${index + 1}.**`;
+    return (
+      `${posicao} **${nome}** — Nível ${getTotalLevel(data)}\n` +
+      `　　💬 Texto: ${data.textLevel}  •  🎙️ Voz: ${data.voiceLevel}`
+    );
+  });
+
+  return new EmbedBuilder()
+    .setTitle("🏆 **Ranking**")
+    .setDescription(linhas.join("\n\n"))
+    .setColor(0xfee75c)
+    .setThumbnail(usuarios[0]?.displayAvatarURL({ size: 256 }) || null)
+    .setFooter({ text: `Top ${ranking.length} de atividade no servidor` });
+}
+
+async function ensureTop1Role(guild) {
+  if (!guild) return null;
+  await guild.roles.fetch().catch(() => {});
+
+  if (top1RoleId && guild.roles.cache.has(top1RoleId)) {
+    return guild.roles.cache.get(top1RoleId);
+  }
+
+  let cargo = guild.roles.cache.find(r => r.name.toLowerCase() === TOP1_ROLE_NAME.toLowerCase());
+  if (!cargo) {
+    try {
+      cargo = await guild.roles.create({
+        name: TOP1_ROLE_NAME,
+        color: 0xffd700,
+        hoist: true,
+        mentionable: false,
+        reason: "Cargo automatico para quem fica no 1 lugar do ranking por 3 dias"
+      });
+      console.log(`Cargo Top 1 criado: ${cargo.id}`);
+    } catch (error) {
+      console.error("Nao consegui criar o cargo Top 1:", error.message);
+      return null;
     }
   }
 
-  const enviada = await canal.send(payload).catch(error => {
-    console.error("Erro ao avisar admin:", error.message);
-    return null;
-  });
-  if (enviada) {
-    pedido.adminMessageId = enviada.id;
-    pedido.adminChannelId = canal.id;
-    salvarStore();
-  }
+  top1RoleId = cargo.id;
+  return cargo;
 }
 
-async function avisarCliente(pedido, texto, embed, components) {
+let atualizandoTop1 = false;
+
+async function atualizarTop1(guild) {
+  if (!guild || atualizandoTop1) return;
+  atualizandoTop1 = true;
   try {
-    const user = await client.users.fetch(pedido.userId);
-    await user.send({
-      content: texto || null,
-      embeds: embed ? [embed] : [embedPedidoCliente(pedido)],
-      components: components || []
-    });
-  } catch {
-    console.log(`Nao consegui DM o cliente do pedido #${pedido.id}.`);
+    const ranking = obterRankingXp(1);
+    const liderId = ranking[0]?.[0] || null;
+    const agora = Date.now();
+    const cargo = await ensureTop1Role(guild);
+
+    if (!liderId) return;
+
+    if (top1Estado.userId !== liderId) {
+      const antigoId = top1Estado.userId;
+      const tinhaCargo = top1Estado.roleGranted;
+
+      if (antigoId && cargo) {
+        const antigo = await guild.members.fetch(antigoId).catch(() => null);
+        if (antigo && antigo.roles.cache.has(cargo.id)) {
+          await antigo.roles.remove(cargo).catch(() => {});
+        }
+
+        if (tinhaCargo) {
+          const canal = guild.systemChannel;
+          if (canal) {
+            await canal.send(
+              `<@${antigoId}> perdeu o cargo **${TOP1_ROLE_NAME}**! <@${liderId}> assumiu o 1 lugar do ranking.`
+            ).catch(() => {});
+          }
+
+          const dmAntigo = await client.users.fetch(antigoId).catch(() => null);
+          if (dmAntigo) {
+            await dmAntigo.send(
+              `Voce perdeu o cargo **${TOP1_ROLE_NAME}** no servidor **${guild.name}**. Alguem tomou o 1 lugar do ranking.`
+            ).catch(() => {});
+          }
+        }
+      }
+
+      top1Estado = { userId: liderId, since: agora, roleGranted: false };
+      salvarDados();
+      return;
+    }
+
+    if (!top1Estado.since) {
+      top1Estado.since = agora;
+      salvarDados();
+      return;
+    }
+
+    if (!top1Estado.roleGranted && agora - top1Estado.since >= TOP1_DIAS_MS) {
+      const recompensaTop1 = 2000;
+      const dataLider = getUserData(liderId);
+      dataLider.coins += recompensaTop1;
+
+      if (cargo) {
+        const membro = await guild.members.fetch(liderId).catch(() => null);
+        if (membro && !membro.roles.cache.has(cargo.id)) {
+          await membro.roles.add(cargo).catch(() => {});
+        }
+        const canal = guild.systemChannel;
+        if (canal) {
+          await canal.send(
+            `<@${liderId}> ficou em **1 lugar** por mais de 3 dias e ganhou o cargo **${TOP1_ROLE_NAME}** + ${formatarMoedas(recompensaTop1)}!`
+          ).catch(() => {});
+        }
+      }
+      top1Estado.roleGranted = true;
+      salvarDados();
+    }
+  } finally {
+    atualizandoTop1 = false;
   }
 }
 
-function aplicarPlaceholdersFeedback(texto, pedido, user) {
-  const produto = getProduto(pedido.produtoId);
-  const nomeProduto = produto ? produto.nome : pedido.produtoNome;
-  const mencao = user ? `<@${user.id}>` : `<@${pedido.userId}>`;
-  const nome = user && user.username ? user.username : "cliente";
-  return String(texto || "")
-    .replaceAll("{user}", mencao)
-    .replaceAll("{nome}", nome)
-    .replaceAll("{id}", String(pedido.id))
-    .replaceAll("{produto}", nomeProduto)
-    .replaceAll("{valor}", formatarReais(pedido.valorCentavos));
+// type: "text" ou "voice" — cada um tem seu próprio XP/nível
+function addXp(userId, amount, type) {
+  const data = getUserData(userId);
+  const xpKey = type === "voice" ? "voiceXp" : "textXp";
+  const levelKey = type === "voice" ? "voiceLevel" : "textLevel";
+
+  // XP Boost da loja: dobra o ganho enquanto estiver ativo
+  if (Date.now() < data.xpBoostAte) {
+    amount *= 2;
+  }
+
+  data[xpKey] += amount;
+
+  let leveledUp = false;
+  while (data[xpKey] >= xpForNextLevel(data[levelKey], type)) {
+    data[xpKey] -= xpForNextLevel(data[levelKey], type);
+    data[levelKey] += 1;
+    leveledUp = true;
+  }
+
+  return { data, leveledUp };
 }
 
-function mensagemFeedbackPedido(pedido) {
-  if (pedido.feedbackMensagem) return pedido.feedbackMensagem;
-  return store.config.feedbackMensagem || FEEDBACK_MSG_PADRAO;
+// =========================
+// CARGOS POR NÍVEL (ATIVIDADE)
+// =========================
+// Coloque aqui o nível mínimo e o ID do cargo correspondente.
+// Copie o ID do cargo no Discord com o Modo Desenvolvedor ativado.
+// O cargo do bot precisa estar ACIMA desses cargos na hierarquia,
+// e o bot precisa da permissão "Gerenciar Cargos".
+const LEVEL_ROLES = {
+  4: "1546574924448141484",   // ex: Membro Ativo
+  10: "1552496174882234479",  // ex: Veterano
+  20: "1552497344270958674"   // ex: Lenda do Servidor
+};
+
+function getRoleIdForLevel(level) {
+  let targetRoleId = null;
+  let highestThreshold = 0;
+
+  for (const [threshold, roleId] of Object.entries(LEVEL_ROLES)) {
+    const t = Number(threshold);
+    if (level >= t && t > highestThreshold) {
+      highestThreshold = t;
+      targetRoleId = roleId;
+    }
+  }
+
+  return targetRoleId;
 }
 
-function tituloFeedbackPedido(pedido) {
-  if (pedido.feedbackTitulo) return pedido.feedbackTitulo;
-  return store.config.feedbackTitulo || FEEDBACK_TITULO_PADRAO;
+async function updateLevelRole(guild, userId, level) {
+  const targetRoleId = getRoleIdForLevel(level);
+  if (!targetRoleId || targetRoleId.startsWith("COLOQUE_")) return null;
+
+  try {
+    const member = await guild.members.fetch(userId);
+    if (member.roles.cache.has(targetRoleId)) return null; // já tem
+
+    // Remove cargos de nível anteriores (pra ficar só com o mais alto)
+    const allLevelRoleIds = Object.values(LEVEL_ROLES).filter(
+      id => !id.startsWith("COLOQUE_")
+    );
+    const rolesToRemove = allLevelRoleIds.filter(
+      id => id !== targetRoleId && member.roles.cache.has(id)
+    );
+    if (rolesToRemove.length > 0) {
+      await member.roles.remove(rolesToRemove).catch(() => {});
+    }
+
+    await member.roles.add(targetRoleId);
+    return targetRoleId;
+  } catch (error) {
+    console.error("❌ Erro ao atribuir cargo por nível:");
+    console.error(error);
+    return null;
+  }
 }
 
-function embedFeedbackDm(pedido, user) {
-  const texto = aplicarPlaceholdersFeedback(mensagemFeedbackPedido(pedido), pedido, user);
+// =========================
+// ECONOMIA — MOEDAS
+// =========================
+const DAILY_COOLDOWN_MS = 24 * 60 * 60 * 1000;
+const DAILY_MIN = 250;
+const DAILY_MAX = 500;
+const TOP1_DIAS_MS = 3 * 24 * 60 * 60 * 1000;
+const TOP1_ROLE_NAME = "Top 1";
+let top1RoleId = process.env.TOP1_ROLE_ID || null;
+const TRABALHAR_COOLDOWN_NORMAL_MS = 60 * 60 * 1000;
+const TRABALHAR_COOLDOWN_TURBO_MS = 25 * 60 * 1000; // com o item "Turbo Trabalhar" da loja
+const PESCAR_COOLDOWN_MS = 8 * 60 * 1000;
+const ROUBAR_COOLDOWN_MS = 20 * 1000;
+const PRISAO_MS = 35 * 60 * 1000; // tempo preso ao falhar um roubo
+const ROLETA_COOLDOWN_MS = 60 * 1000;
+const ROLETA_APOSTA_MIN = 150;
+const ROLETA_APOSTA_MAX = 20000;
+const PPT_APOSTA_MIN = 100;
+const PPT_APOSTA_MAX = 5000;
+
+// --- Banco / Roubo ---
+// O banco guarda moedas e te protege dos roubos sofridos (só a carteira pode ser
+// assaltada). Quem é pego roubando paga multa de 40% do valor TOTAL da vítima
+// (carteira + banco), debitando primeiro da carteira e depois do banco.
+const ROUBO_MULTA_PERCENTUAL = 0.4;
+const ROUBO_MIN_VITIMA = 50;        // a vítima precisa ter pelo menos isso na CARTEIRA pra valer a pena
+const ROUBO_SAQUE_MIN = 0.5;        // fração mínima da carteira roubada ao vencer o minigame
+const ROUBO_SAQUE_MAX = 0.8;        // fração máxima da carteira roubada ao vencer o minigame
+
+// Minigame de memória: 3 fases, sequências maiores e tempo curto. Acertar tudo
+// dá um saque alto; errar uma vez (ou estourar o tempo) = preso + multa.
+const ROUBO_SIMBOLOS = ["🍎", "🍌", "🍇", "🍒", "🍉", "🍋"];
+const ROUBO_RODADAS = [
+  { tamanho: 4, mostrarMs: 3500, jogarMs: 12000 },
+  { tamanho: 5, mostrarMs: 3500, jogarMs: 12000 },
+  { tamanho: 6, mostrarMs: 5500, jogarMs: 15000 }
+];
+
+function getTotalMoedas(data) {
+  return (data.coins || 0) + (data.banco || 0);
+}
+
+function getTrabalharCooldown(data) {
+  return data.turboTrabalhar ? TRABALHAR_COOLDOWN_TURBO_MS : TRABALHAR_COOLDOWN_NORMAL_MS;
+}
+
+function formatarMoedas(valor) {
+  const numero = Number(valor);
+  const exibicao = Number.isFinite(numero) ? Math.floor(numero).toLocaleString("pt-BR") : "0";
+  return `${exibicao} 🪙`;
+}
+
+// Bloqueia trabalhar/pescar/roubar enquanto a pessoa tá "presa" por ter falhado um roubo.
+// Retorna a mensagem de erro pronta, ou null se a pessoa não tá presa.
+function checarPrisao(data) {
+  const restante = data.presoAte - Date.now();
+  if (restante <= 0) return null;
+
+  const minutos = Math.ceil(restante / 60000);
+  return `🚔 Você tá preso ainda! Nada de trabalhar, pescar ou roubar por mais ~${minutos} min.`;
+}
+
+// =========================
+// MARCOS DE MOEDAS
+// =========================
+// A cada 10.000 moedas acumuladas, o bot anuncia e dá uma recompensa fixa —
+// só uma vez por marco por pessoa.
+//
+// IMPORTANTE (correção): antes a recompensa crescia 3.000 por marco e podia
+// desbloquear o próximo marco dentro do mesmo cálculo. Isso se realimentava e
+// fazia a carteira explodir (ex.: quem tinha 690k ganhava ~200k de uma vez).
+// Agora a recompensa é CONSTANTE e NÃO conta pra desbloquear novos marcos, então
+// o dinheiro novo continua vindo das atividades/jogos, não dos marcos.
+const MOEDA_MARCO_INTERVALO = 10000;
+const MOEDA_MARCO_RECOMPENSA = 1000;
+
+function calcularRecompensaMarco(/* marco */) {
+  return MOEDA_MARCO_RECOMPENSA;
+}
+
+async function verificarMarcosMoedas(guild, userId, data) {
+  if (!guild || !data) return;
+  if (!Array.isArray(data.milestonesAlcancados)) data.milestonesAlcancados = [];
+  if (typeof data.coins !== "number" || !Number.isFinite(data.coins)) data.coins = 0;
+
+  // Marcos são calculados pelo saldo ATUAL (antes da recompensa). A recompensa
+  // não empurra pra novos marcos — evita a bola de neve que inflacionava tudo.
+  const marcoMaximoAtingido = Math.floor(data.coins / MOEDA_MARCO_INTERVALO) * MOEDA_MARCO_INTERVALO;
+  if (marcoMaximoAtingido < MOEDA_MARCO_INTERVALO) return;
+
+  const novosMarcos = [];
+  for (let m = MOEDA_MARCO_INTERVALO; m <= marcoMaximoAtingido; m += MOEDA_MARCO_INTERVALO) {
+    if (!data.milestonesAlcancados.includes(m)) novosMarcos.push(m);
+  }
+
+  if (novosMarcos.length === 0) return;
+
+  let recompensaTotal = 0;
+  for (const marco of novosMarcos) {
+    data.milestonesAlcancados.push(marco);
+    recompensaTotal += calcularRecompensaMarco(marco);
+  }
+  data.coins += recompensaTotal;
+
+  const ultimoMarco = novosMarcos[novosMarcos.length - 1];
+  const canal = guild.systemChannel;
+  if (canal) {
+    const embed = new EmbedBuilder()
+      .setTitle("💰 Novo marco de moedas!")
+      .setDescription(
+        `<@${userId}> chegou em **${ultimoMarco.toLocaleString("pt-BR")} moedas** no servidor! 🎉\n` +
+        `Recompensa por bater essa meta: ${formatarMoedas(recompensaTotal)}`
+      )
+      .setColor(0xf1c40f);
+
+    canal.send({ embeds: [embed] }).catch(() => {});
+  }
+}
+
+// =========================
+// BAGUNCINHA STORE
+// =========================
+// Categorias e itens da loja. Preencha os "COLOQUE_..." com IDs reais de cargo
+// quando for usar. tipo decide o que acontece na hora da compra:
+//   "cargo"            -> dá um cargo cosmético
+//   "turbo_trabalhar"  -> reduz o cooldown do /trabalhar pra sempre
+//   "xp_boost"         -> dobra XP por 1h
+//   "caixa"            -> abre uma caixa misteriosa com prêmio aleatório
+//   "ticket"           -> dá 1 bilhete pro sorteio
+// Enquanto o roleId começar com "COLOQUE_", a compra é cancelada sem cobrar.
+const LOJA_CATEGORIAS = {
+  boosts: { nome: "⚡ Boosts", descricao: "Vantagens permanentes ou temporárias." },
+  cargos: { nome: "👑 Cargos", descricao: "Cargos personalizados e especiais." },
+  caixas: { nome: "📦 Caixas Misteriosas", descricao: "Aposta na sorte por uma recompensa aleatória." },
+  bilhetes: { nome: "🎫 Sorteio", descricao: "Bilhetes pra concorrer a prêmios do servidor." }
+};
+
+const LOJA_ITEMS = {
+  turbo_trabalhar: {
+    categoria: "boosts",
+    nome: "⏱️ Turbo Trabalhar",
+    preco: 5000,
+    descricao: "Reduz o tempo do `/trabalhar` de 60 pra 25 minutos. Permanente.",
+    tipo: "turbo_trabalhar"
+  },
+  xp_boost: {
+    categoria: "boosts",
+    nome: "✨ XP Boost (2x por 1h)",
+    preco: 1500,
+    descricao: "Dobra o XP ganho (texto e voz) pela próxima 1 hora.",
+    tipo: "xp_boost"
+  },
+  cargo_pirata: {
+    categoria: "cargos",
+    nome: " Cargo Pirata",
+    preco: 10000,
+    descricao: "desbloquea canais pir2tas no servidor.",
+    tipo: "cargo",
+    roleId: "1530739542733230251"
+  },
+  cargo_neon: {
+    categoria: "cargos",
+    nome: "Cargo (??)",
+    preco: 12000,
+    descricao: "???",
+    tipo: "cargo",
+    roleId: ""
+  },
+
+  // ---- 11 cargos novos (troque os COLOQUE_ID_x pelos IDs reais; nomes/preços são sugestões) ----
+  cargo_celestial: {
+    categoria: "cargos",
+    nome: "Cargo Celestial",
+    preco: 5000,
+    descricao: "Mídia.",
+    tipo: "cargo",
+    roleId: "1554311367199031396"
+  },
+  cargo_pelėzi: {
+    categoria: "cargos",
+    nome: "Cargo Pelėzin",
+    preco: 3500,
+    descricao: "pelé?.",
+    tipo: "cargo",
+    roleId: "1554318597520887808"
+  },
+  cargo_67: {
+    categoria: "cargos",
+    nome: "Cargo 67",
+    preco: 3500,
+    descricao: "aura.",
+    tipo: "cargo",
+    roleId: "1554315725047332905"
+  },
+  cargo_monge: {
+    categoria: "cargos",
+    nome: "Cargo Monge",
+    preco: 2500,
+    descricao: "?",
+    tipo: "cargo",
+    roleId: "1554310974020784189"
+  },
+  cargo_Supremo: {
+    categoria: "cargos",
+    nome: "Cargo Supremo",
+    preco: 8000,
+    descricao: "supremo.",
+    tipo: "cargo",
+    roleId: "1554313350043664464"
+  },
+  cargo_157: {
+    categoria: "cargos",
+    nome: "Cargo 157",
+    preco: 4000,
+    descricao: "🚩",
+    tipo: "cargo",
+    roleId: "1554315527021658152"
+  },
+  cargo_171: {
+    categoria: "cargos",
+    nome: "Cargo 171",
+    preco: 4000,
+    descricao: "Estelionatario bigode?",
+    tipo: "cargo",
+    roleId: "1554315568125845525"
+  },
+  cargo_777: {
+    categoria: "cargos",
+    nome: "Cargo 777",
+    preco: 7770,
+    descricao: "🎰",
+    tipo: "cargo",
+    roleId: "1554315611281166366"
+  },
+  cargo_coroa: {
+    categoria: "cargos",
+    nome: "Cargo Coroa",
+    preco: 3500,
+    descricao: "duo Cara?.",
+    tipo: "cargo",
+    roleId: "1554318085027143821"
+  },
+  cargo_cara: {
+    categoria: "cargos",
+    nome: "Cargo Cara",
+    preco: 3500,
+    descricao: "duo coroa?.",
+    tipo: "cargo",
+    roleId: "1554317867422322728"
+  },
+  cargo_milionario: {
+    categoria: "cargos",
+    nome: "Cargo Milionario",
+    preco: 15000,
+    descricao: "mostra quem e o mais rico.",
+    tipo: "cargo",
+    roleId: "1553051456293048540"
+  },
+
+  caixa_baguncinha: {
+    categoria: "caixas",
+    nome: "📦 Caixa Baguncinha",
+    preco: 2000,
+    descricao: "Pode vir moedas, XP Boost, cargo temporário ou até item lendário, depende da sua sorte.",
+    tipo: "caixa"
+  },
+  ticket_sorteio: {
+    categoria: "bilhetes",
+    nome: "🎫 Ticket de Sorteio",
+    preco: 700,
+    descricao: "1 bilhete = 1 chance no próximo sorteio. (staff usa `/sortear`).",
+    tipo: "ticket"
+  }
+};
+
+// =========================
+// CAIXA MISTERIOSA — TABELA DE RARIDADE
+// =========================
+// "peso" define a chance (peso maior = mais comum). Soma dos pesos = 100.
+// EV calibrado pra ficar abaixo do preço da caixa (2.000), mantendo a economia saudável.
+const CARGO_TEMPORARIO_ID = "COLOQUE_O_ID_DO_CARGO_TEMPORARIO_AQUI"; // cargo de 24h, prêmio ÉPICO
+const CAIXA_REWARDS = [
+  { raridade: "COMUM", peso: 40, tipo: "moedas", valor: 500 },
+  { raridade: "COMUM", peso: 25, tipo: "moedas", valor: 1000 },
+  { raridade: "RARO", peso: 15, tipo: "moedas", valor: 3000 },
+  { raridade: "RARO", peso: 10, tipo: "xp_boost", valor: null },
+  { raridade: "ÉPICO", peso: 6, tipo: "cargo_temporario", valor: null },
+  { raridade: "**LENDÁRIO**", peso: 3, tipo: "moedas", valor: 8000 },
+  { raridade: "???", peso: 1, tipo: "jackpot", valor: 20000 }
+];
+
+const CORES_RARIDADE = {
+  "COMUM": 0x95a5a6,
+  "RARO": 0x3498db,
+  "ÉPICO": 0x9b59b6,
+  "LENDÁRIO": 0xf1c40f,
+  "???": 0xe74c3c
+};
+
+function sortearRecompensaCaixa() {
+  const totalPeso = CAIXA_REWARDS.reduce((soma, item) => soma + item.peso, 0);
+  let sorteio = Math.random() * totalPeso;
+
+  for (const recompensa of CAIXA_REWARDS) {
+    if (sorteio < recompensa.peso) return recompensa;
+    sorteio -= recompensa.peso;
+  }
+
+  return CAIXA_REWARDS[0]; // fallback, nunca deveria chegar aqui
+}
+
+async function aplicarRecompensaCaixa(member, data, recompensa) {
+  let descricao = "";
+
+  if (recompensa.tipo === "moedas") {
+    data.coins += recompensa.valor;
+    descricao = `Você ganhou ${formatarMoedas(recompensa.valor)}!`;
+  } else if (recompensa.tipo === "xp_boost") {
+    const agora = Date.now();
+    data.xpBoostAte = Math.max(data.xpBoostAte, agora) + 60 * 60 * 1000;
+    descricao = "Você ganhou **XP Boost 2x por 1 hora**!";
+  } else if (recompensa.tipo === "cargo_temporario") {
+    if (CARGO_TEMPORARIO_ID.startsWith("COLOQUE_")) {
+      data.coins += 1000;
+      descricao = "Você ganharia um cargo temporário, mas ele ainda não foi configurado — ganhou 1.000 🪙 no lugar.";
+    } else {
+      await member.roles.add(CARGO_TEMPORARIO_ID).catch(() => {});
+      setTimeout(() => {
+        member.roles.remove(CARGO_TEMPORARIO_ID).catch(() => {});
+      }, 24 * 60 * 60 * 1000);
+      descricao = "Você ganhou um **cargo temporário por 24 horas**!";
+    }
+  } else if (recompensa.tipo === "jackpot") {
+    data.coins += recompensa.valor;
+    data.itemLendario = true;
+    descricao = `🎉 **JACKPOT SECRETO!** Você ganhou ${formatarMoedas(recompensa.valor)} e desbloqueou o item lendário místico!`;
+  }
+
+  return descricao;
+}
+
+// =========================
+// ROLETA BAGUNCINHA
+// =========================
+// Pesos calibrados pra deixar uma leve vantagem da casa (EV ~0.95x da aposta),
+// senão a roleta vira fonte infinita de moedas em vez de minigame.
+const ROLETA_RESULTADOS = [
+  { label: "❌ 0x — PERDEU TUDO", multiplicador: 0, peso: 35 },
+  { label: "🔸 0.5x — Quase lá", multiplicador: 0.5, peso: 25 },
+  { label: "🔹 1x — Empatou", multiplicador: 1, peso: 20 },
+  { label: "🎉 2x — Dobrou!", multiplicador: 2, peso: 14 },
+  { label: "🔥 5x — Grande vitória!", multiplicador: 5, peso: 5 },
+  { label: "💎 JACKPOT **10X**!!! 💎", multiplicador: 10, peso: 1 }
+];
+
+function sortearRoleta() {
+  const totalPeso = ROLETA_RESULTADOS.reduce((soma, item) => soma + item.peso, 0);
+  let sorteio = Math.random() * totalPeso;
+
+  for (const resultado of ROLETA_RESULTADOS) {
+    if (sorteio < resultado.peso) return resultado;
+    sorteio -= resultado.peso;
+  }
+
+  return ROLETA_RESULTADOS[0];
+}
+
+// =========================
+// CONQUISTAS
+// =========================
+// Cada conquista tem uma condição pra checar e uma recompensa. O usuário
+// roda /conquistas pra reivindicar as que já cumpriu — não é dado automático,
+// assim a pessoa volta a interagir com o bot em vez de só ganhar tudo passivo.
+const CONQUISTAS = {
+  veterano: {
+    nome: "🏆 **Veterano**",
+    descricao: "Fique 30 dias no servidor.",
+    condicao: member => Date.now() - member.joinedTimestamp >= 30 * 24 * 60 * 60 * 1000,
+    moedas: 5000,
+    roleId: "1552496174882234479",
+    badge: "🎖️ Badge Veterano"
+  }
+};
+
+async function verificarConquistas(member, data) {
+  const desbloqueadas = [];
+
+  for (const [id, conquista] of Object.entries(CONQUISTAS)) {
+    if (data.conquistas.includes(id)) continue;
+    if (!conquista.condicao(member)) continue;
+
+    data.conquistas.push(id);
+    data.coins += conquista.moedas;
+
+    if (conquista.roleId && !conquista.roleId.startsWith("COLOQUE_")) {
+      await member.roles.add(conquista.roleId).catch(() => {});
+    }
+
+    desbloqueadas.push(conquista);
+  }
+
+  return desbloqueadas;
+}
+
+// =========================
+// UI DA LOJA (EMBED + MENUS + BOTÕES)
+// =========================
+function montarEmbedLojaPrincipal() {
   return new EmbedBuilder()
-    .setTitle(String(tituloFeedbackPedido(pedido)).slice(0, 256))
-    .setDescription(String(texto).slice(0, 4096))
-    .setColor(0x57f287)
-    .setFooter({ text: `Pedido #${pedido.id}` });
+    .setTitle("🎪 **BAGUNCINHA STORE**")
+    .setDescription(
+      "Escolha uma categoria no menu abaixo pra ver os itens.\n\n" +
+      Object.values(LOJA_CATEGORIAS).map(c => `${c.nome} — ${c.descricao}`).join("\n") +
+      "\n\n🏆 Tem conquistas te esperando também — dá uma olhada no `/conquistas`."
+    )
+    .setColor(0x9b59b6)
+    .setFooter({ text: "**Baguncinha Store**" });
 }
 
-function botoesFeedbackDm(pedidoId) {
+function montarComponentesLojaPrincipal() {
+  const linhaCategoria = new ActionRowBuilder().addComponents(
+    new StringSelectMenuBuilder()
+      .setCustomId("loja_categoria")
+      .setPlaceholder("📂 Escolher categoria")
+      .addOptions(
+        Object.entries(LOJA_CATEGORIAS).map(([id, cat]) => ({
+          label: cat.nome,
+          description: cat.descricao,
+          value: id
+        }))
+      )
+  );
+
+  return [linhaCategoria];
+}
+
+function montarEmbedLojaCategoria(categoriaId) {
+  const categoria = LOJA_CATEGORIAS[categoriaId];
+  const itensCategoria = Object.entries(LOJA_ITEMS).filter(([, item]) => item.categoria === categoriaId);
+
+  return new EmbedBuilder()
+    .setTitle(`${categoria.nome} — BAGUNCINHA STORE`)
+    .setDescription(
+      itensCategoria
+        .map(([, item]) => `**${item.nome}** — ${formatarMoedas(item.preco)}\n${item.descricao}`)
+        .join("\n\n") +
+      "\n\n👇 Escolha um item no menu pra ver a prévia antes de comprar."
+    )
+    .setColor(0x9b59b6)
+    .setFooter({ text: "Baguncinha Store" });
+}
+
+// Menu de itens (até 25 opções) em vez de um botão por item —
+// com tantos cargos, os botões estourariam o limite de 5 linhas do Discord.
+function montarComponentesLojaCategoria(categoriaId) {
+  const itensCategoria = Object.entries(LOJA_ITEMS).filter(([, item]) => item.categoria === categoriaId);
+
+  const linhaItem = new ActionRowBuilder().addComponents(
+    new StringSelectMenuBuilder()
+      .setCustomId("loja_item")
+      .setPlaceholder("🔎 Escolher item (ver prévia)")
+      .addOptions(
+        itensCategoria.slice(0, 25).map(([id, item]) => ({
+          label: item.nome.slice(0, 100),
+          description: `${item.preco} moedas`,
+          value: id
+        }))
+      )
+  );
+
+  const linhaVoltar = new ActionRowBuilder().addComponents(
+    new ButtonBuilder().setCustomId("loja_voltar").setLabel("⬅️ Categorias").setStyle(ButtonStyle.Secondary)
+  );
+
+  return [linhaItem, linhaVoltar];
+}
+
+// Prévia do item (com a imagem que só o dono define via /lojaimagem)
+function montarEmbedItem(itemId) {
+  const item = LOJA_ITEMS[itemId];
+  const embed = new EmbedBuilder()
+    .setTitle(item.nome)
+    .setDescription(`${item.descricao}\n\n**PREÇO:** ${formatarMoedas(item.preco)}`)
+    .setColor(0x9b59b6)
+    .setFooter({ text: "**Baguncinha Store**" });
+
+  if (lojaImagens[itemId]) embed.setImage(lojaImagens[itemId]);
+  return embed;
+}
+
+function montarComponentesItem(itemId) {
+  const item = LOJA_ITEMS[itemId];
   return [
     new ActionRowBuilder().addComponents(
       new ButtonBuilder()
-        .setCustomId(`avaliar:${pedidoId}`)
-        .setLabel("Deixar feedback")
-        .setStyle(ButtonStyle.Success)
+        .setCustomId(`loja_comprar_${itemId}`)
+        .setLabel(`COMPRAR — ${item.preco}🪙`)
+        .setStyle(ButtonStyle.Success),
+      new ButtonBuilder()
+        .setCustomId(`loja_cat_${item.categoria}`)
+        .setLabel("⬅️ Voltar")
+        .setStyle(ButtonStyle.Secondary)
     )
   ];
 }
 
-async function pedirFeedback(pedido) {
-  try {
-    const user = await client.users.fetch(pedido.userId);
-    const enviada = await user.send({
-      embeds: [embedFeedbackDm(pedido, user)],
-      components: botoesFeedbackDm(pedido.id)
-    });
-    pedido.feedbackDmMessageId = enviada.id;
-    pedido.feedbackDmChannelId = enviada.channelId;
-    salvarStore();
-  } catch {
-    console.log(`Nao consegui pedir feedback do pedido #${pedido.id}.`);
-  }
-}
-
-async function atualizarDmFeedback(pedido) {
-  if (!pedido.feedbackDmMessageId || !pedido.userId) return false;
-  try {
-    const user = await client.users.fetch(pedido.userId);
-    const canal = await user.createDM();
-    const msg = await canal.messages.fetch(pedido.feedbackDmMessageId).catch(() => null);
-    const payload = {
-      embeds: [embedFeedbackDm(pedido, user)],
-      components: pedido.feedback ? [] : botoesFeedbackDm(pedido.id)
-    };
-    if (msg) {
-      await msg.edit(payload);
-      return true;
-    }
-    const enviada = await user.send(payload);
-    pedido.feedbackDmMessageId = enviada.id;
-    pedido.feedbackDmChannelId = enviada.channelId;
-    salvarStore();
-    return true;
-  } catch {
-    return false;
-  }
-}
-
-function embedAvaliacaoCanal(pedido, nota, comentario) {
-  const produto = getProduto(pedido.produtoId);
-  const nomeProduto = produto ? produto.nome : pedido.produtoNome;
-  const texto = comentario ? String(comentario).slice(0, 4096) : "";
-  return new EmbedBuilder()
-    .setTitle(`${estrelas(nota)}  ${nomeProduto}`)
-    .setDescription(texto || "\u200b")
-    .setColor(0xf1c40f);
-}
-
-async function registrarFeedback(pedido, nota, comentario) {
-  pedido.feedback = { nota, comentario: comentario || "", em: Date.now() };
-  salvarStore();
-
-  const feedbackChannelId = guildCfg(pedido.guildId).canais.feedbacks;
-  if (feedbackChannelId) {
-    const canal = await client.channels.fetch(feedbackChannelId).catch(() => null);
-    if (canal) {
-      await canal.send({ embeds: [embedAvaliacaoCanal(pedido, nota, comentario)] }).catch(() => {});
-    }
-  }
-  registrarLog("feedback", `Pedido #${pedido.id} avaliado com ${nota}/5.`, {
-    pedidoId: pedido.id,
-    userId: pedido.userId
-  });
-}
-
-async function concederCargo(pedido, produto) {
-  if (!produto || !produto.cargoId || !produto.cargoDias) return;
-  const guild = await client.guilds.fetch(pedido.guildId || GUILD_ID).catch(() => null);
-  if (!guild) return;
-  const membro = await guild.members.fetch(pedido.userId).catch(() => null);
-  if (!membro) {
-    registrarLog("cargo_erro", `Nao encontrei o membro do pedido #${pedido.id}.`, { pedidoId: pedido.id, userId: pedido.userId });
-    return;
-  }
-  const cargo = await guild.roles.fetch(produto.cargoId).catch(() => null);
-  if (!cargo) {
-    registrarLog("cargo_erro", `Cargo ${produto.cargoId} nao existe (pedido #${pedido.id}).`, { pedidoId: pedido.id, userId: pedido.userId });
-    return;
-  }
-
-  await membro.roles.add(cargo).catch(error => console.error("Erro ao dar cargo:", error.message));
-  const expiraEm = Date.now() + produto.cargoDias * DIA_MS;
-  pedido.cargo = { roleId: produto.cargoId, expiraEm, dias: produto.cargoDias };
-  store.cargosTemporarios.push({
-    userId: pedido.userId,
-    roleId: produto.cargoId,
-    expiraEm,
-    pedidoId: pedido.id,
-    guildId: pedido.guildId || GUILD_ID
-  });
-  salvarStore();
-  registrarLog("cargo_concedido", `Cargo <@&${produto.cargoId}> para <@${pedido.userId}> por ${produto.cargoDias} dia(s).`, {
-    pedidoId: pedido.id,
-    userId: pedido.userId
-  });
-}
-
-async function removerCargosExpirados() {
-  const agora = Date.now();
-  const expirados = store.cargosTemporarios.filter(c => c.expiraEm <= agora);
-  if (!expirados.length) return;
-  store.cargosTemporarios = store.cargosTemporarios.filter(c => c.expiraEm > agora);
-  salvarStore();
-
-  for (const item of expirados) {
-    const guild = await client.guilds.fetch(item.guildId || GUILD_ID).catch(() => null);
-    if (!guild) continue;
-    const membro = await guild.members.fetch(item.userId).catch(() => null);
-    if (membro) await membro.roles.remove(item.roleId).catch(() => {});
-    registrarLog("cargo_removido", `Cargo <@&${item.roleId}> removido de <@${item.userId}>.`, {
-      pedidoId: item.pedidoId,
-      userId: item.userId
-    });
-  }
-}
-
-function botoesEntrega(pedidoId) {
-  return new ActionRowBuilder().addComponents(
-    new ButtonBuilder().setCustomId(`entregadm:${pedidoId}`).setLabel("Receber na DM").setStyle(ButtonStyle.Primary),
-    new ButtonBuilder().setCustomId(`entregaemail:${pedidoId}`).setLabel("Receber por e-mail").setStyle(ButtonStyle.Secondary)
-  );
-}
-
-async function entregarPedido(pedido, opcoes) {
-  const { automatico, staffId, codigo, extra } = opcoes;
-  pedido.status = STATUS.ENTREGUE;
-  pedido.entregueEm = Date.now();
-  pedido.entrega = { codigo, extra: extra || "", staffId: staffId || null, automatico: !!automatico };
-  salvarStore();
-
-  const embed = embedPedidoCliente(
-    pedido,
-    automatico ? "✅ Pagamento confirmado e entrega automatica concluida." : "✅ Pedido entregue."
-  );
-  embed.addFields({ name: "🔑 Entrega", value: `\`\`\`${String(codigo).slice(0, 1000)}\`\`\`${extra ? `\n📝 ${extra}` : ""}` });
-
-  const metodo = pedido.entregaMetodo || "dm";
-  if (metodo === "email" && pedido.entregaEmail) {
-    const produto = getProduto(pedido.produtoId);
-    try {
-      await enviarProdutoPorEmail(store.config, pedido.entregaEmail, pedido, codigo, extra, produto?.instrucoes);
-      await avisarCliente(
-        pedido,
-        `✅ Pedido #${pedido.id} enviado para **${pedido.entregaEmail}**.`,
-        embed
-      );
-    } catch (error) {
-      console.error("Falha no e-mail, caindo para DM:", error.message);
-      await avisarCliente(
-        pedido,
-        automatico ? "✅ Pagamento confirmado! Aqui esta sua entrega automatica:" : "✅ Seu pedido foi entregue:",
-        embed
-      );
-    }
-  } else {
-    await avisarCliente(
-      pedido,
-      automatico ? "✅ Pagamento confirmado! Aqui esta sua entrega automatica:" : "✅ Seu pedido foi entregue:",
-      embed
-    );
-  }
-  await pedirFeedback(pedido);
-
-  const produto = getProduto(pedido.produtoId);
-  await concederCargo(pedido, produto);
-
-  registrarLog("entregue", `Pedido #${pedido.id} ${automatico ? "entregue automaticamente" : `entregue por <@${staffId}>`}.`, {
-    pedidoId: pedido.id,
-    userId: pedido.userId,
-    staffId: staffId || null
-  });
-  await notificarAdmin(pedido, automatico ? "Entrega automatica concluida." : `Entregue por <@${staffId}>.`);
-}
-
-async function enviarGifAprovacaoCarrinho(pedido) {
-  const canalId = pedido.cartChannelId;
-  if (!canalId) return;
-  const canal = await client.channels.fetch(canalId).catch(() => null);
-  if (!canal) return;
-  const temGif = fs.existsSync(GIF_COMPRA_APROVADA);
+// Confirmação de compra com a imagem do item
+function responderCompra(interaction, item, itemId, texto) {
   const embed = new EmbedBuilder()
-    .setTitle("Compra aprovada")
-    .setDescription(
-      `<@${pedido.userId}> pagamento confirmado.\n` +
-      `Pedido **#${pedido.id}** — **${pedido.produtoNome}**.\n` +
-      `Entrega em ate **${PRAZO_ENTREGA_LABEL}**.`
-    )
-    .setColor(0x57f287);
-  if (temGif) embed.setImage("attachment://compra-aprovada.gif");
-  await canal.send({
-    content: `<@${pedido.userId}>`,
-    embeds: [embed],
-    files: temGif ? [new AttachmentBuilder(GIF_COMPRA_APROVADA, { name: "compra-aprovada.gif" })] : []
-  }).catch(err => console.error("Falha ao enviar gif de aprovacao:", err.message));
-  await new Promise(resolve => setTimeout(resolve, 6000));
-}
-
-async function confirmarPagamento(pedido, payment) {
-  if (pedido.status !== STATUS.AGUARDANDO_PAGAMENTO) return;
-
-  pedido.status = STATUS.AGUARDANDO_ENTREGA;
-  pedido.pagoEm = Date.now();
-  pedido.mpStatus = payment.status;
-  pedido.prazoEntregaAte = Date.now() + PRAZO_ENTREGA_MIN * 60 * 1000;
-  salvarStore();
-
-  registrarLog("pagamento_confirmado", `Pix confirmado no pedido #${pedido.id}.`, {
-    pedidoId: pedido.id,
-    userId: pedido.userId
-  });
-
-  await enviarGifAprovacaoCarrinho(pedido);
-
-  const produto = getProduto(pedido.produtoId);
-  if (produto && produto.modo === "auto") {
-    const item = consumirEstoque(pedido.produtoId);
-    if (item) {
-      pedido.modo = "auto";
-      salvarStore();
-      await atualizarLojaFixa();
-      await entregarPedido(pedido, { automatico: true, codigo: item.conteudo });
-      return;
-    }
-    registrarLog("aguardando_entrega", `Sem estoque automatico para ${produto.nome}; aguardando staff (pedido #${pedido.id}).`, {
-      pedidoId: pedido.id,
-      userId: pedido.userId
-    });
-  }
-
-  pedido.modo = "semi";
-  salvarStore();
-  await avisarCliente(
-    pedido,
-    "✅ Pagamento confirmado!\n📦 Seu pedido foi recebido e esta sendo processado.",
-    embedPedidoCliente(pedido, "✅ Pagamento confirmado!\n📦 Seu pedido foi recebido e esta sendo processado.")
-  );
-  await notificarAdmin(pedido, `Pix confirmado em <t:${Math.floor(Date.now() / 1000)}:R>.`);
-}
-
-async function processarWebhookPagamento(paymentId) {
-  const payment = await consultarPagamento(paymentId);
-  const pedidoId = String(payment.external_reference || payment.metadata?.pedidoId || "");
-  const pedido = store.pedidos[pedidoId];
-  if (!pedido) {
-    console.log(`Webhook sem pedido: payment ${paymentId}`);
-    return;
-  }
-
-  pedido.mpStatus = payment.status;
-  store.pagamentos[String(payment.id)] = pedidoId;
-  salvarStore();
-
-  if (payment.status === "approved") {
-    await confirmarPagamento(pedido, payment);
-  } else if (["cancelled", "rejected"].includes(payment.status) && pedido.status === STATUS.AGUARDANDO_PAGAMENTO) {
-    pedido.status = STATUS.CANCELADO;
-    salvarStore();
-    registrarLog("cancelado", `Pix cancelado/recusado no pedido #${pedido.id}.`, { pedidoId: pedido.id, userId: pedido.userId });
-    await avisarCliente(pedido, "❌ O Pix foi cancelado ou recusado.");
-  }
-}
-
-function modalComprar(produtoId) {
-  const produto = getProduto(produtoId);
-  const modal = new ModalBuilder()
-    .setCustomId(`comprar_modal:${produtoId}`)
-    .setTitle(`Comprar ${produto ? produto.nome : "produto"}`.slice(0, 45));
-  modal.addComponents(
-    new ActionRowBuilder().addComponents(
-      new TextInputBuilder()
-        .setCustomId("cupom")
-        .setLabel("Cupom de desconto (opcional)")
-        .setStyle(TextInputStyle.Short)
-        .setRequired(false)
-        .setMaxLength(32)
-    )
-  );
-  return modal;
-}
-
-function modalAvaliar(pedidoId) {
-  const modal = new ModalBuilder()
-    .setCustomId(`avaliar_modal:${pedidoId}`)
-    .setTitle(`Avaliar pedido #${pedidoId}`);
-  modal.addComponents(
-    new ActionRowBuilder().addComponents(
-      new TextInputBuilder()
-        .setCustomId("nota")
-        .setLabel("Nota de 1 a 5")
-        .setStyle(TextInputStyle.Short)
-        .setRequired(true)
-        .setMaxLength(1)
-    ),
-    new ActionRowBuilder().addComponents(
-      new TextInputBuilder()
-        .setCustomId("comentario")
-        .setLabel("Comentario (opcional)")
-        .setStyle(TextInputStyle.Paragraph)
-        .setRequired(false)
-        .setMaxLength(500)
-    )
-  );
-  return modal;
-}
-
-async function criarPedido(interaction, produtoId, cupomCodigo) {
-  if (store.config.lojaPausada) {
-    await interaction.reply({ content: motivoLojaPausada(), ephemeral: true });
-    return;
-  }
-  const produto = getProduto(produtoId);
-  if (!produto || !produto.disponivel) {
-    await interaction.reply({ content: "Esse produto nao esta disponivel.", ephemeral: true });
-    return;
-  }
-  if (produtoEsgotado(produto)) {
-    await interaction.reply({
-      content: `❌ **${produto.nome}** esta esgotado. Sem estoque no momento.`,
-      ephemeral: true
-    });
-    return;
-  }
-  if (!MP_ACCESS_TOKEN) {
-    await interaction.reply({
-      content: "Pagamento Pix ainda nao esta configurado (falta MERCADOPAGO_ACCESS_TOKEN).",
-      ephemeral: true
-    });
-    return;
-  }
-
-  await interaction.deferReply({ ephemeral: true });
-
-  let descontoCentavos = 0;
-  let cupomAplicado = null;
-  if (cupomCodigo && cupomCodigo.trim()) {
-    const res = validarCupom(cupomCodigo, produto.precoCentavos);
-    if (!res.ok) {
-      await interaction.editReply(`❌ ${res.motivo}`);
-      return;
-    }
-    descontoCentavos = res.descontoCentavos;
-    cupomAplicado = res.cupom;
-  }
-
-  const valorFinal = Math.max(1, produto.precoCentavos - descontoCentavos);
-  const id = proximoPedidoId();
-  const pedido = {
-    id,
-    guildId: interaction.guildId || GUILD_ID,
-    userId: interaction.user.id,
-    produtoId: produto.id,
-    produtoNome: produto.nome,
-    modo: produto.modo,
-    valorCentavos: valorFinal,
-    valorOriginalCentavos: produto.precoCentavos,
-    descontoCentavos,
-    cupom: cupomAplicado ? cupomAplicado.codigo : null,
-    status: STATUS.AGUARDANDO_PAGAMENTO,
-    criadoEm: Date.now(),
-    pixCopiaECola: "",
-    pixQrAnexo: "",
-    paymentId: "",
-    entrega: null
-  };
-
-  let qrAnexo = null;
-  try {
-    const pix = await criarPix(pedido);
-    pedido.paymentId = pix.paymentId;
-    pedido.pixCopiaECola = pix.pixCopiaECola;
-    if (typeof pix.valorCobranca === "number" && Number.isFinite(pix.valorCobranca)) {
-      pedido.valorCentavos = Math.round(pix.valorCobranca * 100);
-    }
-
-    const qrBuffer = await gerarQrComLogo(pedido.pixCopiaECola);
-    if (qrBuffer) {
-      pedido.pixQrAnexo = `pix-${id}.png`;
-      qrAnexo = new AttachmentBuilder(qrBuffer, { name: pedido.pixQrAnexo });
-    }
-
-    store.pedidos[String(id)] = pedido;
-    store.pagamentos[pix.paymentId] = String(id);
-    if (cupomAplicado) {
-      cupomAplicado.usos += 1;
-      registrarLog("cupom_aplicado", `Cupom ${cupomAplicado.codigo} aplicado no pedido #${id} (-${formatarReais(descontoCentavos)}). Valor final ${formatarReais(pedido.valorCentavos)}.`, {
-        pedidoId: id,
-        userId: pedido.userId
-      });
-    }
-    salvarStore();
-  } catch (error) {
-    console.error("Erro ao gerar Pix:", error);
-    await interaction.editReply("❌ Nao consegui gerar o Pix agora. Tenta de novo em instantes.");
-    return;
-  }
-
-  registrarLog("pedido_criado", `Pedido #${id} de ${produto.nome} no valor de ${formatarReais(pedido.valorCentavos)}.`, {
-    pedidoId: id,
-    userId: pedido.userId
-  });
-
-  const extra =
-    `💰 Pix gerado no valor de **${formatarReais(pedido.valorCentavos)}**.` +
-    (descontoCentavos > 0 ? ` Cupom aplicado: de ${formatarReais(pedido.valorOriginalCentavos)} por ${formatarReais(pedido.valorCentavos)}.` : "") +
-    "\nEscaneie o QR ou toque em **Copiar Pix** (no celular abre um campo pra copiar, sem download).";
-
-  const embedCarrinho = embedPedidoCliente(pedido, extra, { qrNome: pedido.pixQrAnexo });
-  const qrBuf = qrAnexo ? qrAnexo.attachment : null;
-  const pixFile = () => (qrBuf ? [new AttachmentBuilder(Buffer.from(qrBuf), { name: pedido.pixQrAnexo })] : []);
-
-  try {
-    const carrinho = await abrirCarrinho(interaction.guild, interaction.user, pedido);
-    pedido.cartChannelId = carrinho.id;
-    const serverMsg = await carrinho.send({
-      content: `${interaction.user} seu carrinho:`,
-      embeds: [embedCarrinho],
-
-      components: [...botoesPix(pedido.id, undefined, pedido.guildId), botoesEntrega(pedido.id)],      files: pixFile()
-    });
-    pedido.cartServerMessageId = serverMsg.id;
-  } catch (error) {
-    console.error("Falha ao abrir canal de carrinho no servidor:", error.message);
-  }
-
-
-  const componentes = [...botoesPix(pedido.id, pedido.cartChannelId, pedido.guildId), botoesEntrega(pedido.id)];
-  await interaction.editReply({
-    content:
-      `Carrinho gerado — valor final **${formatarReais(pedido.valorCentavos)}**.\n` +
-      (pedido.cartChannelId ? `Toque em **Ir ao carrinho** para abrir <#${pedido.cartChannelId}>.\n` : "") +
-      `Escolha onde receber o produto (DM ou e-mail).`,
-    embeds: [embedCarrinho],
-    components: componentes,
-    files: pixFile()
-  });
-
-  try {
-    const user = await client.users.fetch(interaction.user.id);
-    const dm = await user.send({
-      content: `Carrinho automatico — pedido **#${pedido.id}**` + (pedido.cartChannelId ? `\nCanal: <#${pedido.cartChannelId}>` : ""),
-      embeds: [embedCarrinho],
-      components: componentes,
-      files: pixFile()
-    });
-    pedido.cartDmMessageId = dm.id;
-  } catch {
-    console.log(`Nao consegui DM o carrinho do pedido #${pedido.id}.`);
-  }
-  await notificarAdmin(pedido, "Aguardando Pix. Use **Marcar Pix pago** se o cliente pagou fora do webhook.");
-  salvarStore();
-}
-
-async function handleEntregarModal(interaction, pedidoId) {
-  const podeEfemero = interaction.inGuild();
-  await interaction.deferReply({ ephemeral: podeEfemero });
-
-  const pedido = store.pedidos[String(pedidoId)];
-  if (!pedido) {
-    await interaction.editReply({ content: "Pedido nao encontrado." });
-    return;
-  }
-  if (pedido.status !== STATUS.AGUARDANDO_ENTREGA) {
-    await interaction.editReply({ content: `Pedido #${pedidoId} nao esta aguardando entrega.` });
-    return;
-  }
-
-  const codigo = interaction.fields.getTextInputValue("codigo").trim();
-  const extra = interaction.fields.getTextInputValue("extra").trim();
-  await entregarPedido(pedido, { automatico: false, staffId: interaction.user.id, codigo, extra });
-
-  await interaction.editReply({ content: `✅ Pedido #${pedido.id} entregue ao cliente.` });
-}
-
-async function handleAvaliarModal(interaction, pedidoId) {
-  const podeEfemero = interaction.inGuild();
-  await interaction.deferReply({ ephemeral: podeEfemero });
-
-  const pedido = store.pedidos[String(pedidoId)];
-  if (!pedido) {
-    await interaction.editReply({ content: "Pedido nao encontrado." });
-    return;
-  }
-  if (pedido.userId !== interaction.user.id) {
-    await interaction.editReply({ content: "Voce so pode avaliar os seus pedidos." });
-    return;
-  }
-  if (pedido.feedback) {
-    await interaction.editReply({ content: "Voce ja avaliou esse pedido. Obrigado!" });
-    return;
-  }
-
-  const nota = parseInt(interaction.fields.getTextInputValue("nota").trim(), 10);
-  if (!Number.isInteger(nota) || nota < 1 || nota > 5) {
-    await interaction.editReply({ content: "A nota precisa ser um numero de 1 a 5." });
-    return;
-  }
-  const comentario = interaction.fields.getTextInputValue("comentario").trim();
-  pedido.userTag = interaction.user.username;
-  await registrarFeedback(pedido, nota, comentario);
-  await atualizarDmFeedback(pedido).catch(() => {});
-  await interaction.editReply({ content: `${estrelas(nota)} Valeu pela avaliacao!` });
-}
-
-async function overwritesPrivado(guild, userId) {
-  return [
-    { id: guild.roles.everyone.id, deny: [PermissionFlagsBits.ViewChannel] },
-    {
-      id: userId,
-      allow: [
-        PermissionFlagsBits.ViewChannel,
-        PermissionFlagsBits.SendMessages,
-        PermissionFlagsBits.ReadMessageHistory,
-        PermissionFlagsBits.AttachFiles
-      ]
-    },
-    {
-      id: client.user.id,
-      allow: [
-        PermissionFlagsBits.ViewChannel,
-        PermissionFlagsBits.SendMessages,
-        PermissionFlagsBits.ManageChannels,
-        PermissionFlagsBits.ReadMessageHistory
-      ]
-    }
-  ];
-}
-
-async function abrirCarrinho(guild, user, pedido) {
-
-  const aberto = Object.entries(store.carrinhos).find(([, c]) =>
-    c.userId === user.id && c.status === "aberto" && (c.guildId || GUILD_ID) === guild.id);
-  if (aberto) {
-    const existente = guild.channels.cache.get(aberto[0]) || await guild.channels.fetch(aberto[0]).catch(() => null);
-    if (existente) {
-      store.carrinhos[existente.id].pedidoId = pedido.id;
-      salvarStore();
-      return existente;
-    }
-  }
-
-  const canal = await guild.channels.create({
-    name: "seu-carrinho",
-    type: ChannelType.GuildText,
-    topic: `Carrinho de ${user.tag} — pedido #${pedido.id}`,
-    permissionOverwrites: await overwritesPrivado(guild, user.id)
-  });
-
-  store.carrinhos[canal.id] = {
-    userId: user.id,
-    pedidoId: pedido.id,
-    abertoEm: Date.now(),
-
-    status: "aberto",
-    guildId: guild.id  };
-  salvarStore();
-
-  const embed = new EmbedBuilder()
-    .setTitle("Seu carrinho")
-    .setDescription(`Ola <@${user.id}>, este canal e so seu. O Pix, o QR e o status do pedido ficam aqui.`)
-    .addFields({ name: "Pedido", value: `#${pedido.id}` })
-    .setColor(0x9b59b6);
-
-  const row = new ActionRowBuilder().addComponents(
-    new ButtonBuilder().setCustomId(`carrinho_fechar:${canal.id}`).setLabel("Fechar carrinho").setStyle(ButtonStyle.Danger)
-  );
-
-  await canal.send({
-    content: `<@${user.id}>`,
-    embeds: [embed],
-    components: [row]
-  });
-
-  return canal;
-}
-
-async function fecharCarrinho(interaction, canalId) {
-  const efemero = interaction.inGuild();
-  await interaction.deferReply({ ephemeral: efemero });
-
-  const guild = interaction.guild;
-  if (!guild) {
-    await interaction.editReply({ content: "Use esse botao dentro do servidor." });
-    return;
-  }
-
-  const carrinho = store.carrinhos[canalId];
-  const canal = guild.channels.cache.get(canalId) || await guild.channels.fetch(canalId).catch(() => null);
-  if (!canal || !carrinho) {
-    await interaction.editReply({ content: "Carrinho nao encontrado." });
-    return;
-  }
-  if (carrinho.userId !== interaction.user.id && !isStaff(interaction.member)) {
-    await interaction.editReply({ content: "So o dono do carrinho pode fechar." });
-    return;
-  }
-  if (carrinho.status === "fechado") {
-    await interaction.editReply({ content: "Esse carrinho ja esta fechado." });
-    return;
-  }
-
-  carrinho.status = "fechado";
-  carrinho.fechadoEm = Date.now();
-  salvarStore();
-
-  await interaction.editReply({ content: "Carrinho fechado. Este canal sera removido em alguns segundos." });
-  setTimeout(() => {
-    canal.delete("Carrinho fechado").catch(() => {});
-  }, 2500);
-}
-
-async function abrirTicket(guild, user, assunto) {
-  const base = `ticket-${user.username}`.toLowerCase().replace(/[^a-z0-9-]/g, "").slice(0, 80) || `ticket-${user.id}`;
-  const overwrites = await overwritesPrivado(guild, user.id);
-
-  const adminRoleId = guildCfg(guild.id).adminRoleId;
-  if (adminRoleId) {
-    overwrites.push({
-      id: adminRoleId,
-      allow: [PermissionFlagsBits.ViewChannel, PermissionFlagsBits.SendMessages, PermissionFlagsBits.ReadMessageHistory]
-    });
-  }
-
-
-  let parent = (store.guilds[guild.id] && store.guilds[guild.id].ticketCategoryId) || undefined;
-  if (parent) {
-    const cat = await guild.channels.fetch(parent).catch(() => null);
-    if (cat) parent = cat.id;
-  }
-
-  const canal = await guild.channels.create({
-    name: base,
-    type: ChannelType.GuildText,
-    parent,
-    topic: `Ticket de ${user.tag} — ${assunto}`,
-    permissionOverwrites: overwrites
-  });
-
-  store.tickets[canal.id] = { userId: user.id, abertoEm: Date.now(), assunto, status: "aberto" };
-  salvarStore();
-
-  const embed = new EmbedBuilder()
-    .setTitle("Ticket aberto")
-    .setDescription(`Ola <@${user.id}>, descreva sua duvida com o maximo de detalhes. A equipe respondera em breve.`)
-    .addFields({ name: "Motivo", value: String(assunto || "Atendimento").slice(0, 1024) })
-    .setColor(parseCor(ticketPainel().cor) || 0x5865f2);
-
-  const row = new ActionRowBuilder().addComponents(
-    new ButtonBuilder().setCustomId(`ticket_fechar:${canal.id}`).setLabel("Fechar ticket").setStyle(ButtonStyle.Danger)
-  );
-
-  await canal.send({
-    content: adminRoleId ? `<@${user.id}> <@&${adminRoleId}>` : `<@${user.id}>`,
-    embeds: [embed],
-    components: [row]
-  });
-
-  registrarLog("ticket_aberto", `Ticket de <@${user.id}>: ${assunto}.`, { userId: user.id });
-  return canal;
-}
-
-async function fecharTicket(interaction, canalId) {
-  const efemero = interaction.inGuild();
-  await interaction.deferReply({ ephemeral: efemero });
-
-  const guild = interaction.guild;
-  if (!guild) {
-    await interaction.editReply({ content: "Use esse botao dentro do servidor." });
-    return;
-  }
-  const ticket = store.tickets[canalId];
-  const canal = guild.channels.cache.get(canalId) || await guild.channels.fetch(canalId).catch(() => null);
-  if (!canal || !ticket) {
-    await interaction.editReply({ content: "Ticket nao encontrado." });
-    return;
-  }
-  if (ticket.userId !== interaction.user.id && !isStaff(interaction.member)) {
-    await interaction.editReply({ content: "So o dono do ticket ou a staff pode fechar." });
-    return;
-  }
-  if (ticket.status === "fechado") {
-    await interaction.editReply({ content: "Esse ticket ja esta fechado." });
-    return;
-  }
-
-  await canal.permissionOverwrites.edit(ticket.userId, { SendMessages: false }).catch(() => {});
-  await canal.setName(`fechado-${canal.name.replace(/^fechado-/, "")}`.slice(0, 100)).catch(() => {});
-
-  ticket.status = "fechado";
-  ticket.fechadoEm = Date.now();
-  ticket.fechadoPor = interaction.user.id;
-  salvarStore();
-
-  registrarLog("ticket_fechado", `Ticket de <@${ticket.userId}> fechado por <@${interaction.user.id}>.`, {
-    userId: ticket.userId,
-    staffId: interaction.user.id
-  });
-  await interaction.editReply({ content: "Ticket fechado. Este canal sera removido em alguns segundos." });
-  setTimeout(() => {
-    canal.delete("Ticket fechado").catch(() => {});
-  }, 2500);
-}
-
-async function handleEstoque(interaction) {
-  const sub = interaction.options.getSubcommand();
-
-  if (sub === "adicionar") {
-    const produtoId = interaction.options.getString("produto");
-    const produto = getProduto(produtoId);
-    if (!produto) {
-      await interaction.reply({ content: "Produto invalido.", ephemeral: true });
-      return;
-    }
-    const itens = interaction.options
-      .getString("conteudo")
-      .split(/\r?\n/)
-      .map(l => l.trim())
-      .filter(Boolean);
-    if (!itens.length) {
-      await interaction.reply({ content: "Envie ao menos um item (um por linha).", ephemeral: true });
-      return;
-    }
-    const fila = estoqueDe(produtoId);
-    for (const texto of itens) {
-      fila.push({ id: store.nextEstoqueItemId++, conteudo: texto, criadoEm: Date.now() });
-    }
-    salvarStore();
-    await atualizarLojaFixa();
-    await interaction.reply({
-      content: `✅ ${itens.length} item(ns) adicionado(s) ao estoque de **${produto.nome}**. Total agora: **${fila.length}**.`,
-      ephemeral: true
-    });
-    return;
-  }
-
-  if (sub === "listar") {
-    const linhas = todosProdutos().map(p => {
-      const fila = estoqueDe(p.id);
-      const modo = p.modo === "auto" ? "automatica" : "staff";
-      return `${p.emoji} **${p.nome}** — ${fila.length} em estoque (entrega ${modo})`;
-    });
-    await interaction.reply({
-      embeds: [new EmbedBuilder().setTitle("📦 Estoque").setDescription(linhas.join("\n")).setColor(0x3498db)],
-      ephemeral: true
-    });
-    return;
-  }
-
-  if (sub === "remover") {
-    const produtoId = interaction.options.getString("produto");
-    const itemId = interaction.options.getInteger("id");
-    const fila = estoqueDe(produtoId);
-    const idx = fila.findIndex(i => i.id === itemId);
-    if (idx < 0) {
-      await interaction.reply({ content: "Item nao encontrado nesse estoque.", ephemeral: true });
-      return;
-    }
-    fila.splice(idx, 1);
-    salvarStore();
-    await atualizarLojaFixa();
-    await interaction.reply({ content: `🗑️ Item ${itemId} removido do estoque. Total: **${fila.length}**.`, ephemeral: true });
-  }
-}
-
-async function handleCupom(interaction) {
-  const sub = interaction.options.getSubcommand();
-
-  if (sub === "criar") {
-    const codigo = interaction.options.getString("codigo").trim().toUpperCase();
-    const tipo = interaction.options.getString("tipo");
-    const valor = interaction.options.getNumber("valor");
-    const usos = interaction.options.getInteger("usos") || 0;
-    const dias = interaction.options.getInteger("dias") || 0;
-    const minimo = interaction.options.getNumber("minimo") || 0;
-    const publicar = interaction.options.getBoolean("publicar");
-
-    if (tipo === "percent" && (valor <= 0 || valor > 100)) {
-      await interaction.reply({ content: "Desconto percentual precisa estar entre 0 e 100.", ephemeral: true });
-      return;
-    }
-    if (valor <= 0) {
-      await interaction.reply({ content: "O valor do desconto precisa ser maior que zero.", ephemeral: true });
-      return;
-    }
-
-    store.cupons[codigo] = {
-      codigo,
-      tipo,
-      valor: tipo === "percent" ? valor : Math.round(valor * 100),
-      usosMax: Math.max(0, usos),
-      usos: 0,
-      minCentavos: Math.round(minimo * 100),
-      expiraEm: dias > 0 ? Date.now() + dias * DIA_MS : null,
-      ativo: true,
-      criadoEm: Date.now()
-    };
-    salvarStore();
-    const devePublicar = publicar !== false;
-    if (devePublicar) await atualizarPainelCupons().catch(() => {});
-    await interaction.reply({
-      content:
-        `Cupom **${codigo}** criado.\n` +
-        `Desconto: **${tipo === "percent" ? `${valor}%` : formatarReais(Math.round(valor * 100))}**\n` +
-        `Usos maximos: **${usos > 0 ? usos : "ilimitado"}**\n` +
-        `Validade: **${dias > 0 ? `${dias} dia(s)` : "sem expiracao"}**` +
-        (minimo > 0 ? `\nCompra minima: **${formatarReais(Math.round(minimo * 100))}**` : "") +
-        `\nCanal de cupons: **${devePublicar ? "atualizado" : "nao publicado"}**.`,
-      ephemeral: true
-    });
-    return;
-  }
-
-  if (sub === "listar") {
-    const cupons = Object.values(store.cupons);
-    if (!cupons.length) {
-      await interaction.reply({ content: "Nenhum cupom cadastrado.", ephemeral: true });
-      return;
-    }
-    const linhas = cupons.map(c => {
-      const desconto = c.tipo === "percent" ? `${c.valor}%` : formatarReais(c.valor);
-      const uso = `${c.usos}/${c.usosMax > 0 ? c.usosMax : "∞"}`;
-      const exp = c.expiraEm ? `<t:${Math.floor(c.expiraEm / 1000)}:R>` : "sem expiracao";
-      return `\`${c.codigo}\` — ${desconto} — usos ${uso} — ${exp}`;
-    });
-    await interaction.reply({
-      embeds: [new EmbedBuilder().setTitle("🎟️ Cupons").setDescription(linhas.join("\n")).setColor(0xe67e22)],
-      ephemeral: true
-    });
-    return;
-  }
-
-  if (sub === "remover") {
-    const codigo = interaction.options.getString("codigo").trim().toUpperCase();
-    if (!store.cupons[codigo]) {
-      await interaction.reply({ content: "Cupom nao encontrado.", ephemeral: true });
-      return;
-    }
-    store.cupons[codigo].ativo = false;
-    salvarStore();
-    await atualizarPainelCupons().catch(() => {});
-    await interaction.reply({ content: `Cupom **${codigo}** desativado.`, ephemeral: true });
-    return;
-  }
-
-  if (sub === "publicar") {
-    await atualizarPainelCupons().catch(() => {});
-
-    await interaction.reply({ content: `Painel de cupons publicado em <#${guildCfg(interaction.guildId).canais.cupons}>.`, ephemeral: true });  }
-}
-
-async function handleProduto(interaction) {
-  const sub = interaction.options.getSubcommand();
-
-  if (sub === "listar") {
-    const linhas = todosProdutos().map(p => {
-      const cargo = p.cargoId ? `<@&${p.cargoId}> por ${p.cargoDias} dia(s)` : "nenhum";
-      return `${p.emoji} **${p.nome}** (\`${p.id}\`)\n` +
-        `Preco: ${formatarReais(p.precoCentavos)} • Modo: ${p.modo === "auto" ? "automatico" : "staff"} • ` +
-        `${p.disponivel ? "disponivel" : "indisponivel"}\nCargo temporario: ${cargo}`;
-    });
-    await interaction.reply({
-      embeds: [new EmbedBuilder().setTitle("🛍️ Produtos").setDescription(linhas.join("\n\n")).setColor(0x9b59b6)],
-      ephemeral: true
-    });
-    return;
-  }
-
-  if (sub === "editar") {
-    const produtoId = interaction.options.getString("produto");
-    const produto = getProduto(produtoId);
-    if (!produto) {
-      await interaction.reply({ content: "Produto invalido.", ephemeral: true });
-      return;
-    }
-    const patch = store.produtoOverrides[produtoId] || {};
-    const modo = interaction.options.getString("modo");
-    const cargo = interaction.options.getRole("cargo");
-    const cargoDias = interaction.options.getInteger("cargo-dias");
-    const preco = interaction.options.getNumber("preco");
-    const precoOriginal = interaction.options.getNumber("preco-original");
-    const disponivel = interaction.options.getBoolean("disponivel");
-    const imagem = interaction.options.getString("imagem");
-    const banner = interaction.options.getString("banner");
-    const bannerPosicao = interaction.options.getString("banner-posicao");
-    const instrucoes = interaction.options.getString("instrucoes");
-    const categoriaId = interaction.options.getString("categoria");
-
-    if (modo) patch.modo = modo;
-    if (cargo) patch.cargoId = cargo.id;
-    if (cargoDias !== null && cargoDias !== undefined) patch.cargoDias = cargoDias;
-    if (preco !== null && preco !== undefined) patch.precoCentavos = Math.round(preco * 100);
-    if (precoOriginal !== null && precoOriginal !== undefined) patch.precoOriginalCentavos = Math.round(precoOriginal * 100);
-    if (disponivel !== null && disponivel !== undefined) patch.disponivel = disponivel;
-    if (imagem !== null && imagem !== undefined) {
-      if (imagem && !urlMidiaValida(imagem)) {
-        await interaction.reply({ content: "URL da imagem invalida.", ephemeral: true });
-        return;
-      }
-      patch.imagem = imagem || null;
-    }
-    if (banner !== null && banner !== undefined) {
-      if (banner && !urlMidiaValida(banner)) {
-        await interaction.reply({ content: "URL do banner invalida.", ephemeral: true });
-        return;
-      }
-      patch.banner = banner || null;
-    }
-    if (bannerPosicao) patch.bannerPosicao = bannerPosicao;
-    if (instrucoes !== null && instrucoes !== undefined) patch.instrucoes = instrucoes;
-    if (categoriaId) patch.categoriaId = categoriaId;
-
-    store.produtoOverrides[produtoId] = patch;
-    salvarStore();
-    await atualizarLojaFixa();
-
-    const atual = getProduto(produtoId);
-    await interaction.reply({
-      content:
-        `Produto **${atual.nome}** atualizado.\n` +
-        `Preco: ${formatarReais(atual.precoCentavos)}\n` +
-        `Modo: ${atual.modo === "auto" ? "automatico" : "staff"}\n` +
-        `Disponivel: ${atual.disponivel ? "sim" : "nao"}\n` +
-        `Cargo temporario: ${atual.cargoId ? `<@&${atual.cargoId}> por ${atual.cargoDias} dia(s)` : "nenhum"}`,
-      ephemeral: true
-    });
-    return;
-  }
-
-  if (sub === "criar") {
-    const id = interaction.options.getString("id", true).trim().toLowerCase().replace(/[^a-z0-9_-]/g, "").slice(0, 32);
-    const nome = interaction.options.getString("nome", true).trim();
-    const preco = interaction.options.getNumber("preco", true);
-    const categoriaId = (interaction.options.getString("categoria") || "geral").trim().toLowerCase();
-    const modo = interaction.options.getString("modo") || "semi";
-    const descricao = (interaction.options.getString("descricao") || "Produto da Baguncinha.").trim();
-    const emoji = (interaction.options.getString("emoji") || "📦").trim().slice(0, 8);
-    if (!id || !nome || !Number.isFinite(preco) || preco < 0) {
-      await interaction.reply({ content: "ID, nome e preco validos sao obrigatorios.", ephemeral: true });
-      return;
-    }
-    if (getProduto(id) || PRODUTOS[id] || (store.produtos || {})[id]) {
-      await interaction.reply({ content: `Ja existe um produto com o ID \`${id}\`.`, ephemeral: true });
-      return;
-    }
-    if (!store.categorias[categoriaId]) {
-      store.categorias[categoriaId] = {
-        id: categoriaId,
-        nome: categoriaId,
-        emoji: "📁",
-        descricao: "",
-        posicao: Object.keys(store.categorias).length,
-        ativo: true
-      };
-    }
-    store.produtos[id] = {
-      id,
-      nome,
-      descricao,
-      precoCentavos: Math.round(preco * 100),
-      emoji,
-      disponivel: true,
-      modo,
-      cargoId: null,
-      cargoDias: 0,
-      imagem: null,
-      banner: null,
-      bannerPosicao: "bottom",
-      categoriaId,
-      instrucoes: "",
-      precoOriginalCentavos: 0
-    };
-    salvarStore();
-    await atualizarLojaFixa();
-    await interaction.reply({
-      content:
-        `Produto **${nome}** (\`${id}\`) criado.\n` +
-        `Preco: **${formatarReais(Math.round(preco * 100))}** • Categoria: \`${categoriaId}\` • Modo: **${modo === "auto" ? "automatico" : "staff"}**.\n` +
-        `Use \`/gerenciar produto produto:${id}\` para estoque, banner e cupom.`,
-      ephemeral: true
-    });
-  }
-}
-
-function campoTexto(customId, label, style, valor, extra = {}) {
-  const input = new TextInputBuilder()
-    .setCustomId(customId)
-    .setLabel(label)
-    .setStyle(style)
-    .setRequired(extra.required === true);
-  if (extra.placeholder) input.setPlaceholder(extra.placeholder);
-  if (extra.maxLength) input.setMaxLength(extra.maxLength);
-  const v = String(valor || "").slice(0, extra.maxLength || 4000);
-  if (v) input.setValue(v);
-  return input;
-}
-
-function embedPainelProduto(produto) {
-  const qtd = estoqueDe(produto.id).length;
-  return new EmbedBuilder()
-    .setTitle(`Gerenciar — ${produto.nome}`)
-    .setDescription(
-      `ID: \`${produto.id}\`\n` +
-      `${precoVitrine(produto)}\n` +
-      `Modo: **${produto.modo === "auto" ? "automatico" : "staff"}**\n` +
-      `Disponivel: **${produto.disponivel ? "sim" : "nao"}**\n` +
-      `Estoque: **${qtd}**\n` +
-      `Cargo: ${produto.cargoId ? `<@&${produto.cargoId}> ${produto.cargoDias || 0} dia(s)` : "nenhum"}\n` +
-      `Cor: ${produto.cor || "#9b59b6"}\n` +
-      `Botao config: **${produto.ocultarBotaoConfig ? "oculto" : "visivel"}**`
-    )
-    .setColor(parseCor(produto.cor) || 0x9b59b6);
-}
-
-function payloadPainelProduto(produto, pagina = 1) {
-  const embed = embedPainelProduto(produto);
-  if (pagina === 2) {
-    return {
-      embeds: [embed],
-      components: [
-        new ActionRowBuilder().addComponents(
-          new ButtonBuilder().setCustomId(`gp_variante:${produto.id}`).setLabel("Criar variante").setStyle(ButtonStyle.Secondary),
-          new ButtonBuilder().setCustomId(`gp_ocultar:${produto.id}`).setLabel("Ocultar botao de configuracao").setStyle(ButtonStyle.Secondary),
-          new ButtonBuilder().setCustomId(`gp_apagar:${produto.id}`).setLabel("Apagar Produto").setStyle(ButtonStyle.Danger)
-        ),
-        new ActionRowBuilder().addComponents(
-          new ButtonBuilder().setCustomId(`gp_salvar:${produto.id}`).setLabel("Salvar Produto").setStyle(ButtonStyle.Success),
-          new ButtonBuilder().setCustomId(`gp_pagina:1:${produto.id}`).setLabel("Voltar").setStyle(ButtonStyle.Primary)
-        )
-      ]
-    };
-  }
-  return {
-    embeds: [embed],
-    components: [
-      new ActionRowBuilder().addComponents(
-        new ButtonBuilder().setCustomId(`gp_nome:${produto.id}`).setLabel("Alterar Nome").setStyle(ButtonStyle.Secondary),
-        new ButtonBuilder().setCustomId(`gp_desc:${produto.id}`).setLabel("Alterar Descricao").setStyle(ButtonStyle.Secondary),
-        new ButtonBuilder().setCustomId(`gp_preco:${produto.id}`).setLabel("Alterar Preco").setStyle(ButtonStyle.Secondary)
-      ),
-      new ActionRowBuilder().addComponents(
-        new ButtonBuilder().setCustomId(`gp_miniatura:${produto.id}`).setLabel("Alterar Miniatura").setStyle(ButtonStyle.Secondary),
-        new ButtonBuilder().setCustomId(`gp_banner:${produto.id}`).setLabel("Alterar Banner").setStyle(ButtonStyle.Secondary)
-      ),
-      new ActionRowBuilder().addComponents(
-        new ButtonBuilder().setCustomId(`addstock:${produto.id}`).setLabel("Adicionar Estoque").setStyle(ButtonStyle.Secondary),
-        new ButtonBuilder().setCustomId(`clearstock:${produto.id}`).setLabel("Limpar Estoque").setStyle(ButtonStyle.Secondary),
-        new ButtonBuilder().setCustomId(`gp_backup:${produto.id}`).setLabel("Backup Estoque").setStyle(ButtonStyle.Secondary)
-      ),
-      new ActionRowBuilder().addComponents(
-        new ButtonBuilder().setCustomId(`gp_rodape:${produto.id}`).setLabel("Editar Rodape").setStyle(ButtonStyle.Secondary),
-        new ButtonBuilder().setCustomId(`gp_cor:${produto.id}`).setLabel("Alterar Cor").setStyle(ButtonStyle.Secondary),
-        new ButtonBuilder().setCustomId(`gp_cargo:${produto.id}`).setLabel("Gerenciar Cargo").setStyle(ButtonStyle.Secondary)
-      ),
-      new ActionRowBuilder().addComponents(
-        new ButtonBuilder().setCustomId(`gp_cupons:${produto.id}`).setLabel("Gerenciar Cupons").setStyle(ButtonStyle.Secondary),
-        new ButtonBuilder().setCustomId(`gp_export:${produto.id}`).setLabel("Exportar Config").setStyle(ButtonStyle.Secondary),
-        new ButtonBuilder().setCustomId(`gp_import:${produto.id}`).setLabel("Importar Config").setStyle(ButtonStyle.Secondary),
-        new ButtonBuilder().setCustomId(`gp_pagina:2:${produto.id}`).setLabel("Mais opcoes").setStyle(ButtonStyle.Primary)
-      )
-    ]
-  };
-}
-
-async function enviarPainelProduto(interaction, produto, pagina = 1) {
-  const payload = { ...payloadPainelProduto(produto, pagina), ephemeral: true };
-  if (interaction.replied || interaction.deferred) {
-    await interaction.followUp(payload);
-    return;
-  }
-  if (interaction.isMessageComponent() && (interaction.customId.startsWith("gp_") || interaction.customId === "hub_prod_sel")) {
-    await interaction.update({ embeds: payload.embeds, components: payload.components });
-    return;
-  }
-  if (interaction.isModalSubmit()) {
-    await interaction.reply(payload);
-    return;
-  }
-  await interaction.reply(payload);
-}
-
-function modalCampoProduto(customId, titulo, campoId, label, valor, style = TextInputStyle.Short, extra = {}) {
-  const modal = new ModalBuilder().setCustomId(customId).setTitle(titulo.slice(0, 45));
-  modal.addComponents(
-    new ActionRowBuilder().addComponents(
-      campoTexto(campoId, label, style, valor, extra)
-    )
-  );
-  return modal;
-}
-
-async function handleGerenciar(interaction) {
-  const sub = interaction.options.getSubcommand();
-  if (sub !== "produto") {
-    await interaction.reply({ content: "Use `/gerenciar produto`.", ephemeral: true });
-    return;
-  }
-  const produto = getProduto(interaction.options.getString("produto", true));
-  if (!produto) {
-    await interaction.reply({ content: "Produto nao encontrado.", ephemeral: true });
-    return;
-  }
-  await enviarPainelProduto(interaction, produto);
-}
-
-function resumoConfig(gid = GUILD_ID) {
-  const st = store.guilds[gid] || store.guilds[GUILD_ID];
-  const c = guildCfg(gid).canais;
-  return (
-    `Canal de logs: ${c.logs ? `<#${c.logs}>` : "nao definido"}\n` +
-    `Canal de feedbacks: ${c.feedbacks ? `<#${c.feedbacks}>` : "nao definido"}\n` +
-    `Categoria de tickets: ${st.ticketCategoryId ? `<#${st.ticketCategoryId}>` : "nao definida"}\n` +
-    `Loja fixa: ${st.lojaFixa.channelId ? `<#${st.lojaFixa.channelId}>` : "nao publicada"}\n` +
-    `Banner da loja: ${urlMidiaValida(store.config.banner) ? `definido (${store.config.bannerPosicao || "top"})` : "nao definido"}\n` +
-    `Nome PIX publico: **${pixNomePublico()}** (ocultar nome completo: ${store.config.ocultarNomePix !== false ? "sim" : "nao"})\n` +
-    `SMTP: ${store.config.smtpHost ? `**${store.config.smtpHost}** porta ${store.config.smtpPort || 587}` : "nao configurado"}\n` +
-    `Loja: **${store.config.lojaPausada ? "PAUSADA" : "aberta"}**${store.config.lojaPausaMotivo ? ` (${store.config.lojaPausaMotivo})` : ""}\n` +
-    `Msg feedback DM: **${String(store.config.feedbackTitulo || FEEDBACK_TITULO_PADRAO).slice(0, 40)}**`
-  );
-}
-
-function payloadPainelConfig(gid = GUILD_ID) {
-  const cfg = ticketPainel();
-  const embed = new EmbedBuilder()
-    .setTitle("Configuracao da loja")
-    .setDescription(
-      resumoConfig(gid) +
-      `\n\n**Painel de ticket**\nTitulo: ${cfg.titulo}\nBotao: ${cfg.botaoLabel}` +
-      "\n\nUse os botoes abaixo. Tudo e salvo na hora."
-    )
-    .setColor(0x9b59b6);
-
-  return {
-    embeds: [embed],
-    components: [
-      new ActionRowBuilder().addComponents(
-        new ButtonBuilder().setCustomId("cfg_banner").setLabel("Banner loja").setStyle(ButtonStyle.Primary),
-        new ButtonBuilder().setCustomId("cfg_smtp").setLabel("SMTP").setStyle(ButtonStyle.Primary),
-        new ButtonBuilder().setCustomId("cfg_pix").setLabel("Nome PIX").setStyle(ButtonStyle.Primary),
-        new ButtonBuilder().setCustomId("cfg_publicar").setLabel("Publicar loja").setStyle(ButtonStyle.Success),
-        new ButtonBuilder()
-          .setCustomId("cfg_pausar")
-          .setLabel(store.config.lojaPausada ? "Reabrir loja" : "Pausar loja")
-          .setStyle(store.config.lojaPausada ? ButtonStyle.Success : ButtonStyle.Danger)
-      ),
-      new ActionRowBuilder().addComponents(
-        new ButtonBuilder().setCustomId("cfg_ticket_painel").setLabel("Texto do ticket").setStyle(ButtonStyle.Secondary),
-        new ButtonBuilder().setCustomId("cfg_ticket_midia").setLabel("Midia do ticket").setStyle(ButtonStyle.Secondary),
-        new ButtonBuilder().setCustomId("cfg_ticket_publicar").setLabel("Publicar tickets").setStyle(ButtonStyle.Success),
-        new ButtonBuilder().setCustomId("cfg_feedback").setLabel("Msg feedback DM").setStyle(ButtonStyle.Secondary)
-      ),
-      new ActionRowBuilder().addComponents(
-        new ChannelSelectMenuBuilder()
-          .setCustomId("cfg_cat_ticket")
-          .setPlaceholder("Categoria dos tickets")
-          .setMinValues(1)
-          .setMaxValues(1)
-          .addChannelTypes(ChannelType.GuildCategory)
-      ),
-      new ActionRowBuilder().addComponents(
-        new ButtonBuilder().setCustomId("hub_home").setLabel("Voltar ao painel").setStyle(ButtonStyle.Secondary)
-      )
-    ]
-  };
-}
-
-function payloadPainelStaff() {
-  const embed = new EmbedBuilder()
-    .setTitle("Painel da staff")
-    .setDescription(
-      "Um comando so. Escolha o que gerenciar:\n" +
-      "**Loja** — banner, SMTP, PIX, publicar\n" +
-      "**Tickets** — texto, midia, publicar painel\n" +
-      "**Produto** — preco, estoque, cargo, cupons\n" +
-      "**Categoria** — embed da categoria (titulo, banner, cor)\n" +
-      "**Estoque / Cupons / Relatorio**"
-    )
-    .setColor(0x9b59b6);
-  return {
-    embeds: [embed],
-    components: [
-      new ActionRowBuilder().addComponents(
-        new ButtonBuilder().setCustomId("hub_loja").setLabel("Loja").setStyle(ButtonStyle.Primary),
-        new ButtonBuilder().setCustomId("hub_tickets").setLabel("Tickets").setStyle(ButtonStyle.Primary),
-        new ButtonBuilder().setCustomId("hub_produto").setLabel("Produto").setStyle(ButtonStyle.Primary),
-        new ButtonBuilder().setCustomId("hub_categoria").setLabel("Categoria").setStyle(ButtonStyle.Primary)
-      ),
-      new ActionRowBuilder().addComponents(
-        new ButtonBuilder().setCustomId("hub_estoque").setLabel("Estoque").setStyle(ButtonStyle.Secondary),
-        new ButtonBuilder().setCustomId("hub_cupons").setLabel("Cupons").setStyle(ButtonStyle.Secondary),
-        new ButtonBuilder().setCustomId("hub_relatorio").setLabel("Relatorio").setStyle(ButtonStyle.Secondary)
-      )
-    ]
-  };
-}
-
-function selectHubCategorias(customId, placeholder) {
-  const opcoes = Object.values(store.categorias || {})
-    .filter(c => c && c.ativo !== false)
-    .slice(0, 25)
-    .map(c => ({
-      label: String(c.nome || c.id).slice(0, 100),
-      value: String(c.id),
-      description: (c.descricao || "Editar embed da categoria").slice(0, 100)
-    }));
-  if (!opcoes.length) return null;
-  return new ActionRowBuilder().addComponents(
-    new StringSelectMenuBuilder().setCustomId(customId).setPlaceholder(placeholder).addOptions(opcoes)
-  );
-}
-
-function embedPainelCategoria(cat) {
-  return new EmbedBuilder()
-    .setTitle(`Categoria — ${cat.nome}`)
-    .setDescription(
-      `ID: \`${cat.id}\`\n` +
-      `Emoji: ${cat.emoji || "📁"}\n` +
-      `Descricao: ${cat.descricao || "(vazia)"}\n` +
-      `Cor: ${cat.cor || "(padrao)"}\n` +
-      `Banner: ${cat.banner ? "definido" : "nao"}\n` +
-      `Miniatura: ${cat.imagem ? "definida" : "nao"}\n` +
-      `Posicao: ${cat.bannerPosicao || "top"}\n` +
-      `Rodape: ${cat.rodape || "(nenhum)"}\n` +
-      `Produtos: **${produtosDaCategoria(cat.id).length}**`
-    )
-    .setColor(parseCor(cat.cor) || 0x9b59b6);
-}
-
-function payloadPainelCategoria(cat) {
-  return {
-    embeds: [embedPainelCategoria(cat)],
-    components: [
-      new ActionRowBuilder().addComponents(
-        new ButtonBuilder().setCustomId(`gc_nome:${cat.id}`).setLabel("Alterar Nome").setStyle(ButtonStyle.Secondary),
-        new ButtonBuilder().setCustomId(`gc_desc:${cat.id}`).setLabel("Alterar Descricao").setStyle(ButtonStyle.Secondary),
-        new ButtonBuilder().setCustomId(`gc_emoji:${cat.id}`).setLabel("Alterar Emoji").setStyle(ButtonStyle.Secondary)
-      ),
-      new ActionRowBuilder().addComponents(
-        new ButtonBuilder().setCustomId(`gc_miniatura:${cat.id}`).setLabel("Alterar Miniatura").setStyle(ButtonStyle.Secondary),
-        new ButtonBuilder().setCustomId(`gc_banner:${cat.id}`).setLabel("Alterar Banner").setStyle(ButtonStyle.Secondary)
-      ),
-      new ActionRowBuilder().addComponents(
-        new ButtonBuilder().setCustomId(`gc_rodape:${cat.id}`).setLabel("Editar Rodape").setStyle(ButtonStyle.Secondary),
-        new ButtonBuilder().setCustomId(`gc_cor:${cat.id}`).setLabel("Alterar Cor").setStyle(ButtonStyle.Secondary)
-      ),
-      new ActionRowBuilder().addComponents(
-        new ButtonBuilder().setCustomId("hub_categoria").setLabel("Voltar").setStyle(ButtonStyle.Secondary)
-      )
-    ]
-  };
-}
-
-function payloadHubCategorias() {
-  const sel = selectHubCategorias("hub_cat_sel", "Escolha a categoria");
-  const linhas = Object.values(store.categorias || {}).map(c =>
-    `${c.emoji || "📁"} **${c.nome}** (\`${c.id}\`) — ${c.ativo === false ? "inativa" : "ativa"}`
-  );
-  const embed = new EmbedBuilder()
-    .setTitle("Editar embed da categoria")
-    .setDescription(
-      "Selecione uma categoria para editar o embed (titulo, descricao, banner, cor, miniatura), igual ao da vitrine.\n\n" +
-      (linhas.join("\n") || "Nenhuma categoria.")
-    )
-    .setColor(0x9b59b6);
-  return { embeds: [embed], components: sel ? [sel, rowVoltarHub()] : [rowVoltarHub()] };
-}
-
-async function enviarPainelCategoria(interaction, cat) {
-  const payload = { ...payloadPainelCategoria(cat), ephemeral: true };
-  if (interaction.isMessageComponent() && !interaction.replied && !interaction.deferred) {
-    await interaction.update({ embeds: payload.embeds, components: payload.components });
-    return;
-  }
-  if (interaction.replied || interaction.deferred) {
-    await interaction.editReply(payload);
-    return;
-  }
-  await interaction.reply(payload);
-}
-
-function patchCategoria(id, fields) {
-  if (!store.categorias[id]) return;
-  store.categorias[id] = { ...store.categorias[id], ...fields };
-  salvarStore();
-}
-
-function selectHubProdutos(customId, placeholder) {
-  const opcoes = todosProdutos().slice(0, 25).map(p => ({
-    label: String(p.nome).slice(0, 100),
-    value: p.id,
-    description: `${formatarReais(p.precoCentavos)} · estoque ${estoqueDe(p.id).length}`.slice(0, 100)
-  }));
-  if (!opcoes.length) return null;
-  return new ActionRowBuilder().addComponents(
-    new StringSelectMenuBuilder().setCustomId(customId).setPlaceholder(placeholder).addOptions(opcoes)
-  );
-}
-
-function payloadHubProdutos() {
-  const sel = selectHubProdutos("hub_prod_sel", "Escolha o produto");
-  const embed = new EmbedBuilder()
-    .setTitle("Gerenciar produto")
-    .setDescription("Selecione um produto para abrir o painel completo.")
-    .setColor(0x9b59b6);
-  return { embeds: [embed], components: sel ? [sel, rowVoltarHub()] : [rowVoltarHub()] };
-}
-
-function payloadHubEstoque() {
-  const linhas = todosProdutos().map(p => {
-    const fila = estoqueDe(p.id);
-    const modo = p.modo === "auto" ? "automatica" : "staff";
-    return `${p.emoji || "•"} **${p.nome}** — ${fila.length} em estoque (entrega ${modo})`;
-  });
-  const sel = selectHubProdutos("hub_stock_sel", "Adicionar estoque neste produto");
-  const embed = new EmbedBuilder()
-    .setTitle("Estoque")
-    .setDescription((linhas.join("\n") || "Nenhum produto.").slice(0, 4000))
-    .setColor(0x3498db);
-  return { embeds: [embed], components: sel ? [sel, rowVoltarHub()] : [rowVoltarHub()] };
-}
-
-function payloadHubCupons() {
-  const cupons = Object.values(store.cupons);
-  const linhas = cupons.length
-    ? cupons.map(c => {
-      const desconto = c.tipo === "percent" ? `${c.valor}%` : formatarReais(c.valor);
-      const uso = `${c.usos}/${c.usosMax > 0 ? c.usosMax : "inf"}`;
-      const status = c.ativo ? "ativo" : "off";
-      return `\`${c.codigo}\` — ${desconto} — usos ${uso} — ${status}`;
-    })
-    : ["Nenhum cupom cadastrado."];
-  const embed = new EmbedBuilder()
-    .setTitle("Cupons")
-    .setDescription(linhas.join("\n").slice(0, 4000))
-    .setColor(0xe67e22);
-  return {
-    embeds: [embed],
-    components: [
-      new ActionRowBuilder().addComponents(
-        new ButtonBuilder().setCustomId("hub_cupom_criar").setLabel("Criar").setStyle(ButtonStyle.Success),
-        new ButtonBuilder().setCustomId("hub_cupom_remover").setLabel("Desativar").setStyle(ButtonStyle.Danger),
-        new ButtonBuilder().setCustomId("hub_cupom_publicar").setLabel("Publicar").setStyle(ButtonStyle.Primary)
-      ),
-      rowVoltarHub()
-    ]
-  };
-}
-
-function rowVoltarHub() {
-  return new ActionRowBuilder().addComponents(
-    new ButtonBuilder().setCustomId("hub_home").setLabel("Voltar ao painel").setStyle(ButtonStyle.Secondary)
-  );
-}
-
-function modalCupomCriar() {
-  const modal = new ModalBuilder().setCustomId("hub_cupom_criar_modal").setTitle("Criar cupom");
-  modal.addComponents(
-    new ActionRowBuilder().addComponents(campoTexto("codigo", "Codigo", TextInputStyle.Short, "", { required: true, maxLength: 32 })),
-    new ActionRowBuilder().addComponents(campoTexto("tipo", "Tipo: percent ou fixo", TextInputStyle.Short, "percent", { required: true, maxLength: 8 })),
-    new ActionRowBuilder().addComponents(campoTexto("valor", "Valor (% ou reais)", TextInputStyle.Short, "", { required: true, maxLength: 10 })),
-    new ActionRowBuilder().addComponents(campoTexto("usos", "Usos maximos (0 = ilimitado)", TextInputStyle.Short, "0", { required: false, maxLength: 6 })),
-    new ActionRowBuilder().addComponents(campoTexto("dias", "Validade em dias (0 = sem)", TextInputStyle.Short, "0", { required: false, maxLength: 4 }))
-  );
-  return modal;
-}
-
-function modalCupomRemover() {
-  const modal = new ModalBuilder().setCustomId("hub_cupom_remover_modal").setTitle("Desativar cupom");
-  modal.addComponents(
-    new ActionRowBuilder().addComponents(campoTexto("codigo", "Codigo do cupom", TextInputStyle.Short, "", { required: true, maxLength: 32 }))
-  );
-  return modal;
-}
-
-async function enviarPainelEphemeral(interaction, payload) {
-  const body = { ...payload, ephemeral: true };
-  if (interaction.isMessageComponent() && !interaction.replied && !interaction.deferred) {
-    await interaction.update({ embeds: body.embeds, components: body.components });
-    return;
-  }
-  if (interaction.replied || interaction.deferred) {
-    await interaction.editReply(body);
-    return;
-  }
-  await interaction.reply(body);
-}
-
-async function enviarPainelConfig(interaction) {
-  const payload = { ...payloadPainelConfig(interaction.guildId), ephemeral: true };
-  if (interaction.replied || interaction.deferred) {
-    await interaction.editReply(payload);
-    return;
-  }
-  if (interaction.isMessageComponent()) {
-    await interaction.update({ embeds: payload.embeds, components: payload.components });
-    return;
-  }
-  await interaction.reply(payload);
-}
-
-async function handleConfiguracao(interaction) {
-  const sub = interaction.options.getSubcommand();
-  if (sub !== "loja") {
-    await interaction.reply({ content: "Use `/configuracao loja`.", ephemeral: true });
-    return;
-  }
-  await enviarPainelConfig(interaction);
-}
-
-async function handleConfig(interaction) {
-  const sub = interaction.options.getSubcommand();
-
-  if (sub === "ver") {
-    const stv = store.guilds[interaction.guildId] || store.guilds[GUILD_ID];
-    const cv = guildCfg(interaction.guildId).canais;
-    const desc =
-
-      `Canal de logs: ${cv.logs ? `<#${cv.logs}>` : "nao definido"}\n` +
-      `Canal de feedbacks: ${cv.feedbacks ? `<#${cv.feedbacks}>` : "nao definido"}\n` +
-      `Categoria de tickets: ${stv.ticketCategoryId ? `<#${stv.ticketCategoryId}>` : "nao definida"}\n` +
-      `Loja fixa: ${stv.lojaFixa.channelId ? `<#${stv.lojaFixa.channelId}>` : "nao publicada"}\n` +
-      `Banner da loja: ${urlMidiaValida(store.config.banner) ? `definido (${store.config.bannerPosicao || "top"})` : "nao definido"}\n` +
-      `Nome PIX publico: **${pixNomePublico()}** (ocultar nome completo: ${store.config.ocultarNomePix !== false ? "sim" : "nao"})\n` +
-      `SMTP: ${store.config.smtpHost ? store.config.smtpHost : "nao configurado"}\n` +
-      `Loja: **${store.config.lojaPausada ? "PAUSADA" : "aberta"}**${store.config.lojaPausaMotivo ? ` (${store.config.lojaPausaMotivo})` : ""}\n` +
-      `Cargos temporarios ativos: ${store.cargosTemporarios.length}\n` +
-      `Pedidos registrados: ${Object.keys(store.pedidos).length}`;
-    await interaction.reply({
-      embeds: [new EmbedBuilder().setTitle("⚙️ Configuracao").setDescription(desc).setColor(0x2ecc71)],
-      ephemeral: true
-    });
-    return;
-  }
-
-  if (sub === "canal-logs") {
-    await interaction.reply({ content: `Logs ficam em <#${guildCfg(interaction.guildId).canais.logs}>.`, ephemeral: true });
-    return;
-  }
-
-  if (sub === "canal-feedback") {
-    await interaction.reply({ content: `Feedbacks ficam em <#${guildCfg(interaction.guildId).canais.feedbacks}>.`, ephemeral: true });
-    return;
-  }
-
-  if (sub === "categoria-ticket") {
-    const categoria = interaction.options.getChannel("categoria", true);
-
-    store.guilds[interaction.guildId].ticketCategoryId = categoria.id;
-    salvarStore();
-    await interaction.reply({ content: `Categoria de tickets definida em <#${categoria.id}>.`, ephemeral: true });
-    return;
-  }
-
-  if (sub === "canal-loja") {
-    await publicarLojaFixa(interaction.guildId, true);
-    await interaction.reply({ content: `✅ Loja fixa publicada em <#${guildCfg(interaction.guildId).canais.loja}>.`, ephemeral: true });
-    return;
-  }
-
-  if (sub === "banner-loja") {
-    const url = limparUrl(interaction.options.getString("url") || "");
-    if (url && !urlMidiaValida(url)) {
-      await interaction.reply({ content: "URL invalida. Use um link http/https (gif funciona).", ephemeral: true });
-      return;
-    }
-    store.config.banner = url || null;
-    salvarStore();
-    await atualizarLojaFixa().catch(error => console.error("Falha ao atualizar loja fixa:", error.message));
-    await interaction.reply({ content: url ? "Banner da loja salvo." : "Banner da loja removido.", ephemeral: true });
-    return;
-  }
-
-  if (sub === "banner-posicao") {
-    const pos = (interaction.options.getString("posicao") || "top").toLowerCase();
-    store.config.bannerPosicao = pos;
-    salvarStore();
-    await atualizarLojaFixa();
-    await interaction.reply({ content: `Posicao do banner da loja: **${pos}**.`, ephemeral: true });
-    return;
-  }
-
-  if (sub === "pix-nome") {
-    const nome = (interaction.options.getString("nome") || QR_NOME_PUBLICO).trim();
-    const ocultar = interaction.options.getBoolean("ocultar");
-    store.config.pixNomePublico = nome;
-    if (ocultar !== null && ocultar !== undefined) store.config.ocultarNomePix = ocultar;
-    salvarStore();
-    await interaction.reply({
-      content: `Nome no PIX: **${pixNomePublico()}**. Ocultar nome completo: **${store.config.ocultarNomePix !== false ? "sim" : "nao"}**.`,
-      ephemeral: true
-    });
-    return;
-  }
-
-  if (sub === "smtp") {
-    store.config.smtpHost = (interaction.options.getString("host", true) || "").trim();
-    store.config.smtpPort = interaction.options.getInteger("porta") || 587;
-    store.config.smtpUser = (interaction.options.getString("usuario", true) || "").trim();
-    store.config.smtpPass = interaction.options.getString("senha", true) || "";
-    store.config.smtpFrom = (interaction.options.getString("from", true) || "").trim();
-    salvarStore();
-    await interaction.reply({
-      content: `SMTP salvo: **${store.config.smtpHost}** (porta ${store.config.smtpPort}). From: ${store.config.smtpFrom}.`,
-      ephemeral: true
-    });
-    return;
-  }
-
-  if (sub === "smtp-teste") {
-    const destino = (interaction.options.getString("email") || "").trim();
-    if (!destino || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(destino)) {
-      await interaction.reply({ content: "Informe um e-mail valido.", ephemeral: true });
-      return;
-    }
-    await interaction.deferReply({ ephemeral: true });
-    try {
-      await testarSmtp(store.config, destino);
-      await interaction.editReply({ content: `E-mail de teste enviado para **${destino}**.` });
-    } catch (error) {
-      await interaction.editReply({ content: `Falha no SMTP: ${error.message}` });
-    }
-    return;
-  }
-
-  if (sub === "pausar") {
-    const pausar = interaction.options.getBoolean("pausar", true);
-    const motivo = (interaction.options.getString("motivo") || "").trim();
-    store.config.lojaPausada = pausar;
-    store.config.lojaPausaMotivo = pausar ? motivo : "";
-    salvarStore();
-    await atualizarLojaFixa();
-    registrarLog(pausar ? "loja_pausada" : "loja_reativada", pausar ? `Loja pausada. ${motivo}` : "Loja reaberta.", {
-      staffId: interaction.user.id
-    });
-    await interaction.reply({
-      content: pausar ? `Loja **pausada**.${motivo ? ` Motivo: ${motivo}` : ""}` : "Loja **reaberta**.",
-      ephemeral: true
-    });
-    return;
-  }
-
-  await interaction.reply({ content: "Subcomando de config desconhecido. Use /config ver.", ephemeral: true }).catch(() => {});
-}
-
-async function handleFila(interaction) {
-  const pedidos = Object.values(store.pedidos)
-    .filter(p => p.status === STATUS.AGUARDANDO_PAGAMENTO || p.status === STATUS.AGUARDANDO_ENTREGA)
-    .sort((a, b) => a.id - b.id);
-  if (!pedidos.length) {
-    await interaction.reply({ content: "Nenhum pedido aberto.", ephemeral: true });
-    return;
-  }
-  const linhas = pedidos.slice(0, 20).map(p => {
-    const atraso = p.prazoEntregaAte && Date.now() > p.prazoEntregaAte ? " ATRASADO" : "";
-    return `#${p.id} — ${p.produtoNome} — ${formatarReais(p.valorCentavos)} — ${STATUS_LABEL[p.status]}${atraso} — <@${p.userId}>`;
-  });
-  await interaction.reply({
-    embeds: [new EmbedBuilder().setTitle("Fila de pedidos").setDescription(linhas.join("\n")).setColor(0xfee75c)],
-    ephemeral: true
-  });
-}
-
-function snapshotStoreCompleto() {
-  return JSON.parse(JSON.stringify(store));
-}
-
-function restaurarStore(dump) {
-  if (!dump || typeof dump !== "object") throw new Error("JSON invalido.");
-  const keys = [
-    "pedidos", "pagamentos", "cupons", "estoque", "produtos", "produtoOverrides",
-    "tickets", "carrinhos", "categorias", "guilds", "config", "cargosTemporarios",
-    "logs", "lojaFixa", "paineisFixos"
-  ];
-  for (const key of keys) {
-    if (dump[key] !== undefined) store[key] = dump[key];
-  }
-  if (dump.nextPedidoId) store.nextPedidoId = dump.nextPedidoId;
-  if (dump.nextEstoqueItemId) store.nextEstoqueItemId = dump.nextEstoqueItemId;
-  if (!store.config || typeof store.config !== "object") store.config = {};
-  if (!store.config.feedbackTitulo) store.config.feedbackTitulo = FEEDBACK_TITULO_PADRAO;
-  if (!store.config.feedbackMensagem) store.config.feedbackMensagem = FEEDBACK_MSG_PADRAO;
-  salvarStore();
-}
-
-async function handleBackup(interaction) {
-  const sub = interaction.options.getSubcommand();
-  if (sub === "exportar") {
-    await interaction.deferReply({ ephemeral: true });
-    const dump = snapshotStoreCompleto();
-    await interaction.editReply({
-      content: "Backup completo da loja (pedidos, estoque, config, cupons, tickets). Restaure com `/backup importar`.",
-      files: [new AttachmentBuilder(Buffer.from(JSON.stringify(dump, null, 2), "utf8"), { name: `backup-loja-${Date.now()}.json` })]
-    });
-    return;
-  }
-  if (sub === "importar") {
-    const arquivo = interaction.options.getAttachment("arquivo", true);
-    await interaction.deferReply({ ephemeral: true });
-    let dump;
-    try {
-      const res = await fetch(arquivo.url);
-      dump = JSON.parse(await res.text());
-    } catch {
-      await interaction.editReply({ content: "Nao consegui ler o JSON." });
-      return;
-    }
-    try {
-      restaurarStore(dump);
-    } catch (error) {
-      await interaction.editReply({ content: `Backup invalido: ${error.message}` });
-      return;
-    }
-    await publicarCanaisFixos().catch(() => {});
-    await interaction.editReply({ content: "Backup restaurado. Pedidos, produtos, estoque e config foram recarregados." });
-  }
-}
-
-async function handleCategoria(interaction) {
-  const sub = interaction.options.getSubcommand();
-  if (sub === "criar") {
-    const id = interaction.options.getString("id").trim().toLowerCase().replace(/[^a-z0-9_-]/g, "").slice(0, 32);
-    const nome = interaction.options.getString("nome").trim();
-    if (!id || !nome) {
-      await interaction.reply({ content: "ID e nome sao obrigatorios.", ephemeral: true });
-      return;
-    }
-    store.categorias[id] = {
-      id,
-      nome,
-      emoji: interaction.options.getString("emoji") || "📁",
-      descricao: interaction.options.getString("descricao") || "",
-      posicao: Object.keys(store.categorias).length,
-      ativo: true,
-      banner: null,
-      bannerPosicao: "top",
-      imagem: null,
-      cor: null,
-      rodape: null
-    };
-    salvarStore();
-    await atualizarLojaFixa();
-    await interaction.reply({ content: `Categoria **${nome}** (\`${id}\`) criada.`, ephemeral: true });
-    return;
-  }
-  if (sub === "listar") {
-    const linhas = Object.values(store.categorias).map(c =>
-      `${c.emoji || "📁"} **${c.nome}** (\`${c.id}\`) — ${c.ativo === false ? "inativa" : "ativa"} — ${produtosDaCategoria(c.id).length} produto(s)`
-    );
-    await interaction.reply({
-      embeds: [new EmbedBuilder().setTitle("Categorias").setDescription(linhas.join("\n") || "Nenhuma.").setColor(0x9b59b6)],
-      ephemeral: true
-    });
-    return;
-  }
-  if (sub === "editar") {
-    const id = interaction.options.getString("id").trim();
-    const cat = store.categorias[id];
-    if (!cat) {
-      await interaction.reply({ content: "Categoria nao encontrada.", ephemeral: true });
-      return;
-    }
-    await enviarPainelCategoria(interaction, cat);
-    return;
-  }
-  if (sub === "remover") {
-    const id = interaction.options.getString("id").trim();
-    if (!store.categorias[id]) {
-      await interaction.reply({ content: "Categoria nao encontrada.", ephemeral: true });
-      return;
-    }
-    store.categorias[id].ativo = false;
-    salvarStore();
-    await atualizarLojaFixa();
-    await interaction.reply({ content: `Categoria \`${id}\` desativada.`, ephemeral: true });
-    return;
-  }
-  if (sub === "canal") {
-    const nome = slugCanal(interaction.options.getString("nome", true));
-    const existente = interaction.options.getChannel("categoria-existente");
-    const novaCategoria = (interaction.options.getString("nova-categoria") || "").trim();
-    const topico = (interaction.options.getString("topico") || "").trim();
-    let parent = existente;
-    const criados = [];
-    if (!parent && novaCategoria) {
-      parent = await interaction.guild.channels.create({
-        name: novaCategoria,
-        type: ChannelType.GuildCategory
-      });
-      criados.push(`categoria ${parent.name}`);
-    }
-    if (!parent && !novaCategoria) {
-      await interaction.reply({ content: "Informe uma categoria existente ou o nome de uma categoria nova.", ephemeral: true });
-      return;
-    }
-    const canal = await interaction.guild.channels.create({
-      name,
-      type: ChannelType.GuildText,
-      parent: parent ? parent.id : undefined,
-      topic: topico || undefined
-    });
-    criados.push(`#${canal.name}`);
-    await interaction.reply({
-      content: `Canal criado: <#${canal.id}>${parent ? ` em **${parent.name}**` : ""}.\n${criados.join(", ")}`,
-      ephemeral: true
-    });
-  }
-}
-
-async function handleCanais(interaction) {
-  const sub = interaction.options.getSubcommand();
-  if (sub === "exportar") {
-    await interaction.deferReply({ ephemeral: true });
-    const snapshot = snapshotCanais(interaction.guild);
-    const json = JSON.stringify(snapshot, null, 2);
-    await interaction.editReply({
-      content:
-        `Estrutura de **${snapshot.guild}** exportada.\n` +
-        `${snapshot.categorias.length} categoria(s), ${snapshot.semCategoria.length} canal(is) sem categoria.\n` +
-        `No outro servidor use \`/canais colar\` com este arquivo.`,
-      files: [new AttachmentBuilder(Buffer.from(json, "utf8"), { name: `canais-${slugCanal(snapshot.guild)}.json` })]
-    });
-    return;
-  }
-  if (sub === "colar") {
-    const arquivo = interaction.options.getAttachment("arquivo", true);
-    if (!arquivo.name?.toLowerCase().endsWith(".json") && arquivo.contentType && !String(arquivo.contentType).includes("json")) {
-      await interaction.reply({ content: "Envie o JSON gerado por `/canais exportar`.", ephemeral: true });
-      return;
-    }
-    await interaction.deferReply({ ephemeral: true });
-    let snapshot;
-    try {
-      const res = await fetch(arquivo.url);
-      snapshot = JSON.parse(await res.text());
-    } catch {
-      await interaction.editReply({ content: "Nao consegui ler o JSON." });
-      return;
-    }
-    if (!snapshot || (!Array.isArray(snapshot.categorias) && !Array.isArray(snapshot.semCategoria))) {
-      await interaction.editReply({ content: "JSON invalido. Use o arquivo de `/canais exportar`." });
-      return;
-    }
-    const { criados, pulados } = await aplicarSnapshotCanais(interaction.guild, snapshot);
-    await interaction.editReply({
-      content:
-        `Colagem concluida.\n` +
-        `Criados (${criados.length}): ${criados.slice(0, 20).join(", ") || "nenhum"}${criados.length > 20 ? "..." : ""}\n` +
-        `Ja existiam (${pulados.length}): ${pulados.slice(0, 15).join(", ") || "nenhum"}${pulados.length > 15 ? "..." : ""}`
-    });
-  }
-}
-
-async function mostrarMeusPedidos(interaction) {
-  const meus = Object.values(store.pedidos)
-    .filter(p => p.userId === interaction.user.id)
-    .sort((a, b) => b.id - a.id)
-    .slice(0, 8);
-  if (!meus.length) {
-    await interaction.reply({ content: "Voce ainda nao tem pedidos.", ephemeral: true });
-    return;
-  }
-  const linhas = meus.map(p => `#${p.id} — ${p.produtoNome} — ${formatarReais(p.valorCentavos)} — ${STATUS_LABEL[p.status]}`);
-  await interaction.reply({
-    embeds: [new EmbedBuilder().setTitle("Seus pedidos").setDescription(linhas.join("\n")).setColor(0x9b59b6)],
-    ephemeral: true
-  });
-}
-
-async function iniciarAvaliacao(interaction) {
-  const entregues = Object.values(store.pedidos)
-    .filter(p => p.userId === interaction.user.id && p.status === STATUS.ENTREGUE && !p.feedback)
-    .sort((a, b) => b.id - a.id);
-  if (!entregues.length) {
-    await interaction.reply({ content: "Voce nao tem pedidos entregues para avaliar.", ephemeral: true });
-    return;
-  }
-  if (entregues.length === 1) {
-    await interaction.showModal(modalAvaliar(entregues[0].id));
-    return;
-  }
-  const row = new ActionRowBuilder().addComponents(
-    new StringSelectMenuBuilder()
-      .setCustomId("ticket_avaliar_sel")
-      .setPlaceholder("Escolha o pedido para avaliar")
-      .addOptions(entregues.slice(0, 25).map(p => ({
-        label: `#${p.id} — ${String(p.produtoNome).slice(0, 70)}`.slice(0, 100),
-        value: String(p.id),
-        description: formatarReais(p.valorCentavos).slice(0, 100)
-      })))
-  );
-  await interaction.reply({ content: "Qual pedido voce quer avaliar?", components: [row], ephemeral: true });
-}
-
-async function handleFeedback(interaction) {
-  const id = String(interaction.options.getInteger("id"));
-  const nota = interaction.options.getInteger("nota");
-  const comentario = (interaction.options.getString("comentario") || "").trim();
-  const pedido = store.pedidos[id];
-  if (!pedido) {
-    await interaction.reply({ content: "Pedido nao encontrado.", ephemeral: true });
-    return;
-  }
-  const membro = interaction.member;
-  if (pedido.userId !== interaction.user.id && !isStaff(membro)) {
-    await interaction.reply({ content: "Voce so pode avaliar os seus pedidos.", ephemeral: true });
-    return;
-  }
-  if (pedido.status !== STATUS.ENTREGUE) {
-    await interaction.reply({ content: "So da pra avaliar pedidos ja entregues.", ephemeral: true });
-    return;
-  }
-  if (pedido.feedback) {
-    await interaction.reply({ content: "Esse pedido ja foi avaliado.", ephemeral: true });
-    return;
-  }
-  pedido.userTag = interaction.user.username;
-  await registrarFeedback(pedido, nota, comentario);
-  await atualizarDmFeedback(pedido).catch(() => {});
-  await interaction.reply({ content: `${estrelas(nota)} Valeu pela avaliacao!`, ephemeral: true });
-}
-
-async function handleAvaliacoes(interaction) {
-  const produtoId = interaction.options.getString("produto");
-  const produto = getProduto(produtoId);
-  const avaliacoes = Object.values(store.pedidos)
-    .filter(p => p.produtoId === produtoId && p.feedback)
-    .sort((a, b) => b.feedback.em - a.feedback.em);
-
-  if (!avaliacoes.length) {
-    await interaction.reply({ content: `Ainda nao ha avaliacoes para **${produto ? produto.nome : produtoId}**.`, ephemeral: true });
-    return;
-  }
-
-  const media = avaliacoes.reduce((s, p) => s + p.feedback.nota, 0) / avaliacoes.length;
-  const linhas = avaliacoes.slice(0, 10).map(p => {
-    const comentario = p.feedback.comentario ? `\n"${p.feedback.comentario}"` : "";
-    return `${estrelas(p.feedback.nota)} — <@${p.userId}> (pedido #${p.id})${comentario}`;
-  });
-
-  await interaction.reply({
-    embeds: [
-      new EmbedBuilder()
-        .setTitle(`⭐ Avaliacoes — ${produto ? produto.nome : produtoId}`)
-        .setDescription(
-          `Media: **${media.toFixed(1)}/5** com **${avaliacoes.length}** avaliacao(oes).\n\n` + linhas.join("\n\n")
-        )
-        .setColor(0xf1c40f)
-    ],
-    ephemeral: true
-  });
-}
-
-async function handlePainelTicket(interaction) {
-  await interaction.deferReply({ ephemeral: true });
-  await atualizarPaineisTicket();
-  await interaction.editReply({ content: `Painel de tickets publicado em <#${guildCfg(interaction.guildId).canais.ticket}>.` });
-}
-
-async function handleTicket(interaction) {
-  await interaction.deferReply({ ephemeral: true });
-  const assunto = interaction.options.getString("assunto") || "Suporte";
-  const canal = await abrirTicket(interaction.guild, interaction.user, assunto);
-  await interaction.editReply(`✅ Ticket aberto em <#${canal.id}>.`);
-}
-
-async function handleLogs(interaction) {
-  const quantidade = interaction.options.getInteger("quantidade") || 15;
-  const concluidas = store.logs.filter(e => e.tipo === "entregue").slice(-quantidade).reverse();
-  if (!concluidas.length) {
-    await interaction.reply({ content: "Nenhuma compra concluida ainda.", ephemeral: true });
-    return;
-  }
-  const linhas = concluidas.map(e => {
-    const hora = `<t:${Math.floor(e.em / 1000)}:t>`;
-    const alvo = e.pedidoId ? ` · pedido #${e.pedidoId}` : e.userId ? ` · <@${e.userId}>` : "";
-    return `${hora} — Compra concluida${alvo}\n${e.detalhe}`;
-  });
-  await interaction.reply({
-    embeds: [new EmbedBuilder().setTitle("Compras concluidas").setDescription(linhas.join("\n\n").slice(0, 4000)).setColor(0x57f287)],
-    ephemeral: true
-  });
-}
-
-async function handleRelatorio(interaction) {
-  const pedidos = Object.values(store.pedidos);
-  const entregues = pedidos.filter(p => p.status === STATUS.ENTREGUE);
-  const faturamento = entregues.reduce((s, p) => s + p.valorCentavos, 0);
-  const descontos = pedidos.reduce((s, p) => s + (p.descontoCentavos || 0), 0);
-  const ticketMedio = entregues.length ? faturamento / entregues.length : 0;
-
-  const porProduto = {};
-  for (const p of pedidos) {
-    porProduto[p.produtoId] = porProduto[p.produtoId] || { total: 0, entregues: 0, receita: 0 };
-    porProduto[p.produtoId].total += 1;
-    if (p.status === STATUS.ENTREGUE) {
-      porProduto[p.produtoId].entregues += 1;
-      porProduto[p.produtoId].receita += p.valorCentavos;
-    }
-  }
-  const linhasProdutos = Object.entries(porProduto).map(([id, v]) => {
-    const produto = getProduto(id);
-    return `${produto ? produto.emoji : "📦"} **${produto ? produto.nome : id}** — ${v.entregues}/${v.total} entregues — ${formatarReais(v.receita)}`;
-  });
-
-  const embed = new EmbedBuilder()
-    .setTitle("📊 Relatorio de vendas")
-    .addFields(
-      { name: "Pedidos totais", value: String(pedidos.length), inline: true },
-      { name: "Entregues", value: String(entregues.length), inline: true },
-      { name: "Faturamento", value: formatarReais(faturamento), inline: true },
-      { name: "Ticket medio", value: formatarReais(ticketMedio), inline: true },
-      { name: "Descontos concedidos", value: formatarReais(descontos), inline: true },
-      { name: "Avaliacoes", value: String(pedidos.filter(p => p.feedback).length), inline: true }
-    )
+    .setTitle(item.nome)
+    .setDescription(texto)
     .setColor(0x2ecc71);
-  if (linhasProdutos.length) embed.addFields({ name: "Por produto", value: linhasProdutos.join("\n").slice(0, 1024) });
 
-  await interaction.reply({ embeds: [embed], ephemeral: true });
+  if (lojaImagens[itemId]) embed.setImage(lojaImagens[itemId]);
+  return interaction.reply({ embeds: [embed], ephemeral: true });
 }
 
+async function comprarItem(interaction, itemId) {
+  const item = LOJA_ITEMS[itemId];
+
+  if (!item) {
+    await interaction.reply({ content: "❌ Esse item não existe.", ephemeral: true });
+    return;
+  }
+
+  const data = getUserData(interaction.user.id);
+
+  if (item.tipo === "turbo_trabalhar" && data.turboTrabalhar) {
+    await interaction.reply({ content: "❌ Você já tem o Turbo Trabalhar ativo.", ephemeral: true });
+    return;
+  }
+
+  if (data.coins < item.preco) {
+    await interaction.reply({
+      content: `❌ Faltam ${formatarMoedas(item.preco - data.coins)} pra comprar **${item.nome}**.`,
+      ephemeral: true
+    });
+    return;
+  }
+
+  data.coins -= item.preco;
+
+  if (item.tipo === "caixa") {
+    const recompensa = sortearRecompensaCaixa();
+    const member = await interaction.guild.members.fetch(interaction.user.id).catch(() => null);
+    const descricaoPremio = await aplicarRecompensaCaixa(member, data, recompensa);
+
+    const embed = new EmbedBuilder()
+      .setTitle(`📦 ${item.nome} — ${recompensa.raridade}`)
+      .setDescription(descricaoPremio)
+      .setColor(CORES_RARIDADE[recompensa.raridade] || 0x9b59b6);
+
+    if (lojaImagens[itemId]) embed.setImage(lojaImagens[itemId]);
+
+    await verificarMarcosMoedas(interaction.guild, interaction.user.id, data);
+    salvarDados();
+    await interaction.reply({ embeds: [embed], ephemeral: true });
+    return;
+  }
+
+  if (item.tipo === "ticket") {
+    data.ticketsSorteio += 1;
+    salvarDados();
+    await responderCompra(
+      interaction,
+      item,
+      itemId,
+      `🎫 Você comprou 1 ticket de sorteio! Total: **${data.ticketsSorteio}**.`
+    );
+    return;
+  }
+
+  if (item.tipo === "turbo_trabalhar") {
+    data.turboTrabalhar = true;
+    salvarDados();
+    await responderCompra(
+      interaction,
+      item,
+      itemId,
+      "✅ Comprado! Seu tempo do `/trabalhar` agora é de **25 minutos**."
+    );
+    return;
+  }
+
+  if (item.tipo === "xp_boost") {
+    const agora = Date.now();
+    data.xpBoostAte = Math.max(data.xpBoostAte, agora) + 60 * 60 * 1000;
+    salvarDados();
+    await responderCompra(interaction, item, itemId, "✅ **XP Boost 2x** ativado por 1 hora!");
+    return;
+  }
+
+  if (item.tipo === "cargo") {
+    if (item.roleId.startsWith("COLOQUE_")) {
+      data.coins += item.preco;
+      salvarDados();
+      await interaction.reply({
+        content: "❌ Esse cargo ainda não foi configurado pelo admin. Nada foi cobrado.",
+        ephemeral: true
+      });
+      return;
+    }
+
+    try {
+      const member = await interaction.guild.members.fetch(interaction.user.id);
+      await member.roles.add(item.roleId);
+    } catch (error) {
+      console.error("❌ Erro ao dar cargo da loja:", error);
+    }
+
+    salvarDados();
+    await responderCompra(interaction, item, itemId, `✅ Você comprou **${item.nome}**! Aproveita.`);
+    return;
+  }
+}
+
+async function handleLojaInteraction(interaction) {
+  // Escolheu uma categoria
+  if (interaction.isStringSelectMenu() && interaction.customId === "loja_categoria") {
+    const categoriaId = interaction.values[0];
+    await interaction.update({
+      embeds: [montarEmbedLojaCategoria(categoriaId)],
+      components: montarComponentesLojaCategoria(categoriaId)
+    });
+    return;
+  }
+
+  // Escolheu um item -> mostra a prévia com imagem + botão de comprar
+  if (interaction.isStringSelectMenu() && interaction.customId === "loja_item") {
+    const itemId = interaction.values[0];
+    if (!LOJA_ITEMS[itemId]) return;
+
+    await interaction.update({
+      embeds: [montarEmbedItem(itemId)],
+      components: montarComponentesItem(itemId)
+    });
+    return;
+  }
+
+  // Voltar da prévia do item pra lista da categoria
+  if (interaction.isButton() && interaction.customId.startsWith("loja_cat_")) {
+    const categoriaId = interaction.customId.replace("loja_cat_", "");
+    if (!LOJA_CATEGORIAS[categoriaId]) return;
+
+    await interaction.update({
+      embeds: [montarEmbedLojaCategoria(categoriaId)],
+      components: montarComponentesLojaCategoria(categoriaId)
+    });
+    return;
+  }
+
+  // Voltar pras categorias
+  if (interaction.isButton() && interaction.customId === "loja_voltar") {
+    await interaction.update({
+      embeds: [montarEmbedLojaPrincipal()],
+      components: montarComponentesLojaPrincipal()
+    });
+    return;
+  }
+
+  // Comprar
+  if (interaction.isButton() && interaction.customId.startsWith("loja_comprar_")) {
+    const itemId = interaction.customId.replace("loja_comprar_", "");
+    await comprarItem(interaction, itemId);
+    return;
+  }
+}
+
+// =========================
+// PEDRA, PAPEL OU TESOURA (APOSTA ENTRE USUÁRIOS)
+// =========================
+const pptMatches = new Map(); // matchId -> { desafianteId, desafiadoId, aposta, status, escolhas }
+const PPT_OPCOES = { pedra: "🪨 Pedra", papel: "📄 Papel", tesoura: "✂️ Tesoura" };
+
+function resolverPpt(escolhaA, escolhaB) {
+  if (escolhaA === escolhaB) return "empate";
+  const vence = { pedra: "tesoura", papel: "pedra", tesoura: "papel" };
+  return vence[escolhaA] === escolhaB ? "A" : "B";
+}
+
+async function handlePptInteraction(interaction) {
+  const [, acao, matchId] = interaction.customId.split(":");
+  const match = pptMatches.get(matchId);
+
+  if (!match) {
+    await interaction.reply({ content: "❌ Esse desafio expirou ou não existe mais.", ephemeral: true });
+    return;
+  }
+
+  if (acao === "aceitar" || acao === "recusar") {
+    if (interaction.user.id !== match.desafiadoId) {
+      await interaction.reply({ content: "❌ Esse desafio não é seu.", ephemeral: true });
+      return;
+    }
+
+    if (acao === "recusar") {
+      pptMatches.delete(matchId);
+      await interaction.update({
+        content: `❌ ${interaction.user} recusou o desafio.`,
+        embeds: [],
+        components: []
+      });
+      return;
+    }
+
+    const desafianteData = getUserData(match.desafianteId);
+    const desafiadoData = getUserData(match.desafiadoId);
+
+    if (desafianteData.coins < match.aposta || desafiadoData.coins < match.aposta) {
+      pptMatches.delete(matchId);
+      await interaction.update({
+        content: "❌ Alguém não tem mais moedas suficientes pra essa aposta. Desafio cancelado.",
+        embeds: [],
+        components: []
+      });
+      return;
+    }
+
+    desafianteData.coins -= match.aposta;
+    desafiadoData.coins -= match.aposta;
+    match.status = "jogando";
+
+    const linhaEscolhas = new ActionRowBuilder().addComponents(
+      new ButtonBuilder().setCustomId(`ppt:escolha_pedra:${matchId}`).setLabel("🪨 Pedra").setStyle(ButtonStyle.Secondary),
+      new ButtonBuilder().setCustomId(`ppt:escolha_papel:${matchId}`).setLabel("📄 Papel").setStyle(ButtonStyle.Secondary),
+      new ButtonBuilder().setCustomId(`ppt:escolha_tesoura:${matchId}`).setLabel("✂️ Tesoura").setStyle(ButtonStyle.Secondary)
+    );
+
+    salvarDados();
+    await interaction.update({
+      content: `✅ Desafio aceito! Aposta de ${formatarMoedas(match.aposta)} cada.\nCliquem na escolha de vocês (só você vê sua própria confirmação).`,
+      embeds: [],
+      components: [linhaEscolhas]
+    });
+    return;
+  }
+
+  if (acao.startsWith("escolha_")) {
+    if (match.status !== "jogando") {
+      await interaction.reply({ content: "❌ Esse desafio ainda não começou ou já acabou.", ephemeral: true });
+      return;
+    }
+
+    if (interaction.user.id !== match.desafianteId && interaction.user.id !== match.desafiadoId) {
+      await interaction.reply({ content: "❌ Esse desafio não é seu fi.", ephemeral: true });
+      return;
+    }
+
+    if (match.escolhas[interaction.user.id]) {
+      await interaction.reply({ content: "❌ Você já escolheu.", ephemeral: true });
+      return;
+    }
+
+    const escolha = acao.replace("escolha_", "");
+    match.escolhas[interaction.user.id] = escolha;
+
+    await interaction.reply({
+      content: `✅ Você escolheu ${PPT_OPCOES[escolha]}. Aguardando o adversário...`,
+      ephemeral: true
+    });
+
+    const escolhaA = match.escolhas[match.desafianteId];
+    const escolhaB = match.escolhas[match.desafiadoId];
+
+    if (!escolhaA || !escolhaB) return;
+
+    const desafianteData = getUserData(match.desafianteId);
+    const desafiadoData = getUserData(match.desafiadoId);
+    const resultado = resolverPpt(escolhaA, escolhaB);
+
+    let textoResultado;
+    if (resultado === "empate") {
+      desafianteData.coins += match.aposta;
+      desafiadoData.coins += match.aposta;
+      textoResultado = `🤝 Empate! ${PPT_OPCOES[escolhaA]} x ${PPT_OPCOES[escolhaB]}. Moedas devolvidas pros dois.`;
+    } else if (resultado === "A") {
+      desafianteData.coins += match.aposta * 2;
+      await verificarMarcosMoedas(interaction.guild, match.desafianteId, desafianteData);
+      textoResultado = `🏆 <@${match.desafianteId}> venceu! ${PPT_OPCOES[escolhaA]} bate ${PPT_OPCOES[escolhaB]}. Levou ${formatarMoedas(match.aposta * 2)}.`;
+    } else {
+      desafiadoData.coins += match.aposta * 2;
+      await verificarMarcosMoedas(interaction.guild, match.desafiadoId, desafiadoData);
+      textoResultado = `🏆 <@${match.desafiadoId}> venceu! ${PPT_OPCOES[escolhaB]} bate ${PPT_OPCOES[escolhaA]}. Levou ${formatarMoedas(match.aposta * 2)}.`;
+    }
+
+    pptMatches.delete(matchId);
+    salvarDados();
+
+    await interaction.message.edit({
+      content: `📢 Resultado do desafio\n${textoResultado}`,
+      embeds: [],
+      components: []
+    }).catch(() => {});
+    return;
+  }
+}
+
+// =========================
+// MINIGAME DE ROUBO ("arromba o cofre")
+// =========================
+// Antes o /roubar era só um sorteio de 40%. Agora o ladrão encara 3 fases de
+// memória com sequências cada vez maiores e tempo curto. Passar em tudo libera
+// um saque alto (% alta da carteira da vítima). Errar ou estourar o tempo =
+// PRESO + multa de 40% do valor total da vítima.
+
+// Monta as linhas de botões com os símbolos embaralhados (5 por linha).
+function montarBotoesRoubo(matchId, ordemSimbolos) {
+  const linhas = [];
+  for (let inicio = 0; inicio < ordemSimbolos.length; inicio += 5) {
+    const linha = new ActionRowBuilder();
+    ordemSimbolos.slice(inicio, inicio + 5).forEach((simbolo, i) => {
+      linha.addComponents(
+        new ButtonBuilder()
+          .setCustomId(`roubo:${matchId}:${inicio + i}`)
+          .setEmoji(simbolo)
+          .setStyle(ButtonStyle.Secondary)
+      );
+    });
+    linhas.push(linha);
+  }
+  return linhas;
+}
+
+function esperarCollector(coletor) {
+  return new Promise(resolve => {
+    coletor.once("end", (_coletados, motivo) => resolve(motivo));
+  });
+}
+
+async function resolverRouboSucesso(interaction, alvo, ladrao, vitima, mensagem) {
+  const percentual = ROUBO_SAQUE_MIN + Math.random() * (ROUBO_SAQUE_MAX - ROUBO_SAQUE_MIN);
+  const roubado = Math.max(1, Math.floor(vitima.coins * percentual));
+
+  vitima.coins -= roubado;
+  ladrao.coins += roubado;
+
+  await verificarMarcosMoedas(interaction.guild, interaction.user.id, ladrao);
+  salvarDados();
+
+  const embed = new EmbedBuilder()
+    .setTitle("🕵️ ASSALTO PERFEITO!")
+    .setColor(0x27ae60)
+    .setDescription(
+      `<@${interaction.user.id}> arrombou o cofre e levou **${formatarMoedas(roubado)}** ` +
+      `(${Math.round(percentual * 100)}% da carteira) de <@${alvo.id}>!\n` +
+      `Agora a carteira da vítima tá com ${formatarMoedas(vitima.coins)}.`
+    );
+
+  await mensagem.edit({ content: "", embeds: [embed], components: [] }).catch(() => {});
+}
+
+async function resolverRouboFalha(interaction, alvo, ladrao, vitima, mensagem, motivo) {
+  const multa = Math.floor(getTotalMoedas(vitima) * ROUBO_MULTA_PERCENTUAL);
+
+  // O ladrão paga primeiro da carteira e depois do banco: o banco protege você
+  // de ser roubado, mas não de pagar a multa quando VOCÊ é quem foi pego.
+  let restante = multa;
+  const daCarteira = Math.min(Math.max(0, ladrao.coins), restante);
+  ladrao.coins -= daCarteira;
+  restante -= daCarteira;
+  const doBanco = Math.min(Math.max(0, ladrao.banco), restante);
+  ladrao.banco -= doBanco;
+  const pago = daCarteira + doBanco;
+
+  vitima.coins += pago; // a vítima é ressarcida com a multa
+  ladrao.presoAte = Date.now() + PRISAO_MS;
+
+  await verificarMarcosMoedas(interaction.guild, alvo.id, vitima);
+  salvarDados();
+
+  const embed = new EmbedBuilder()
+    .setTitle("🚨 PEGO NO FLAGRANTE!")
+    .setColor(0xe74c3c)
+    .setDescription(
+      `<@${interaction.user.id}> foi pego (${motivo}) tentando roubar <@${alvo.id}>!\n\n` +
+      `💸 Multa: **${formatarMoedas(multa)}** (40% do valor total da vítima)\n` +
+      `Pagou: ${formatarMoedas(pago)}${pago < multa ? " — não tinha tudo e entregou o que dava" : ""}\n` +
+      (pago > 0 ? `A vítima foi ressarcida com esse valor.\n` : "") +
+      `O ladrão ficou **PRESO por 15 minutos** (nada de trabalhar, pescar ou roubar).`
+    );
+
+  await mensagem.edit({ content: "", embeds: [embed], components: [] }).catch(() => {});
+}
+
+async function iniciarRouboMinigame(interaction, alvo, ladrao, vitima) {
+  const matchId = interaction.id;
+  const ladraoId = interaction.user.id;
+
+  await interaction.reply({
+    content:
+      `🕵️ **${interaction.user.username}** tá armando um assalto na carteira de **${alvo.username}**!\n` +
+      `São 3 fases de memória: decore a sequência e clique na ordem certa. ` +
+      `Se vacilar, paga **40% do valor total** da vítima e vai preso. Boa sorte.`,
+    ephemeral: false
+  });
+
+  const mensagem = await interaction.fetchReply();
+  const embed = new EmbedBuilder();
+
+  for (let r = 0; r < ROUBO_RODADAS.length; r++) {
+    const { tamanho, mostrarMs, jogarMs } = ROUBO_RODADAS[r];
+
+    // sequência sorteada (pode repetir símbolo — fica mais difícil)
+    const sequencia = Array.from(
+      { length: tamanho },
+      () => ROUBO_SIMBOLOS[Math.floor(Math.random() * ROUBO_SIMBOLOS.length)]
+    );
+    // os botões ficam numa ordem diferente da sequência, pra não entregar o jogo
+    const ordemBotoes = [...ROUBO_SIMBOLOS].sort(() => Math.random() - 0.5);
+
+    // 1) mostra a sequência por alguns segundos
+    embed
+      .setTitle(`🔓 Arrombando o cofre — Fase ${r + 1}/${ROUBO_RODADAS.length}`)
+      .setColor(0x2c3e50)
+      .setDescription(
+        `**Decore a sequência!**\n\n${sequencia.join(" ")}\n\n` +
+        `Ela some em ${(mostrarMs / 1000).toFixed(1)}s...`
+      );
+    await mensagem.edit({ content: "", embeds: [embed], components: [] }).catch(() => {});
+    await esperar(mostrarMs);
+
+    // 2) esconde a sequência e mostra os botões embaralhados
+    const componentes = montarBotoesRoubo(matchId, ordemBotoes);
+    embed
+      .setTitle(`🔓 Arrombando o cofre — Fase ${r + 1}/${ROUBO_RODADAS.length}`)
+      .setColor(0xe67e22)
+      .setDescription(
+        `Repita na **mesma ordem**! Cliques: 0/${tamanho}\n⏱️ ${Math.round(jogarMs / 1000)}s`
+      );
+    await mensagem.edit({ content: "", embeds: [embed], components: componentes }).catch(() => {});
+
+    // 3) coleta os cliques e valida na ordem
+    let posicao = 0;
+    let erro = false;
+
+    const coletor = mensagem.createMessageComponentCollector({
+      filter: i => i.customId.startsWith(`roubo:${matchId}:`),
+      time: jogarMs
+    });
+
+    coletor.on("collect", async i => {
+      if (i.user.id !== ladraoId) {
+        await i.reply({ content: "❌ Esse assalto não é seu, sai fora.", ephemeral: true }).catch(() => {});
+        return;
+      }
+
+      if (erro || posicao >= sequencia.length) {
+        await i.deferUpdate().catch(() => {});
+        return;
+      }
+
+      const indice = Number(i.customId.split(":")[2]);
+      const simbolo = ordemBotoes[indice];
+
+      if (simbolo !== sequencia[posicao]) {
+        erro = true;
+        await i.deferUpdate().catch(() => {});
+        coletor.stop("errou");
+        return;
+      }
+
+      posicao++;
+      await i.deferUpdate().catch(() => {});
+
+      if (posicao >= sequencia.length) {
+        coletor.stop("fase");
+        return;
+      }
+
+      embed.setDescription(`Boa! Cliques: ${posicao}/${tamanho}\n⏱️ Continua...`);
+      await mensagem.edit({ embeds: [embed], components: componentes }).catch(() => {});
+    });
+
+    const motivo = await esperarCollector(coletor);
+
+    if (erro || motivo !== "fase") {
+      const detalhe = erro ? "errou a sequência" : "deixou o tempo acabar";
+      await resolverRouboFalha(interaction, alvo, ladrao, vitima, mensagem, detalhe);
+      return;
+    }
+  }
+
+  await resolverRouboSucesso(interaction, alvo, ladrao, vitima, mensagem);
+}
+
+// =========================
+// COMANDOS
+// =========================
 const commands = [
   new SlashCommandBuilder()
-    .setName("loja")
-    .setDescription("Abre a loja da Baguncinha."),
+    .setName("ping")
+    .setDescription("Mostra a latência do bot."),
+
   new SlashCommandBuilder()
-    .setName("meuspedidos")
-    .setDescription("Mostra seus pedidos."),
+    .setName("help")
+    .setDescription("Mostra os comandos disponíveis."),
+
   new SlashCommandBuilder()
-    .setName("pedido")
-    .setDescription("Consulta um pedido pelo numero.")
+    .setName("avatar")
+    .setDescription("Mostra o avatar de um usuário.")
+    .addUserOption(option =>
+      option
+        .setName("usuario")
+        .setDescription("Usuário para ver o avatar (padrão: você mesmo)")
+        .setRequired(false)
+    ),
+
+  new SlashCommandBuilder()
+    .setName("userinfo")
+    .setDescription("Mostra informações de um membro do servidor.")
+    .addUserOption(option =>
+      option
+        .setName("usuario")
+        .setDescription("Usuário para ver as informações (padrão: você mesmo)")
+        .setRequired(false)
+    ),
+
+  new SlashCommandBuilder()
+    .setName("serverinfo")
+    .setDescription("Mostra informações sobre o servidor."),
+
+  new SlashCommandBuilder()
+    .setName("clear")
+    .setDescription("Apaga uma quantidade de mensagens do canal.")
     .addIntegerOption(option =>
-      option.setName("id").setDescription("Numero do pedido").setRequired(true).setMinValue(1)
-    ),
-  new SlashCommandBuilder()
-    .setName("catalogo")
-    .setDescription("Publica o catalogo com botoes de compra neste canal (staff).")
+      option
+        .setName("quantidade")
+        .setDescription("Número de mensagens para apagar (1-100)")
+        .setRequired(true)
+        .setMinValue(1)
+        .setMaxValue(100)
+    )
     .setDefaultMemberPermissions(PermissionFlagsBits.ManageMessages),
+
   new SlashCommandBuilder()
-    .setName("estoque")
-    .setDescription("Gerencia o estoque das entregas automaticas (staff).")
-    .setDefaultMemberPermissions(PermissionFlagsBits.ManageGuild)
-    .addSubcommand(sub =>
-      sub.setName("adicionar").setDescription("Adiciona itens ao estoque (um por linha).")
-        .addStringOption(o => o.setName("produto").setDescription("Produto").setRequired(true).setAutocomplete(true))
-        .addStringOption(o => o.setName("conteudo").setDescription("Segredo/codigo. Um item por linha.").setRequired(true))
+    .setName("lembrete")
+    .setDescription("Cria um lembrete.")
+    .addIntegerOption(option =>
+      option
+        .setName("minutos")
+        .setDescription("Em quantos minutos te avisar?")
+        .setRequired(true)
+        .setMinValue(1)
+        .setMaxValue(1440)
     )
-    .addSubcommand(sub => sub.setName("listar").setDescription("Mostra o estoque."))
-    .addSubcommand(sub =>
-      sub.setName("remover").setDescription("Remove um item pelo id.")
-        .addStringOption(o => o.setName("produto").setDescription("Produto").setRequired(true).setAutocomplete(true))
-        .addIntegerOption(o => o.setName("id").setDescription("Id do item").setRequired(true).setMinValue(1))
+    .addStringOption(option =>
+      option
+        .setName("mensagem")
+        .setDescription("O que você quer ser lembrado?")
+        .setRequired(true)
     ),
+
   new SlashCommandBuilder()
-    .setName("cupom")
-    .setDescription("Gerencia cupons de desconto (staff).")
-    .setDefaultMemberPermissions(PermissionFlagsBits.ManageGuild)
-    .addSubcommand(sub =>
-      sub.setName("criar").setDescription("Cria um cupom de desconto.")
-        .addStringOption(o => o.setName("codigo").setDescription("Codigo do cupom").setRequired(true).setMaxLength(32))
-        .addStringOption(o =>
-          o.setName("tipo").setDescription("Tipo de desconto").setRequired(true)
-            .addChoices({ name: "Percentual (%)", value: "percent" }, { name: "Valor fixo (R$)", value: "fixo" })
-        )
-        .addNumberOption(o => o.setName("valor").setDescription("Percentual ou valor em reais").setRequired(true))
-        .addIntegerOption(o => o.setName("usos").setDescription("Limite de usos (0 = ilimitado)").setMinValue(0))
-        .addIntegerOption(o => o.setName("dias").setDescription("Validade em dias (0 = sem expiracao)").setMinValue(0))
-        .addNumberOption(o => o.setName("minimo").setDescription("Compra minima em reais").setMinValue(0))
-        .addBooleanOption(o => o.setName("publicar").setDescription("Publicar no canal de cupons (padrao: sim)"))
-    )
-    .addSubcommand(sub => sub.setName("listar").setDescription("Lista os cupons."))
-    .addSubcommand(sub =>
-      sub.setName("remover").setDescription("Desativa um cupom.")
-        .addStringOption(o => o.setName("codigo").setDescription("Codigo do cupom").setRequired(true))
-    )
-    .addSubcommand(sub => sub.setName("publicar").setDescription("Publica o painel de cupons no canal de cupons.")),
-  new SlashCommandBuilder()
-    .setName("produto")
-    .setDescription("Gerencia os produtos (staff).")
-    .setDefaultMemberPermissions(PermissionFlagsBits.ManageGuild)
-    .addSubcommand(sub => sub.setName("listar").setDescription("Lista os produtos."))
-    .addSubcommand(sub =>
-      sub.setName("criar").setDescription("Cria um produto novo na vitrine.")
-        .addStringOption(o => o.setName("id").setDescription("ID interno (ex: nitro_1m_promo)").setRequired(true).setMaxLength(32))
-        .addStringOption(o => o.setName("nome").setDescription("Nome visivel").setRequired(true).setMaxLength(80))
-        .addNumberOption(o => o.setName("preco").setDescription("Preco em reais").setRequired(true).setMinValue(0))
-        .addStringOption(o => o.setName("categoria").setDescription("ID da categoria (cria se nao existir)").setMaxLength(32))
-        .addStringOption(o =>
-          o.setName("modo").setDescription("Entrega automatica ou pela staff")
-            .addChoices({ name: "Automatico", value: "auto" }, { name: "Staff", value: "semi" })
-        )
-        .addStringOption(o => o.setName("descricao").setDescription("Descricao").setMaxLength(1000))
-        .addStringOption(o => o.setName("emoji").setDescription("Emoji").setMaxLength(8))
-    )
-    .addSubcommand(sub =>
-      sub.setName("editar").setDescription("Edita um produto.")
-        .addStringOption(o => o.setName("produto").setDescription("Produto").setRequired(true).setAutocomplete(true))        .addStringOption(o =>
-          o.setName("modo").setDescription("Entrega automatica (se houver estoque) ou pela staff")
-            .addChoices({ name: "Automatico", value: "auto" }, { name: "Staff", value: "semi" })
-        )
-        .addRoleOption(o => o.setName("cargo").setDescription("Cargo temporario entregue na compra"))
-        .addIntegerOption(o => o.setName("cargo-dias").setDescription("Duracao do cargo em dias").setMinValue(0))
-        .addNumberOption(o => o.setName("preco").setDescription("Preco em reais").setMinValue(0))
-        .addNumberOption(o => o.setName("preco-original").setDescription("Preco riscado (de) em reais").setMinValue(0))
-        .addBooleanOption(o => o.setName("disponivel").setDescription("Produto a venda?"))
-        .addStringOption(o => o.setName("imagem").setDescription("URL da foto do item (gif ok)"))
-        .addStringOption(o => o.setName("banner").setDescription("URL do banner/gif do produto"))
-        .addStringOption(o =>
-          o.setName("banner-posicao").setDescription("Posicao do banner")
-            .addChoices(
-              { name: "Em cima", value: "top" },
-              { name: "Em baixo", value: "bottom" },
-              { name: "Miniatura", value: "thumbnail" },
-              { name: "Flutuante", value: "float" }
-            )
-        )
-        .addStringOption(o => o.setName("instrucoes").setDescription("Instrucoes de uso do produto").setMaxLength(1000))
-        .addStringOption(o => o.setName("categoria").setDescription("ID da categoria (ex: nitro)").setMaxLength(32))
+    .setName("perfil")
+    .setDescription("Mostra seu nível e XP no servidor.")
+    .addUserOption(option =>
+      option
+        .setName("usuario")
+        .setDescription("Usuário para ver o perfil (padrão: você mesmo)")
+        .setRequired(false)
     ),
+
   new SlashCommandBuilder()
-    .setName("config")
-    .setDescription("Configura canais e categoria de tickets (staff).")
-    .setDefaultMemberPermissions(PermissionFlagsBits.ManageGuild)
-    .addSubcommand(sub => sub.setName("ver").setDescription("Mostra a configuracao atual."))
-    .addSubcommand(sub =>
-      sub.setName("canal-logs").setDescription("Define o canal de logs.")
-        .addChannelOption(o => o.setName("canal").setDescription("Canal de texto").setRequired(true).addChannelTypes(ChannelType.GuildText))
+    .setName("rank")
+    .setDescription("Mostra o ranking de XP do servidor (top 10)."),
+
+  new SlashCommandBuilder()
+    .setName("rankmoedas")
+    .setDescription("Mostra o ranking de quem tem mais moedas no servidor (top 10)."),
+
+  new SlashCommandBuilder()
+    .setName("embed")
+    .setDescription("Abre um construtor interativo de embed (staff).")
+    .addStringOption(option =>
+      option.setName("titulo").setDescription("Título do embed").setRequired(true)
     )
-    .addSubcommand(sub =>
-      sub.setName("canal-feedback").setDescription("Define o canal de avaliacoes.")
-        .addChannelOption(o => o.setName("canal").setDescription("Canal de texto").setRequired(true).addChannelTypes(ChannelType.GuildText))
+    .addStringOption(option =>
+      option
+        .setName("descricao")
+        .setDescription("Texto do embed (use \\n pra quebrar linha)")
+        .setRequired(true)
     )
-    .addSubcommand(sub =>
-      sub.setName("categoria-ticket").setDescription("Define a categoria dos tickets.")
-        .addChannelOption(o => o.setName("categoria").setDescription("Categoria").setRequired(true).addChannelTypes(ChannelType.GuildCategory))
-    )
-    .addSubcommand(sub =>
-      sub.setName("canal-loja").setDescription("Publica a loja fixa neste canal (sem precisar de /loja).")
-        .addChannelOption(o => o.setName("canal").setDescription("Canal da loja").setRequired(true).addChannelTypes(ChannelType.GuildText))
-    )
-    .addSubcommand(sub =>
-      sub.setName("banner-loja").setDescription("Define o banner/gif da loja inicial.")
-        .addStringOption(o => o.setName("url").setDescription("URL da imagem ou gif (vazio remove)").setRequired(false))
-    )
-    .addSubcommand(sub =>
-      sub.setName("banner-posicao").setDescription("Posicao do banner da loja (top, bottom, thumbnail, float).")
-        .addStringOption(o =>
-          o.setName("posicao").setDescription("Posicao").setRequired(true)
-            .addChoices(
-              { name: "Em cima (imagem)", value: "top" },
-              { name: "Em baixo (imagem)", value: "bottom" },
-              { name: "Miniatura", value: "thumbnail" },
-              { name: "Flutuante", value: "float" },
-              { name: "Autor", value: "author" }
-            )
+    .setDefaultMemberPermissions(PermissionFlagsBits.ManageMessages),
+
+  new SlashCommandBuilder()
+    .setName("carteira")
+    .setDescription("Mostra quantas moedas você (ou alguém) tem.")
+    .addUserOption(option =>
+      option.setName("usuario").setDescription("Usuário para ver a carteira").setRequired(false)
+    ),
+
+  new SlashCommandBuilder()
+    .setName("banco")
+    .setDescription("Guarda suas moedas no banco — dinheiro no banco fica protegido de roubos.")
+    .addStringOption(option =>
+      option
+        .setName("acao")
+        .setDescription("O que você quer fazer no banco")
+        .setRequired(false)
+        .addChoices(
+          { name: "Ver saldo", value: "ver" },
+          { name: "Depositar", value: "depositar" },
+          { name: "Sacar", value: "sacar" },
+          { name: "Depositar tudo", value: "depositar_tudo" },
+          { name: "Sacar tudo", value: "sacar_tudo" }
         )
     )
-    .addSubcommand(sub =>
-      sub.setName("pix-nome").setDescription("Nome que aparece no PIX (nao use seu nome completo).")
-        .addStringOption(o => o.setName("nome").setDescription("Nome da loja no QR").setRequired(true).setMaxLength(25))
-        .addBooleanOption(o => o.setName("ocultar").setDescription("Ocultar nome pessoal no PIX").setRequired(false))
-    )
-    .addSubcommand(sub =>
-      sub.setName("smtp").setDescription("Configura e-mail para entrega de produtos.")
-        .addStringOption(o => o.setName("host").setDescription("Host SMTP").setRequired(true))
-        .addStringOption(o => o.setName("usuario").setDescription("Usuario SMTP").setRequired(true))
-        .addStringOption(o => o.setName("senha").setDescription("Senha / app password").setRequired(true))
-        .addStringOption(o => o.setName("from").setDescription("From (ex: Loja <loja@email.com>)").setRequired(true))
-        .addIntegerOption(o => o.setName("porta").setDescription("Porta (587 ou 465)").setMinValue(1))
-    )
-    .addSubcommand(sub =>
-      sub.setName("smtp-teste").setDescription("Envia um e-mail de teste com o SMTP salvo.")
-        .addStringOption(o => o.setName("email").setDescription("Destino do teste").setRequired(true))
-    )
-    .addSubcommand(sub =>
-      sub.setName("pausar").setDescription("Pausa ou reabre a loja (bloqueia compras).")
-        .addBooleanOption(o => o.setName("pausar").setDescription("true = pausar, false = reabrir").setRequired(true))
-        .addStringOption(o => o.setName("motivo").setDescription("Motivo (aparece na vitrine)").setMaxLength(200))
+    .addIntegerOption(option =>
+      option
+        .setName("quantidade")
+        .setDescription("Quantidade (para depositar/sacar)")
+        .setRequired(false)
+        .setMinValue(1)
     ),
+
   new SlashCommandBuilder()
-    .setName("configuracao")
-    .setDescription("Painel unico para configurar a loja (staff).")
-    .setDefaultMemberPermissions(PermissionFlagsBits.ManageGuild)
-    .addSubcommand(sub =>
-      sub.setName("loja").setDescription("Abre o painel: banner, SMTP, PIX, categoria de tickets e publicar loja.")
+    .setName("daily")
+    .setDescription("Resgata sua recompensa diária (250 a 500 moedas)."),
+
+  new SlashCommandBuilder()
+    .setName("trabalhar")
+    .setDescription("Faz um trampo e ganha uma moedinha certa."),
+
+  new SlashCommandBuilder()
+    .setName("pescar")
+    .setDescription("Vai pescar e pode voltar com uma grana (ou não)."),
+
+  new SlashCommandBuilder()
+    .setName("roubar")
+    .setDescription("Tenta roubar a carteira de alguém num minigame. Se for pego, paga 40% do valor da vítima.")
+    .addUserOption(option =>
+      option.setName("usuario").setDescription("Quem você vai tentar roubar").setRequired(true)
     ),
+
   new SlashCommandBuilder()
-    .setName("gerenciar")
-    .setDescription("Painel completo de produto (staff).")
-    .setDefaultMemberPermissions(PermissionFlagsBits.ManageGuild)
-    .addSubcommand(sub =>
-      sub.setName("produto").setDescription("Abre o painel: nome, preco, estoque, cargo, cupons, variante e mais.")
-        .addStringOption(o => o.setName("produto").setDescription("Produto").setRequired(true).setAutocomplete(true))
+    .setName("doar")
+    .setDescription("Doa uma quantidade de moedas pra outra pessoa.")
+    .addUserOption(option =>
+      option.setName("usuario").setDescription("Quem vai receber as moedas").setRequired(true)
+    )
+    .addIntegerOption(option =>
+      option
+        .setName("quantidade")
+        .setDescription("Quantas moedas você quer doar")
+        .setRequired(true)
+        .setMinValue(1)
     ),
+
   new SlashCommandBuilder()
-    .setName("categoria")
-    .setDescription("Gerencia categorias da loja (staff).")
-    .setDefaultMemberPermissions(PermissionFlagsBits.ManageGuild)
-    .addSubcommand(sub =>
-      sub.setName("criar").setDescription("Cria uma categoria.")
-        .addStringOption(o => o.setName("id").setDescription("ID interno (ex: nitro)").setRequired(true).setMaxLength(32))
-        .addStringOption(o => o.setName("nome").setDescription("Nome visivel").setRequired(true).setMaxLength(80))
-        .addStringOption(o => o.setName("emoji").setDescription("Emoji").setMaxLength(8))
-        .addStringOption(o => o.setName("descricao").setDescription("Descricao").setMaxLength(200))
-    )
-    .addSubcommand(sub => sub.setName("listar").setDescription("Lista as categorias."))
-    .addSubcommand(sub =>
-      sub.setName("editar").setDescription("Abre o painel para editar o embed da categoria (banner, cor, titulo).")
-        .addStringOption(o => o.setName("id").setDescription("ID da categoria").setRequired(true))
-    )
-    .addSubcommand(sub =>
-      sub.setName("remover").setDescription("Desativa uma categoria.")
-        .addStringOption(o => o.setName("id").setDescription("ID da categoria").setRequired(true))
-    )
-    .addSubcommand(sub =>
-      sub.setName("canal").setDescription("Cria um canal de texto em categoria nova ou existente.")
-        .addStringOption(o => o.setName("nome").setDescription("Nome do canal").setRequired(true).setMaxLength(100))
-        .addChannelOption(o =>
-          o.setName("categoria-existente").setDescription("Categoria Discord ja existente")
-            .addChannelTypes(ChannelType.GuildCategory)
+    .setName("loja")
+    .setDescription("Abre a Baguncinha Store em embed com botões pra comprar."),
+
+  new SlashCommandBuilder()
+    .setName("comprar")
+    .setDescription("Compra um item da loja direto por comando.")
+    .addStringOption(option =>
+      option
+        .setName("item")
+        .setDescription("Item que você quer comprar")
+        .setRequired(true)
+        .addChoices(
+          ...Object.entries(LOJA_ITEMS).map(([id, item]) => ({
+            name: `${item.nome} (${item.preco} 🪙)`,
+            value: id
+          }))
         )
-        .addStringOption(o => o.setName("nova-categoria").setDescription("Nome da categoria nova (se nao usar existente)").setMaxLength(100))
-        .addStringOption(o => o.setName("topico").setDescription("Topico do canal").setMaxLength(1024))
     ),
+
   new SlashCommandBuilder()
-    .setName("canais")
-    .setDescription("Exporta ou cola a estrutura de canais entre servidores (staff).")
-    .setDefaultMemberPermissions(PermissionFlagsBits.ManageGuild)
-    .addSubcommand(sub => sub.setName("exportar").setDescription("Gera um JSON com categorias e canais deste servidor."))
-    .addSubcommand(sub =>
-      sub.setName("colar").setDescription("Cria categorias e canais a partir de um JSON exportado.")
-        .addAttachmentOption(o => o.setName("arquivo").setDescription("Arquivo JSON gerado por /canais exportar").setRequired(true))
+    .setName("lojaimagem")
+    .setDescription("Define ou remove a imagem de um item da loja (só o dono).")
+    .addStringOption(option =>
+      option
+        .setName("item")
+        .setDescription("Item da loja")
+        .setRequired(true)
+        .addChoices(
+          ...Object.entries(LOJA_ITEMS).map(([id, item]) => ({
+            name: item.nome.slice(0, 100),
+            value: id
+          }))
+        )
+    )
+    .addStringOption(option =>
+      option
+        .setName("url")
+        .setDescription("URL da imagem (deixe vazio pra remover)")
+        .setRequired(false)
+    )
+    .setDefaultMemberPermissions(PermissionFlagsBits.Administrator),
+
+  new SlashCommandBuilder()
+    .setName("apostar")
+    .setDescription("Aposta suas moedas em cara ou coroa.")
+    .addIntegerOption(option =>
+      option
+        .setName("quantidade")
+        .setDescription("Quantas moedas você quer apostar?")
+        .setRequired(true)
+        .setMinValue(10)
+    )
+    .addStringOption(option =>
+      option
+        .setName("escolha")
+        .setDescription("Cara ou coroa")
+        .setRequired(true)
+        .addChoices(
+          { name: "Cara", value: "cara" },
+          { name: "Coroa", value: "coroa" }
+        )
     ),
+
   new SlashCommandBuilder()
-    .setName("feedback")
-    .setDescription("Avalia um pedido entregue.")
-    .addIntegerOption(o => o.setName("id").setDescription("Numero do pedido").setRequired(true).setMinValue(1))
-    .addIntegerOption(o => o.setName("nota").setDescription("Nota de 1 a 5").setRequired(true).setMinValue(1).setMaxValue(5))
-    .addStringOption(o => o.setName("comentario").setDescription("Comentario (opcional)").setMaxLength(500)),
-  new SlashCommandBuilder()
-    .setName("avaliacoes")
-    .setDescription("Mostra as avaliacoes de um produto.")
-    .addStringOption(o => o.setName("produto").setDescription("Produto").setRequired(true).setAutocomplete(true)),
-  new SlashCommandBuilder()
-    .setName("painel")
-    .setDescription("Painel unico da staff: loja, tickets, produto, estoque e cupons.")
-    .setDefaultMemberPermissions(PermissionFlagsBits.ManageGuild),
-  new SlashCommandBuilder()
-    .setName("painel-ticket")
-    .setDescription("Publica o painel de abertura de tickets (staff).")
-    .setDefaultMemberPermissions(PermissionFlagsBits.ManageGuild),
-  new SlashCommandBuilder()
-    .setName("ticket")
-    .setDescription("Abre um ticket de atendimento.")
-    .addStringOption(o => o.setName("assunto").setDescription("Assunto do ticket").setMaxLength(100)),
-  new SlashCommandBuilder()
-    .setName("logs")
-    .setDescription("Mostra os logs de vendas recentes (staff).")
-    .setDefaultMemberPermissions(PermissionFlagsBits.ManageGuild)
-    .addIntegerOption(o => o.setName("quantidade").setDescription("Quantidade de logs").setMinValue(1).setMaxValue(50)),
-  new SlashCommandBuilder()
-    .setName("relatorio")
-    .setDescription("Resumo de vendas (staff).")
-    .setDefaultMemberPermissions(PermissionFlagsBits.ManageGuild),
-  new SlashCommandBuilder()
-    .setName("fila")
-    .setDescription("Pedidos abertos aguardando Pix ou entrega (staff).")
-    .setDefaultMemberPermissions(PermissionFlagsBits.ManageGuild),
-  new SlashCommandBuilder()
-    .setName("backup")
-    .setDescription("Backup da loja (staff).")
-    .setDefaultMemberPermissions(PermissionFlagsBits.ManageGuild)
-    .addSubcommand(sub => sub.setName("exportar").setDescription("Baixa JSON completo da loja (pedidos, estoque, config)."))
-    .addSubcommand(sub =>
-      sub.setName("importar").setDescription("Restaura o JSON completo exportado antes.")
-        .addAttachmentOption(o => o.setName("arquivo").setDescription("JSON do /backup exportar").setRequired(true))
+    .setName("roleta")
+    .setDescription("Aposta moedas na Roleta Baguncinha.")
+    .addIntegerOption(option =>
+      option
+        .setName("quantidade")
+        .setDescription(`Quanto apostar (${ROLETA_APOSTA_MIN} a ${ROLETA_APOSTA_MAX})`)
+        .setRequired(true)
+        .setMinValue(ROLETA_APOSTA_MIN)
+        .setMaxValue(ROLETA_APOSTA_MAX)
     ),
+
+  new SlashCommandBuilder()
+    .setName("ppt")
+    .setDescription("Desafia alguém pra Pedra, Papel ou Tesoura apostando moedas.")
+    .addUserOption(option =>
+      option.setName("usuario").setDescription("Quem você desafia").setRequired(true)
+    )
+    .addIntegerOption(option =>
+      option
+        .setName("quantidade")
+        .setDescription(`Quanto apostar (${PPT_APOSTA_MIN} a ${PPT_APOSTA_MAX})`)
+        .setRequired(true)
+        .setMinValue(PPT_APOSTA_MIN)
+        .setMaxValue(PPT_APOSTA_MAX)
+    ),
+
+  new SlashCommandBuilder()
+    .setName("conquistas")
+    .setDescription("Vê e reivindica suas conquistas do servido."),
+
+  new SlashCommandBuilder()
+    .setName("jogos")
+    .setDescription("Mostra os próximos jogos do Brasileirão, Libertadores e da Seleção."),
+
+  new SlashCommandBuilder()
+    .setName("editarmoedas")
+    .setDescription("Adiciona, remove ou define as moedas de um usuário (admin).")
+    .addUserOption(option =>
+      option.setName("usuario").setDescription("Quem vai ter as moedas alteradas").setRequired(true)
+    )
+    .addStringOption(option =>
+      option
+        .setName("acao")
+        .setDescription("O que fazer com as moedas")
+        .setRequired(true)
+        .addChoices(
+          { name: "Adicionar", value: "adicionar" },
+          { name: "Remover", value: "remover" },
+          { name: "Definir (zera e coloca esse valor)", value: "definir" }
+        )
+    )
+    .addIntegerOption(option =>
+      option
+        .setName("quantidade")
+        .setDescription("Quantidade de moedas")
+        .setRequired(true)
+        .setMinValue(0)
+    )
+    .setDefaultMemberPermissions(PermissionFlagsBits.Administrator),
+
+  new SlashCommandBuilder()
+    .setName("sortear")
+    .setDescription("Sorteia um ganhador entre quem tem ticket de sorteio (staff).")
+    .addStringOption(option =>
+      option
+        .setName("premio")
+        .setDescription("O que está sendo sorteado (opcional)")
+        .setRequired(false)
+    )
+    .setDefaultMemberPermissions(PermissionFlagsBits.ManageMessages),
+
+  new SlashCommandBuilder()
+    .setName("bloquearcanais")
+    .setDescription("Bloqueia a visão de todos os canais pro cargo Não Verificado (roda uma vez, admin).")
+    .setDefaultMemberPermissions(PermissionFlagsBits.Administrator),
+
   new ContextMenuCommandBuilder()
     .setName("Editar embed")
     .setType(ApplicationCommandType.Message)
-    .setDefaultMemberPermissions(PermissionFlagsBits.ManageGuild)
-].map(c => c.toJSON());
+    .setDefaultMemberPermissions(PermissionFlagsBits.ManageMessages)
 
-async function discordGet(caminho) {
-  const controller = new AbortController();
-  const timeoutId = setTimeout(() => controller.abort(), 15000);
+].map(command => command.toJSON());
+
+// =========================
+// REGISTRO DOS COMANDOS
+// =========================
+async function registerCommands() {
   try {
-    const resposta = await fetch(`https://discord.com/api/v10${caminho}`, {
-      headers: { Authorization: `Bot ${TOKEN}` },
+    console.log("🔄 Registrando comandos no servidor...");
+
+    const rest = new REST({
+      version: "10"
+    }).setToken(TOKEN);
+
+    await rest.put(
+      Routes.applicationGuildCommands(
+        CLIENT_ID,
+        GUILD_ID
+      ),
+      {
+        body: commands
+      }
+    );
+
+    console.log("✅ Comandos registrados no servidor!");
+  } catch (error) {
+    console.error("❌ Erro ao registrar comandos:");
+    console.error(error);
+  }
+}
+
+// =========================
+// AVISOS DE FUTEBOL (BRASILEIRÃO + SELEÇÃO)
+// =========================
+// Fonte: TheSportsDB (gratuita, sem cadastro). Docs: https://www.thesportsdb.com/api.php
+// A chave de teste "3" já funciona. Quem tiver Patreon pode colocar THESPORTSDB_KEY no Render.
+//
+// APIs avaliadas:
+//   TheSportsDB          — grátis, sem chave, cobre Brasil. USADA.
+//   football-data.org    — grátis com cadastro, mas Série A/Copa do Brasil pedem plano pago.
+//   API-Football         — 100 req/dia com chave; o bot antigo dependia só disso e parava sem a chave.
+//   ESPN site.api        — sem chave, mas bloqueia este ambiente (403).
+const SPORTSDB_API_BASE = `https://www.thesportsdb.com/api/v1/json/${THESPORTSDB_KEY}`;
+
+const LIGAS_FUTEBOL = [
+  { id: "4351", nome: "Brasileirão Série A" },
+  { id: "4404", nome: "Brasileirão Série B" },
+  { id: "4725", nome: "Copa do Brasil" },
+  { id: "4501", nome: "Copa Libertadores" }
+];
+const SELECAO_TEAM_ID = "134496";
+
+let futebolChannelId = null;
+const FOOTBALL_CHECK_INTERVAL_MS = 30 * 60 * 1000;
+const FOOTBALL_REMINDER_WINDOW_MIN = 90;
+const FOOTBALL_RESULTADO_MAX_MS = 18 * 60 * 60 * 1000;
+const avisosEnviados = new Set();
+const resultadosEnviados = new Set();
+
+let jogosCache = { timestamp: 0, dados: null };
+const JOGOS_CACHE_MS = 10 * 60 * 1000;
+let eventosFutebolCache = { timestamp: 0, dados: [] };
+const EVENTOS_CACHE_MS = 8 * 60 * 1000;
+
+function esperar(ms) {
+  return new Promise(resolve => setTimeout(resolve, ms));
+}
+
+async function sportsDbFetch(endpoint, params) {
+  const url = new URL(`${SPORTSDB_API_BASE}${endpoint}`);
+  Object.entries(params || {}).forEach(([key, value]) => {
+    if (value !== undefined && value !== null) url.searchParams.set(key, value);
+  });
+
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), 12000);
+
+  try {
+    const response = await fetch(url, {
+      headers: {
+        Accept: "application/json",
+        "User-Agent": "bot-baguncinha"
+      },
       signal: controller.signal
     });
-    const json = await resposta.json().catch(() => null);
-    return { ok: resposta.ok, status: resposta.status, json };
+
+    if (!response.ok) {
+      throw new Error(`TheSportsDB respondeu ${response.status}`);
+    }
+
+    const texto = await response.text();
+    if (!texto) return {};
+    return JSON.parse(texto);
+  } catch (error) {
+    if (error.name === "AbortError") {
+      throw new Error("Tempo esgotado conectando na TheSportsDB (12s)");
+    }
+    throw error;
   } finally {
     clearTimeout(timeoutId);
   }
 }
 
-async function diagnosticoInicial() {
-  console.log("== Diagnostico de conexao ==");
-
-  const me = await discordGet("/users/@me").catch(error => ({ ok: false, json: { message: error.message } }));
-  if (!me.ok) {
-    console.error(`Token invalido (HTTP ${me.status}): ${me.json?.message || "sem detalhe"}`);
-    return;
-  }
-  console.log(`Token pertence a: ${me.json.username} (id ${me.json.id})`);
-
-  const app = await discordGet("/applications/@me").catch(() => ({ ok: false }));
-  if (app.ok) {
-    console.log(`Aplicacao do token: ${app.json.name} (id ${app.json.id})`);
-    if (CLIENT_ID && app.json.id !== CLIENT_ID) {
-      console.error(
-        `PROBLEMA: CLIENT_ID (${CLIENT_ID}) e diferente do dono do token (${app.json.id}). ` +
-        "Use o id da aplicacao do token."
-      );
-    } else if (CLIENT_ID) {
-      console.log("CLIENT_ID confere com o token.");
-    }
-  } else {
-    console.error("Nao consegui ler a aplicacao do token.");
+function parseKickoffMs(evento) {
+  if (evento.strTimestamp) {
+    const bruto = String(evento.strTimestamp).trim().replace(" ", "T");
+    const comZona = /Z$|[+-]\d{2}:?\d{2}$/.test(bruto) ? bruto : `${bruto}Z`;
+    const t = Date.parse(comZona);
+    if (!Number.isNaN(t)) return t;
   }
 
-  const guilds = await discordGet("/users/@me/guilds").catch(() => ({ ok: false }));
-  if (guilds.ok) {
-    if (guilds.json.length === 0) {
-      console.error("O bot NAO esta em nenhum servidor. Convide ele primeiro.");
-    }
-    for (const g of guilds.json) {
-      const marca = guildPermitida(g.id) ? "  <== servidor autorizado" : "  (NAO autorizado: o bot vai sair)";
-      console.log(`Servidor: ${g.name} (id ${g.id})${marca}`);
-    }
-    for (const gid of GUILD_IDS) {
-      if (!guilds.json.some(g => g.id === gid)) {
-        console.error(
-          `PROBLEMA: o bot nao esta no servidor ${gid}. ` +
-          "Confirme o id do servidor e reconvide com o escopo applications.commands."
-        );
-      } else {
-        console.log(`OK: o bot esta no servidor ${gid}.`);
-      }
-    }
-  } else {
-    console.error("Nao consegui listar os servidores do bot.");
+  if (evento.dateEvent && evento.strTime && evento.strTime !== "00:00:00") {
+    const t = Date.parse(`${evento.dateEvent}T${evento.strTime}Z`);
+    if (!Number.isNaN(t)) return t;
   }
+
+  if (evento.dateEvent) {
+    const t = Date.parse(`${evento.dateEvent}T15:00:00-03:00`);
+    if (!Number.isNaN(t)) return t;
+  }
+
+  return 0;
 }
 
-async function registerCommands() {
-  const rest = new REST({ version: "10" }).setToken(TOKEN);
+function normalizarStatusFutebol(status) {
+  const s = String(status || "").trim().toUpperCase();
+  if (!s || s === "NS" || s === "NOT STARTED" || s === "TIMED" || s === "TBD") return "NS";
+  if (["FT", "AET", "PEN", "FINISHED", "MATCH FINISHED", "AOT", "AP"].includes(s)) return "FT";
+  if (["PST", "POSTPONED", "CANC", "CANCELLED", "ABD", "SUSP"].includes(s)) return "OFF";
+  if (["1H", "2H", "HT", "ET", "P", "LIVE", "IN PLAY", "INT"].includes(s)) return "LIVE";
+  return s;
+}
 
-  // Registra a lista atual no servidor. Isso sobrescreve os comandos do servidor
-  // a cada start, entao qualquer comando removido/renomeado some na hora.
-  let registradoNoServidor = false;
-  for (const gid of GUILD_IDS) {
+function nomeMandante(evento) {
+  return evento.strHomeTeam || "Mandante";
+}
+
+function nomeVisitante(evento) {
+  return evento.strAwayTeam || "Visitante";
+}
+
+function nomeCompeticao(evento) {
+  return evento.strLeague || "Futebol";
+}
+
+function formatarHorarioJogo(kickoffMs) {
+  if (!kickoffMs) return "horário indefinido";
+  const timestamp = Math.floor(kickoffMs / 1000);
+  return `<t:${timestamp}:F> (<t:${timestamp}:R>)`;
+}
+
+function deduplicarEventos(lista) {
+  const vistos = new Set();
+  const unicos = [];
+  for (const evento of lista) {
+    const id = String(evento.idEvent || `${evento.strEvent}-${evento.dateEvent}`);
+    if (vistos.has(id)) continue;
+    vistos.add(id);
+    unicos.push(evento);
+  }
+  return unicos;
+}
+
+async function coletarEventosFutebol() {
+  if (eventosFutebolCache.dados.length && Date.now() - eventosFutebolCache.timestamp < EVENTOS_CACHE_MS) {
+    return eventosFutebolCache.dados;
+  }
+
+  const eventos = [];
+  const chamadas = [];
+
+  for (const liga of LIGAS_FUTEBOL) {
+    chamadas.push({ tipo: "liga-next", id: liga.id });
+    chamadas.push({ tipo: "liga-past", id: liga.id });
+  }
+  chamadas.push({ tipo: "selecao-next" });
+  chamadas.push({ tipo: "selecao-last" });
+
+  for (const chamada of chamadas) {
     try {
-      await rest.put(Routes.applicationGuildCommands(CLIENT_ID, gid), { body: commands });
-      console.log(`Comandos slash registrados no servidor ${gid} (${commands.length}).`);
-      registradoNoServidor = true;
-    } catch (error) {
-      if (error.code === 50001 || error.status === 403) {
-        console.error(`Missing Access ao registrar no servidor ${gid}. Veja o diagnostico acima.`);
-      } else {
-        console.error(`Erro ao registrar no servidor ${gid}:`, error.message);
+      let lote = [];
+      if (chamada.tipo === "liga-next") {
+        const data = await sportsDbFetch("/eventsnextleague.php", { id: chamada.id });
+        lote = data?.events || [];
+      } else if (chamada.tipo === "liga-past") {
+        const data = await sportsDbFetch("/eventspastleague.php", { id: chamada.id });
+        lote = data?.events || [];
+      } else if (chamada.tipo === "selecao-next") {
+        const data = await sportsDbFetch("/eventsnext.php", { id: SELECAO_TEAM_ID });
+        lote = data?.events || [];
+      } else if (chamada.tipo === "selecao-last") {
+        const data = await sportsDbFetch("/eventslast.php", { id: SELECAO_TEAM_ID });
+        lote = data?.results || data?.events || [];
       }
+      eventos.push(...lote);
+    } catch (error) {
+      console.error(`❌ Falha ao buscar jogos (${chamada.tipo} ${chamada.id || "selecao"}):`, error.message);
+    }
+    await esperar(250);
+  }
+
+  const unicos = deduplicarEventos(eventos);
+  eventosFutebolCache = { timestamp: Date.now(), dados: unicos };
+  return unicos;
+}
+
+function normalizarNomeCanal(nome) {
+  return String(nome || "")
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase()
+    .replace(/[^a-z0-9]/g, "");
+}
+
+async function acharCanalPorNome(guild, nomesAlvo) {
+  if (!guild) return null;
+
+  await guild.channels.fetch().catch(() => {});
+
+  const alvos = nomesAlvo.map(normalizarNomeCanal);
+  const candidatos = [...guild.channels.cache.values()].filter(c => {
+    if (c.type !== ChannelType.GuildText && c.type !== ChannelType.GuildAnnouncement) return false;
+    return alvos.includes(normalizarNomeCanal(c.name));
+  });
+
+  if (candidatos.length === 0) return null;
+
+  candidatos.sort((a, b) => (a.createdTimestamp || 0) - (b.createdTimestamp || 0));
+  return candidatos[0];
+}
+
+async function ensureFutebolChannel(guild) {
+  let channel = await acharCanalPorNome(guild, ["futebol", "football"]);
+
+  if (!channel) {
+    try {
+      channel = await guild.channels.create({
+        name: "futebol",
+        type: ChannelType.GuildText,
+        topic: "Avisos automáticos do Brasileirão, Libertadores e da Seleção Brasileira"
+      });
+      console.log("✅ Canal #futebol criado.");
+    } catch (error) {
+      console.error("❌ Não consegui criar o canal #futebol (confere a permissão 'Gerenciar Canais' do bot):");
+      console.error(error);
+      return null;
     }
   }
 
-  // Limpa comandos globais antigos que ficaram presos na lista do bot. Sem isso,
-  // comandos de versoes passadas continuam aparecendo no Discord (cache de ate 1h)
-  // e o bot responde "Comando desconhecido" quando alguem usa um deles.
-  try {
-    await rest.put(Routes.applicationCommands(CLIENT_ID), { body: [] });
-    console.log("Comandos globais antigos limpos.");
-  } catch (error) {
-    console.error("Nao consegui limpar os comandos globais antigos:", error.message);
-  }
+  return channel;
+}
 
-  if (registradoNoServidor) return;
+async function checkFootball() {
+  if (!futebolChannelId) return;
+
+  const channel = client.channels.cache.get(futebolChannelId);
+  if (!channel) return;
 
   try {
-    await rest.put(Routes.applicationCommands(CLIENT_ID), { body: commands });
-    console.log("Comandos globais registrados (podem demorar ate 1h pra aparecer).");
+    const fixtures = await coletarEventosFutebol();
+    const now = Date.now();
+
+    for (const jogo of fixtures) {
+      const fixtureId = String(jogo.idEvent || "");
+      if (!fixtureId) continue;
+
+      const status = normalizarStatusFutebol(jogo.strStatus);
+      const kickoff = parseKickoffMs(jogo);
+      const minutosParaComecar = kickoff ? (kickoff - now) / 60000 : Infinity;
+      const mandante = nomeMandante(jogo);
+      const visitante = nomeVisitante(jogo);
+      const competicao = nomeCompeticao(jogo);
+
+      if (
+        status === "NS" &&
+        minutosParaComecar > 0 &&
+        minutosParaComecar <= FOOTBALL_REMINDER_WINDOW_MIN &&
+        !avisosEnviados.has(fixtureId)
+      ) {
+        avisosEnviados.add(fixtureId);
+
+        const embed = new EmbedBuilder()
+          .setTitle(`⚽ ${mandante} x ${visitante}`)
+          .setDescription(
+            `Partida chegando, cria! Se liga:\n\n` +
+            `🏆 ${competicao}\n` +
+            `🕐 ${formatarHorarioJogo(kickoff)}`
+          )
+          .setColor(0x2ecc71);
+
+        channel.send({ embeds: [embed] }).catch(() => {});
+      }
+
+      const acabouHaPouco = kickoff && now - kickoff >= 0 && now - kickoff <= FOOTBALL_RESULTADO_MAX_MS;
+      if (status === "FT" && acabouHaPouco && !resultadosEnviados.has(fixtureId)) {
+        resultadosEnviados.add(fixtureId);
+
+        const golsMandante = jogo.intHomeScore ?? "?";
+        const golsVisitante = jogo.intAwayScore ?? "?";
+
+        const embed = new EmbedBuilder()
+          .setTitle(`🏁 Acabou o jogo — ${mandante} ${golsMandante} x ${golsVisitante} ${visitante}`)
+          .setDescription(`🏆 ${competicao}`)
+          .setColor(0xe67e22);
+
+        channel.send({ embeds: [embed] }).catch(() => {});
+      }
+    }
   } catch (error) {
-    console.error("Falha tambem no registro global:", error.message);
-    console.error("Vou conectar mesmo assim pra ver o diagnostico completo nos logs.");
+    console.error("❌ Erro ao checar jogos de futebol:", error.message);
   }
 }
 
-function pedidosDoCliente(userId) {
-  return Object.values(store.pedidos)
-    .filter(p => p.userId === userId)
-    .sort((a, b) => Number(b.id) - Number(a.id));
-}
+// =========================
+// BOT CONECTADO
+// =========================
+client.once("ready", async () => {
+  console.log("=================================");
+  console.log(`🤖 Bot conectado como ${client.user.tag}`);
+  console.log(`🆔 ID: ${client.user.id}`);
+  console.log(`🌐 Servidores: ${client.guilds.cache.size}`);
+  console.log("=================================");
 
-function payloadMeusPedidos(userId) {
-  const meus = pedidosDoCliente(userId).slice(0, 25);
-  if (!meus.length) {
-    return { content: "Voce ainda nao tem pedidos.", embeds: [], components: [] };
-  }
-  const linhas = meus.slice(0, 8).map(p =>
-    `#${p.id} — ${p.produtoNome} — ${formatarReais(p.valorCentavos)} — ${STATUS_LABEL[p.status]}`
-  );
-  return {
-    content: null,
-    embeds: [new EmbedBuilder().setTitle("Seus pedidos").setDescription(linhas.join("\n")).setColor(0x9b59b6)],
-    components: [
-      new ActionRowBuilder().addComponents(
-        new StringSelectMenuBuilder()
-          .setCustomId(`cli_pedido_sel:${Date.now()}`)
-          .setPlaceholder("Abrir um pedido")
-          .addOptions(meus.map(p => ({
-            label: `#${p.id} — ${String(p.produtoNome).slice(0, 70)}`.slice(0, 100),
-            value: String(p.id),
-            description: String(STATUS_LABEL[p.status] || p.status).slice(0, 100)
-          })))
-      )
-    ]
-  };
-}
+  setInterval(tickVoiceXp, VOICE_XP_INTERVAL_MS);
+  console.log(`🎙️ Rastreamento de XP por voz ativado (a cada ${VOICE_XP_INTERVAL_MS / 60000} min)`);
 
-function componentsPedidoCliente(pedido) {
-  const rows = [];
-  if (pedido.pixCopiaECola && pedido.status === STATUS.AGUARDANDO_PAGAMENTO) {
-    rows.push(...botoesPix(pedido.id, pedido.cartChannelId, pedido.guildId));
+  const guildVerificacao = client.guilds.cache.get(GUILD_ID);
+  if (guildVerificacao && !NAO_VERIFICADO_ROLE_ID.startsWith("COLOQUE_")) {
+    await ensureInterestRoles(guildVerificacao);
+    await ensureTop1Role(guildVerificacao);
+    await atualizarTop1(guildVerificacao);
+    const canalVerificacao = await ensureVerificacaoChannel(guildVerificacao);
+    if (canalVerificacao) {
+      const mensagem = await ensureVerificacaoMessage(canalVerificacao);
+      if (mensagem) {
+        verificacaoMessageId = mensagem.id;
+        console.log(`Sistema de verificacao ativo (mensagem ${verificacaoMessageId}).`);
+      } else {
+        console.log("Verificacao NAO ativa: nao consegui criar/achar a mensagem de verificacao.");
+      }
+    } else {
+      console.log("Verificacao NAO ativa: nao consegui criar/achar o canal #verificacao.");
+    }
   } else {
-    rows.push(...botaoIrCarrinho(pedido.cartChannelId, pedido.guildId));
+    console.log("NAO_VERIFICADO_ROLE_ID nao configurado — verificacao desativada.");
+  }
+
+  setInterval(() => {
+    const guild = client.guilds.cache.get(GUILD_ID);
+    if (guild) atualizarTop1(guild).catch(() => {});
+  }, 60 * 60 * 1000);
+
+  const guildFutebol = client.guilds.cache.get(GUILD_ID);
+  if (guildFutebol) {
+    const canal = await ensureFutebolChannel(guildFutebol);
+    if (canal) futebolChannelId = canal.id;
+  }
+
+  if (futebolChannelId) {
+    setInterval(checkFootball, FOOTBALL_CHECK_INTERVAL_MS);
+    checkFootball();
+    console.log(`⚽ Avisos de futebol ativados (a cada ${FOOTBALL_CHECK_INTERVAL_MS / 60000} min, TheSportsDB)`);
+  } else {
+    console.log("⚠️ Canal #futebol não disponível — avisos de futebol desativados.");
+  }
+});
+
+// =========================
+// VERIFICACAO POR BOTOES — PORTAO DE ENTRADA
+// =========================
+// Novo membro ganha o cargo "Nao Verificado" e so enxerga o canal de verificacao.
+// Quando clica num botao de interesse, ganha o cargo e perde o "Nao Verificado".
+const NAO_VERIFICADO_ROLE_ID = "1552496115566252082";
+
+const INTEREST_BOTOES = [
+  { id: "valorant", label: "Valorant", emoji: "🎯" },
+  { id: "minecraft", label: "Minecraft", emoji: "⛏️" },
+  { id: "cs", label: "CS", emoji: "🔫" },
+  { id: "roblox", label: "Roblox", emoji: "🧱" },
+  { id: "fortnite", label: "Fortnite", emoji: "🪂" },
+  { id: "futebol", label: "Futebol", emoji: "⚽" },
+  { id: "nitros", label: "Nitros", emoji: "💎" },
+  { id: "promocao", label: "Promocoes", emoji: "🏷️" },
+  { id: "geral", label: "Geral", emoji: "💬" }
+];
+
+const VERIFICACAO_MARCADOR = "verificacao-baguncinha";
+const VERIFICACAO_BTN_PREFIX = "verificacao:";
+let verificacaoMessageId = null;
+
+function montarEmbedVerificacao() {
+  const lista = INTEREST_BOTOES
+    .map(b => `• ${(NOMES_INTERESSES[b.id] || b.label).replace(/^[^\p{L}\p{N}]+/u, "").trim()}`)
+    .join("\n");
+
+  return new EmbedBuilder()
+    .setTitle("Verificacao de acesso")
+    .setDescription(
+      "Bem-vindo(a) a Baguncinha! Pra liberar o acesso ao resto do servidor, clica no botao " +
+      "do que voce curte:\n\n" +
+      `${lista}\n\n` +
+      "Assim que clicar em pelo menos um, seu acesso ja e liberado na hora."
+    )
+    .setColor(0x5865f2)
+    .setFooter({ text: VERIFICACAO_MARCADOR });
+}
+
+function montarBotoesVerificacao() {
+  const rows = [];
+  for (let i = 0; i < INTEREST_BOTOES.length; i += 5) {
+    const chunk = INTEREST_BOTOES.slice(i, i + 5);
+    const row = new ActionRowBuilder();
+    for (const botao of chunk) {
+      const b = new ButtonBuilder()
+        .setCustomId(`${VERIFICACAO_BTN_PREFIX}${botao.id}`)
+        .setLabel(botao.label)
+        .setStyle(ButtonStyle.Primary);
+      if (botao.emoji) b.setEmoji(botao.emoji);
+      row.addComponents(b);
+    }
+    rows.push(row);
   }
   return rows;
 }
 
-function pedidosParaAvaliar(userId) {
-  return pedidosDoCliente(userId).filter(p => p.status === STATUS.ENTREGUE && !p.feedback);
+function ehMensagemVerificacao(mensagem) {
+  if (!client.user || mensagem.author?.id !== client.user.id) return false;
+  const embed = mensagem.embeds[0];
+  if (!embed) return false;
+  if (embed.footer?.text === VERIFICACAO_MARCADOR) return true;
+  const titulo = String(embed.title || "");
+  return titulo.includes("Verificação") || titulo.includes("Verificacao");
 }
 
-function payloadEscolherAvaliacao(userId) {
-  const lista = pedidosParaAvaliar(userId).slice(0, 25);
-  if (!lista.length) {
-    return { content: "Voce nao tem pedido entregue pendente de avaliacao.", embeds: [], components: [] };
-  }
-  return {
-    content: "Escolha o pedido para avaliar.",
-    embeds: [],
-    components: [
-      new ActionRowBuilder().addComponents(
-        new StringSelectMenuBuilder()
-          .setCustomId(`cli_avaliar_sel:${Date.now()}`)
-          .setPlaceholder("Pedido para avaliar")
-          .addOptions(lista.map(p => ({
-            label: `#${p.id} — ${String(p.produtoNome).slice(0, 70)}`.slice(0, 100),
-            value: String(p.id),
-            description: "Entregue — toque para avaliar".slice(0, 100)
-          })))
-      )
-    ]
-  };
-}
+async function ensureVerificacaoChannel(guild) {
+  let channel = await acharCanalPorNome(guild, ["verificacao", "verificação"]);
 
-function payloadEscolherAvaliacoesProduto() {
-  const ids = [...new Set(Object.values(store.pedidos).filter(p => p.feedback).map(p => p.produtoId))];
-  const opcoes = ids.slice(0, 25).map(id => {
-    const produto = getProduto(id);
-    return {
-      label: String(produto ? produto.nome : id).slice(0, 100),
-      value: String(id)
-    };
-  }).filter(o => o.value);
-  if (!opcoes.length) {
-    return { content: "Ainda nao ha avaliacoes.", embeds: [], components: [] };
-  }
-  return {
-    content: "Escolha o produto para ver as avaliacoes.",
-    embeds: [],
-    components: [
-      new ActionRowBuilder().addComponents(
-        new StringSelectMenuBuilder()
-          .setCustomId(`cli_avaliacoes_sel:${Date.now()}`)
-          .setPlaceholder("Ver avaliacoes de um produto")
-          .addOptions(opcoes)
-      )
-    ]
-  };
-}
-
-function payloadAvaliacoesProduto(produtoId) {
-  const produto = getProduto(produtoId);
-  const avaliacoes = Object.values(store.pedidos)
-    .filter(p => p.produtoId === produtoId && p.feedback)
-    .sort((a, b) => b.feedback.em - a.feedback.em);
-  if (!avaliacoes.length) {
-    return { content: `Ainda nao ha avaliacoes para **${produto ? produto.nome : produtoId}**.`, embeds: [], components: [] };
-  }
-  const media = avaliacoes.reduce((s, p) => s + p.feedback.nota, 0) / avaliacoes.length;
-  const linhas = avaliacoes.slice(0, 10).map(p => {
-    const comentario = p.feedback.comentario ? `\n"${p.feedback.comentario}"` : "";
-    return `${estrelas(p.feedback.nota)} — pedido #${p.id}${comentario}`;
-  });
-  return {
-    content: null,
-    embeds: [
-      new EmbedBuilder()
-        .setTitle(`Avaliacoes — ${produto ? produto.nome : produtoId}`)
-        .setDescription(`Media: **${media.toFixed(1)}/5** com **${avaliacoes.length}** avaliacao(oes).\n\n` + linhas.join("\n\n"))
-        .setColor(0xf1c40f)
-    ],
-    components: []
-  };
-}
-
-function embedDaMensagem(message) {
-  return message?.embeds?.[0] || null;
-}
-
-function origemMensagemBot(message) {
-  if (!message?.guildId) return { tipo: "livre", gid: null };
-  const gid = message.guildId;
-  const st = store.guilds[gid];
-  if (st?.lojaFixa?.messageId === message.id) return { tipo: "loja", gid };
-  if (st?.paineisFixos?.ticket === message.id) return { tipo: "ticket", gid };
-  if (st?.paineisFixos?.cupons === message.id) return { tipo: "cupons", gid };
-  if (st?.paineisFixos?.feedbacks === message.id) return { tipo: "feedbacks", gid };
-  return { tipo: "livre", gid };
-}
-
-function dadosEmbedAtual(embed) {
-  const cor = embed?.hexColor ? String(embed.hexColor).replace(/^#/, "") : "";
-  const banner = embed?.image?.url || embed?.thumbnail?.url || "";
-  return {
-    titulo: embed?.title || "",
-    descricao: embed?.description || "",
-    cor,
-    banner,
-    rodape: embed?.footer?.text || ""
-  };
-}
-
-function aplicarCamposEmbed(embed, campos) {
-  if (campos.titulo) embed.setTitle(String(campos.titulo).slice(0, 256));
-  if (campos.descricao !== undefined) embed.setDescription(String(campos.descricao || "\u200b").slice(0, 4096));
-  const cor = parseCor(campos.cor);
-  if (cor) embed.setColor(cor);
-  if (campos.banner && urlMidiaValida(campos.banner)) embed.setImage(campos.banner);
-  if (campos.rodape) embed.setFooter({ text: String(campos.rodape).slice(0, 2048) });
-  else if (campos.rodape === "") embed.data.footer = undefined;
-  return embed;
-}
-
-function dadosIniciaisModalEmbed(embed, origem) {
-  const d = dadosEmbedAtual(embed);
-  if (origem?.tipo === "loja") {
-    const cat = Object.values(store.categorias || {}).find(c =>
-      d.titulo === `${c.emoji || "📁"} ${c.nome}` || d.titulo === c.nome
-    );
-    if (cat) {
-      return {
-        titulo: `${cat.emoji || "📁"} ${cat.nome}`,
-        descricao: cat.descricao || "",
-        cor: cat.cor || "",
-        banner: cat.banner || "",
-        rodape: cat.rodape || ""
-      };
-    }
-    return {
-      titulo: store.config.lojaTitulo || d.titulo || "Loja Baguncinha",
-      descricao: store.config.lojaDescricao || "",
-      cor: store.config.lojaCor || d.cor,
-      banner: store.config.banner || d.banner,
-      rodape: store.config.lojaRodape || ""
-    };
-  }
-  if (origem?.tipo === "ticket") {
-    const cfg = ticketPainel();
-    return {
-      titulo: cfg.titulo || d.titulo,
-      descricao: cfg.descricao || d.descricao,
-      cor: cfg.cor || d.cor,
-      banner: cfg.banner || d.banner,
-      rodape: cfg.rodape || ""
-    };
-  }
-  if (origem?.tipo === "cupons") {
-    const cfg = store.config.cuponsPainel || {};
-    return {
-      titulo: cfg.titulo || d.titulo,
-      descricao: cfg.descricao || "",
-      cor: cfg.cor || d.cor,
-      banner: cfg.banner || d.banner,
-      rodape: cfg.rodape || ""
-    };
-  }
-  return d;
-}
-
-function modalEditarEmbed(messageId, embed, origem) {
-  const d = dadosIniciaisModalEmbed(embed, origem);
-  const modal = new ModalBuilder()
-    .setCustomId(`app_embed_modal:${messageId}`)
-    .setTitle("Editar embed");
-  modal.addComponents(
-    new ActionRowBuilder().addComponents(campoTexto("titulo", "Titulo", TextInputStyle.Short, d.titulo, { required: true, maxLength: 256 })),
-    new ActionRowBuilder().addComponents(campoTexto("descricao", "Descricao", TextInputStyle.Paragraph, d.descricao, { required: false, maxLength: 1000 })),
-    new ActionRowBuilder().addComponents(campoTexto("cor", "Cor hex (ex: 9b59b6)", TextInputStyle.Short, d.cor, { required: false, maxLength: 7 })),
-    new ActionRowBuilder().addComponents(campoTexto("banner", "URL do banner (vazio remove)", TextInputStyle.Short, d.banner, { required: false, maxLength: 400 })),
-    new ActionRowBuilder().addComponents(campoTexto("rodape", "Rodape (vazio remove)", TextInputStyle.Short, d.rodape, { required: false, maxLength: 80 }))
-  );
-  return modal;
-}
-
-function persistirEmbedEditado(origem, campos) {
-  if (origem.tipo === "loja") {
-    const cat = Object.values(store.categorias || {}).find(c =>
-      campos.titulo === `${c.emoji || "📁"} ${c.nome}` || campos.titulo === c.nome
-    );
-    if (cat) {
-      patchCategoria(cat.id, {
-        descricao: campos.descricao,
-        cor: campos.cor ? campos.cor.replace(/^#/, "") : cat.cor,
-        banner: campos.banner || null,
-        rodape: campos.rodape || null
+  if (!channel) {
+    try {
+      channel = await guild.channels.create({
+        name: "verificacao",
+        type: ChannelType.GuildText,
+        topic: "Clique nos botoes pra liberar seu acesso ao servidor"
       });
-      return { tipo: "loja", categoriaId: cat.id };
+      console.log("✅ Canal #verificacao criado.");
+    } catch (error) {
+      console.error("❌ Não consegui criar o canal #verificacao (confere a permissão 'Gerenciar Canais'):");
+      console.error(error);
+      return null;
     }
-    store.config.lojaTitulo = campos.titulo;
-    store.config.lojaDescricao = campos.descricao;
-    store.config.lojaCor = campos.cor ? campos.cor.replace(/^#/, "") : "";
-    store.config.lojaRodape = campos.rodape || "";
-    store.config.banner = campos.banner || null;
-    salvarStore();
-    return { tipo: "loja" };
   }
-  if (origem.tipo === "ticket") {
-    store.config.ticketPainel.titulo = campos.titulo;
-    store.config.ticketPainel.descricao = campos.descricao;
-    store.config.ticketPainel.cor = campos.cor ? campos.cor.replace(/^#/, "") : store.config.ticketPainel.cor;
-    store.config.ticketPainel.rodape = campos.rodape || null;
-    store.config.ticketPainel.banner = campos.banner || null;
-    salvarStore();
-    return { tipo: "ticket" };
-  }
-  if (origem.tipo === "cupons") {
-    store.config.cuponsPainel.titulo = campos.titulo;
-    store.config.cuponsPainel.descricao = campos.descricao;
-    store.config.cuponsPainel.cor = campos.cor ? campos.cor.replace(/^#/, "") : "";
-    store.config.cuponsPainel.rodape = campos.rodape || "";
-    store.config.cuponsPainel.banner = campos.banner || null;
-    salvarStore();
-    return { tipo: "cupons" };
-  }
-  if (origem.tipo === "feedbacks") {
-    return { tipo: "feedbacks" };
-  }
-  return { tipo: "livre" };
+
+  return channel;
 }
 
-function parseAvaliacaoTexto(texto) {
-  const t = String(texto || "").trim();
-  const m = t.match(/^([1-5])(?:\s*\/\s*5)?(?:\s+|\s*[-–—:]\s*|\s+)([\s\S]+)?$/);
-  if (m) return { nota: Number(m[1]), comentario: (m[2] || "").trim() };
-  const soNota = t.match(/^([1-5])\s*$/);
-  if (soNota) return { nota: Number(soNota[1]), comentario: "" };
+async function ensureVerificacaoMessage(channel) {
+  try {
+    const mensagens = await channel.messages.fetch({ limit: 100 });
+    const existentes = [...mensagens.values()]
+      .filter(ehMensagemVerificacao)
+      .sort((a, b) => a.createdTimestamp - b.createdTimestamp);
+
+    const embed = montarEmbedVerificacao();
+    const components = montarBotoesVerificacao();
+    const existente = existentes[0];
+
+    if (existente) {
+      await existente.edit({ embeds: [embed], components }).catch(() => {});
+      await existente.reactions.removeAll().catch(() => {});
+      return existente;
+    }
+
+    const mensagem = await channel.send({ embeds: [embed], components });
+    return mensagem;
+  } catch (error) {
+    console.error("❌ Erro ao preparar mensagem de verificação:", error);
+    return null;
+  }
+}
+
+client.on("guildMemberAdd", async member => {
+  if (member.user.bot) return;
+  if (NAO_VERIFICADO_ROLE_ID.startsWith("COLOQUE_")) return; // ainda não configurado
+
+  try {
+    await member.roles.add(NAO_VERIFICADO_ROLE_ID);
+    console.log(`🔒 ${member.user.tag} marcado como não verificado.`);
+  } catch (error) {
+    console.error("❌ Erro ao dar cargo de não verificado:", error);
+  }
+});
+
+async function handleVerificacaoBotao(interaction) {
+  const interesse = interaction.customId.slice(VERIFICACAO_BTN_PREFIX.length);
+  const valido = INTEREST_BOTOES.some(b => b.id === interesse);
+  if (!valido) {
+    await interaction.reply({ content: "Esse botao nao e valido.", ephemeral: true }).catch(() => {});
+    return;
+  }
+
+  const member = await interaction.guild.members.fetch(interaction.user.id).catch(() => null);
+  if (!member) {
+    await interaction.reply({ content: "Nao consegui te achar no servidor.", ephemeral: true }).catch(() => {});
+    return;
+  }
+
+  const roleId = INTEREST_ROLES[interesse];
+  let ganhouCargo = false;
+  let jaTinhaCargo = false;
+
+  if (roleId && !String(roleId).startsWith("COLOQUE_")) {
+    jaTinhaCargo = member.roles.cache.has(roleId);
+    if (!jaTinhaCargo) {
+      await member.roles.add(roleId).catch(() => {});
+      ganhouCargo = true;
+    } else {
+      await member.roles.remove(roleId).catch(() => {});
+    }
+  }
+
+  let acabouDeVerificar = false;
+  if (!NAO_VERIFICADO_ROLE_ID.startsWith("COLOQUE_") && member.roles.cache.has(NAO_VERIFICADO_ROLE_ID)) {
+    await member.roles.remove(NAO_VERIFICADO_ROLE_ID).catch(() => {});
+    acabouDeVerificar = true;
+    console.log(`${interaction.user.tag} verificado.`);
+  }
+
+  const nomeInteresse = (NOMES_INTERESSES[interesse] || interesse).replace(/^[^\p{L}\p{N}]+/u, "").trim();
+  let texto;
+  if (acabouDeVerificar) {
+    texto = `Verificado! Acesso liberado. Cargo **${nomeInteresse}** adicionado.`;
+  } else if (ganhouCargo) {
+    texto = `Cargo **${nomeInteresse}** adicionado.`;
+  } else if (jaTinhaCargo) {
+    texto = `Cargo **${nomeInteresse}** removido.`;
+  } else {
+    texto = `Verificado! Acesso liberado.`;
+  }
+
+  await interaction.reply({ content: texto, ephemeral: true }).catch(() => {});
+}
+
+// =========================
+// GANHO DE XP POR MENSAGEM
+// =========================
+const XP_COOLDOWN_MS = 60 * 1000; // 1 minuto entre ganhos de XP por usuário
+
+client.on("messageCreate", async message => {
+  if (message.author.bot || !message.guild) return;
+
+  const data = getUserData(message.author.id);
+  const now = Date.now();
+
+  if (now - data.lastMessageTimestamp < XP_COOLDOWN_MS) return;
+
+  data.lastMessageTimestamp = now;
+  const xpGained = Math.floor(Math.random() * 10) + 5; // 5 a 14 XP por mensagem
+  const { leveledUp, data: updated } = addXp(message.author.id, xpGained, "text");
+
+  if (leveledUp) {
+    message.channel
+      .send(`💬 Salve ${message.author}, você subiu pro **nível de texto ${updated.textLevel}**!`)
+      .catch(() => {});
+
+    const newRoleId = await updateLevelRole(message.guild, message.author.id, getTotalLevel(updated));
+    if (newRoleId) {
+      message.channel
+        .send(`🏅 ${message.author} desbloqueou o cargo <@&${newRoleId}> na correria!`)
+        .catch(() => {});
+    }
+  }
+});
+
+// =========================
+// GANHO DE XP POR VOZ (CALL)
+// =========================
+// A cada X minutos, todo mundo que está conectado em um canal de voz
+// (menos o canal AFK e bots) ganha XP de voz. É separado do XP de texto.
+const VOICE_XP_INTERVAL_MS = 5 * 60 * 1000; // a cada 5 minutos
+
+async function tickVoiceXp() {
+  const guild = client.guilds.cache.get(GUILD_ID);
+  if (!guild) return;
+
+  const voiceChannels = guild.channels.cache.filter(
+    channel => channel.type === ChannelType.GuildVoice && channel.id !== guild.afkChannelId
+  );
+
+  for (const channel of voiceChannels.values()) {
+    for (const member of channel.members.values()) {
+      if (member.user.bot) continue;
+
+      const xpGained = Math.floor(Math.random() * 10) + 15; // 15 a 24 XP a cada 5 min
+      const { leveledUp, data: updated } = addXp(member.id, xpGained, "voice");
+
+      if (leveledUp) {
+        const announceChannel = guild.systemChannel;
+        if (announceChannel) {
+          announceChannel
+            .send(`🎙️ Salve ${member}, você subiu pro **nível de voz ${updated.voiceLevel}**!`)
+            .catch(() => {});
+        }
+
+        const newRoleId = await updateLevelRole(guild, member.id, getTotalLevel(updated));
+        if (newRoleId && announceChannel) {
+          announceChannel
+            .send(`🏅 ${member} desbloqueou o cargo <@&${newRoleId}> na correria!`)
+            .catch(() => {});
+        }
+      }
+    }
+  }
+}
+
+// =========================
+// CONSTRUTOR INTERATIVO DE /embed
+// =========================
+const embedDrafts = new Map(); // userId -> rascunho do embed em edição
+
+const CORES_EMBED = {
+  azul: { nome: "🔵 Azul", valor: 0x5865f2 },
+  vermelho: { nome: "🔴 Vermelho", valor: 0xed4245 },
+  verde: { nome: "🟢 Verde", valor: 0x57f287 },
+  amarelo: { nome: "🟡 Amarelo", valor: 0xfee75c },
+  roxo: { nome: "🟣 Roxo", valor: 0x9b59b6 },
+  laranja: { nome: "🟠 Laranja", valor: 0xe67e22 },
+  preto: { nome: "⚫ Preto", valor: 0x23272a },
+  branco: { nome: "⚪ Branco", valor: 0xffffff },
+  rosa: { nome: "🌸 Rosa", valor: 0xeb459e },
+  aleatoria: { nome: "🎲 Aleatória (sorteia toda vez)", valor: null }
+};
+
+function urlValida(valor) {
+  return typeof valor === "string" && /^https?:\/\//i.test(valor);
+}
+
+// =========================
+// BOTÕES DO EMBED (o que cada botão faz)
+// =========================
+// Tipos: "link" (abre um site), "cargo" (dá/tira um cargo), "msg" (responde uma mensagem só pra quem clicou).
+// Máximo de 5 botões por embed (uma linha). O texto da resposta do tipo "msg" vai dentro do
+// próprio botão (customId), por isso o limite de 70 caracteres — assim funciona pra sempre,
+// mesmo depois de reiniciar o bot.
+const EMBED_BOTOES_MAX = 5;
+const EMBED_BOTAO_MSG_MAX = 70;
+
+// Cargos com essas permissões NUNCA podem virar botão — senão qualquer pessoa
+// clicando ganharia poder de staff.
+const PERMISSOES_PERIGOSAS_BOTAO = [
+  PermissionFlagsBits.Administrator,
+  PermissionFlagsBits.ManageGuild,
+  PermissionFlagsBits.ManageRoles,
+  PermissionFlagsBits.ManageChannels,
+  PermissionFlagsBits.ManageMessages,
+  PermissionFlagsBits.ManageWebhooks,
+  PermissionFlagsBits.KickMembers,
+  PermissionFlagsBits.BanMembers,
+  PermissionFlagsBits.ModerateMembers,
+  PermissionFlagsBits.MentionEveryone
+];
+
+// Retorna o motivo do erro (texto) ou null se o cargo pode ser usado.
+// memberCriador = quem está montando o embed (null na hora do clique).
+function validarCargoParaBotao(guild, role, memberCriador) {
+  if (!role) return "Não achei esse cargo.";
+  if (role.id === guild.id) return "Não dá pra usar o @everyone.";
+  if (role.managed) return "Esse cargo é de um bot/integração.";
+  if (role.id === NAO_VERIFICADO_ROLE_ID) return "Esse é o cargo da verificação, não pode virar botão.";
+  if (role.permissions.any(PERMISSOES_PERIGOSAS_BOTAO)) {
+    return "Esse cargo tem permissão de staff/administração, então não pode ser dado por botão.";
+  }
+  if (!role.editable) return "Meu cargo precisa estar ACIMA desse cargo na lista de cargos.";
+  if (
+    memberCriador &&
+    guild.ownerId !== memberCriador.id &&
+    memberCriador.roles.highest.comparePositionTo(role) <= 0
+  ) {
+    return "Você só pode usar cargos que estão abaixo do seu cargo mais alto.";
+  }
   return null;
 }
 
-async function handleAvaliacaoPorTexto(message) {
-  if (message.author.bot) return;
-  const ehDm = !message.guildId;
-  if (!ehDm) {
-    if (!guildPermitida(message.guildId)) return;
-    const canalId = guildCfg(message.guildId).canais.feedbacks;
-    if (!canalId || message.channelId !== canalId) return;
-  }
-  const parsed = parseAvaliacaoTexto(message.content);
-  if (!parsed) return;
-  const pendentes = Object.values(store.pedidos)
-    .filter(p => p.userId === message.author.id && p.status === STATUS.ENTREGUE && !p.feedback)
-    .sort((a, b) => Number(b.id) - Number(a.id));
-  const pedido = pendentes[0];
-  if (!pedido) return;
-  pedido.userTag = message.author.username;
-  await registrarFeedback(pedido, parsed.nota, parsed.comentario);
-  await atualizarDmFeedback(pedido).catch(() => {});
-  if (ehDm) {
-    await message.reply(`${estrelas(parsed.nota)} Valeu pela avaliacao!`).catch(() => {});
-  } else {
-    await message.delete().catch(() => {});
-  }
+// Aceita ID, menção (<@&id>) ou nome do cargo
+function acharCargoPorTexto(guild, texto) {
+  const limpo = texto.trim();
+  const idMatch = limpo.match(/^<@&(\d+)>$/) || limpo.match(/^(\d{15,25})$/);
+  if (idMatch) return guild.roles.cache.get(idMatch[1]) || null;
+
+  const minusculo = limpo.toLowerCase();
+  return guild.roles.cache.find(r => r.name.toLowerCase() === minusculo) || null;
 }
 
-async function handleAppEditarEmbed(interaction) {
-  if (!isStaff(interaction.member)) {
-    await interaction.reply({ content: "So a staff pode editar o embed.", ephemeral: true });
-    return;
-  }
-  const message = interaction.targetMessage;
-  if (!message) {
-    await interaction.reply({ content: "Mensagem nao encontrada.", ephemeral: true });
-    return;
-  }
-  if (message.author.id !== client.user.id) {
-    await interaction.reply({ content: "So da pra editar mensagem do bot.", ephemeral: true });
-    return;
-  }
-  const embed = embedDaMensagem(message);
-  if (!embed) {
-    await interaction.reply({ content: "Essa mensagem nao tem embed.", ephemeral: true });
-    return;
-  }
-  await interaction.showModal(modalEditarEmbed(message.id, embed, origemMensagemBot(message)));
+function customIdDoBotao(botao) {
+  if (botao.tipo === "cargo") return `embedbtn:cargo:${botao.roleId}`;
+  if (botao.tipo === "msg") return `embedbtn:msg:${botao.texto}`;
+  return null;
 }
 
-async function handleCommand(interaction) {
-  if (canalBloqueiaComandoCliente(interaction)) {
-    await interaction.reply({ content: avisoComandoBloqueado(interaction), ephemeral: true });
-    return;
-  }
-  switch (interaction.commandName) {
-    case "loja":
-      if (isStaff(interaction.member)) {
-        await publicarLojaFixa(interaction.guildId, true);
-        await interaction.reply({ content: `Loja fixa publicada em <#${guildCfg(interaction.guildId).canais.loja}>.`, ephemeral: true });
-      } else {
-        await interaction.reply({ content: `A loja fica em <#${guildCfg(interaction.guildId).canais.loja}>.`, ephemeral: true });
-      }
-      return;
-    case "catalogo":
-      await publicarLojaFixa(interaction.guildId, true);
-      await interaction.reply({ content: `Loja fixa publicada em <#${guildCfg(interaction.guildId).canais.loja}>.`, ephemeral: true });
-      return;
-    case "meuspedidos": {
-      await interaction.reply({ ...payloadMeusPedidos(interaction.user.id), ephemeral: true });
-      return;
-    }
-    case "pedido": {
-      const id = String(interaction.options.getInteger("id"));
-      const pedido = store.pedidos[id];
-      if (!pedido) {
-        await interaction.reply({ content: "Pedido nao encontrado.", ephemeral: true });
-        return;
-      }
-      if (pedido.userId !== interaction.user.id && !isStaff(interaction.member)) {
-        await interaction.reply({ content: "Voce so pode ver os seus pedidos.", ephemeral: true });
-        return;
-      }
-      await interaction.reply({
-        embeds: [embedPedidoCliente(pedido)],
-        components: componentsPedidoCliente(pedido),
-        ephemeral: true
-      });
-      return;
-    }
-    case "estoque":
-      await handleEstoque(interaction);
-      return;
-    case "cupom":
-      await handleCupom(interaction);
-      return;
-    case "produto":
-      await handleProduto(interaction);
-      return;
-    case "config":
-      await handleConfig(interaction);
-      return;
-    case "configuracao":
-      await handleConfiguracao(interaction);
-      return;
+function montarBotoesPublicos(botoes) {
+  if (!botoes || botoes.length === 0) return [];
 
-    case "painel":
-      if (!isStaff(interaction.member)) {
-        await interaction.reply({ content: "So a staff pode usar o painel.", ephemeral: true });
-        return;
-      }
-      await interaction.reply({ ...payloadPainelStaff(), ephemeral: true });
-      return;
-    case "gerenciar":
-      await handleGerenciar(interaction);
-      return;
-    case "categoria":
-      await handleCategoria(interaction);
-      return;
-    case "canais":
-      await handleCanais(interaction);
-      return;
-    case "feedback":
-      await handleFeedback(interaction);
-      return;
-    case "avaliacoes":
-      await handleAvaliacoes(interaction);
-      return;
-    case "painel-ticket":
-      await handlePainelTicket(interaction);
-      return;
-    case "ticket":
-      await handleTicket(interaction);
-      return;
-    case "logs":
-      await handleLogs(interaction);
-      return;
-    case "relatorio":
-      await handleRelatorio(interaction);
-      return;
-    case "fila":
-      await handleFila(interaction);
-      return;
-    case "backup":
-      await handleBackup(interaction);
-      return;
-    default:
-      console.warn(`Comando nao reconhecido: /${interaction.commandName}. Os comandos atuais serao re-registrados.`);
-      await registerCommands().catch(() => {});
-      await interaction
-        .reply({ content: "Comando desconhecido. Reinvocarei apos o bot atualizar.", ephemeral: true })
-        .catch(() => {});
-  }
-}
+  const linha = new ActionRowBuilder();
+  for (const botao of botoes) {
+    const b = new ButtonBuilder().setLabel(botao.label);
 
-async function handleButton(interaction) {
-  const [acao, valor] = interaction.customId.split(":");
-
-  if (acao === "comprar") {
-    if (store.config.lojaPausada) {
-      await interaction.reply({ content: motivoLojaPausada(), ephemeral: true });
-      return;
-    }
-    const produto = getProduto(valor);
-    if (!produto || !produto.disponivel) {
-      await interaction.reply({ content: "Esse produto nao esta disponivel.", ephemeral: true });
-      return;
-    }
-    if (produtoEsgotado(produto)) {
-      await interaction.reply({
-        content: `❌ **${produto.nome}** esta esgotado. Sem estoque no momento.`,
-        ephemeral: true
-      });
-      return;
-    }
-    await interaction.showModal(modalComprar(valor));
-    return;
-  }
-
-  if (acao === "ver") {
-    const produto = getProduto(valor);
-    if (!produto) {
-      await interaction.reply({ content: "Produto nao encontrado.", ephemeral: true });
-      return;
-    }
-    const esgotado = produtoEsgotado(produto);
-    const row = new ActionRowBuilder().addComponents(
-      new ButtonBuilder()
-        .setCustomId(`comprar:${produto.id}`)
-        .setLabel(esgotado ? "Esgotado" : "Comprar")
-        .setStyle(esgotado ? ButtonStyle.Secondary : ButtonStyle.Success)
-        .setDisabled(!produtoPodeComprar(produto)),
-      new ButtonBuilder()
-        .setCustomId(produto.categoriaId ? `loja_cat:${produto.categoriaId}` : "loja_home")
-        .setLabel("Voltar")
-        .setStyle(ButtonStyle.Secondary)
-    );
-    if (isStaff(interaction.member) && !produto.ocultarBotaoConfig) {
-      row.addComponents(
-        new ButtonBuilder()
-          .setCustomId(`gear:${produto.id}`)
-          .setEmoji("⚙️")
-          .setStyle(ButtonStyle.Secondary)
-      );
-    }
-    if (mensagemEfmera(interaction)) {
-      await interaction.update({ embeds: [embedProdutoVitrine(produto)], components: [row], content: null });
+    if (botao.tipo === "link") {
+      b.setStyle(ButtonStyle.Link).setURL(botao.url);
+    } else if (botao.tipo === "cargo") {
+      b.setStyle(ButtonStyle.Success).setCustomId(customIdDoBotao(botao));
     } else {
-      await interaction.reply({ embeds: [embedProdutoVitrine(produto)], components: [row], ephemeral: true });
+      b.setStyle(ButtonStyle.Primary).setCustomId(customIdDoBotao(botao));
     }
-    return;
+
+    linha.addComponents(b);
   }
 
-  if (acao === "gear") {
-    if (!isStaff(interaction.member)) {
-      await interaction.reply({ content: "So a staff pode configurar.", ephemeral: true });
-      return;
-    }
-    const produto = getProduto(valor);
-    if (!produto) {
-      await interaction.reply({ content: "Produto nao encontrado.", ephemeral: true });
-      return;
-    }
-    await enviarPainelProduto(interaction, produto);
-    return;
-  }
-
-  if (acao === "addstock") {
-    if (!isStaff(interaction.member)) {
-      await interaction.reply({ content: "So a staff pode gerenciar estoque.", ephemeral: true });
-      return;
-    }
-    const produto = getProduto(valor);
-    if (!produto) {
-      await interaction.reply({ content: "Produto nao encontrado.", ephemeral: true });
-      return;
-    }
-    const modal = new ModalBuilder().setCustomId(`addstock_modal:${valor}`).setTitle(`Estoque — ${produto.nome}`.slice(0, 45));
-    modal.addComponents(
-      new ActionRowBuilder().addComponents(
-        new TextInputBuilder()
-          .setCustomId("conteudo")
-          .setLabel("Itens (um por linha)")
-          .setStyle(TextInputStyle.Paragraph)
-          .setRequired(true)
-          .setMaxLength(4000)
-      )
-    );
-    await interaction.showModal(modal);
-    return;
-  }
-
-  if (acao === "clearstock") {
-    if (!isStaff(interaction.member)) {
-      await interaction.reply({ content: "So a staff pode limpar estoque.", ephemeral: true });
-      return;
-    }
-    const produto = getProduto(valor);
-    if (!produto) {
-      await interaction.reply({ content: "Produto nao encontrado.", ephemeral: true });
-      return;
-    }
-    const fila = estoqueDe(valor);
-    const total = fila.length;
-    store.estoque[valor] = [];
-    salvarStore();
-    await atualizarLojaFixa();
-    await interaction.reply({ content: `Estoque de **${produto.nome}** limpo (${total} item(ns) removidos).`, ephemeral: true });
-    return;
-  }
-
-  if (acao === "editprod") {
-    if (!isStaff(interaction.member)) {
-      await interaction.reply({ content: "So a staff pode editar.", ephemeral: true });
-      return;
-    }
-    const produto = getProduto(valor);
-    if (!produto) {
-      await interaction.reply({ content: "Produto nao encontrado.", ephemeral: true });
-      return;
-    }
-    const modal = new ModalBuilder().setCustomId(`editprod_modal:${valor}`).setTitle(`Editar ${produto.nome}`.slice(0, 45));
-    modal.addComponents(
-      new ActionRowBuilder().addComponents(
-        new TextInputBuilder()
-          .setCustomId("preco")
-          .setLabel("Preco atual (reais)")
-          .setStyle(TextInputStyle.Short)
-          .setRequired(false)
-          .setValue(String((produto.precoCentavos / 100).toFixed(2)))
-      ),
-      new ActionRowBuilder().addComponents(
-        new TextInputBuilder()
-          .setCustomId("preco_original")
-          .setLabel("Preco riscado / de (reais, 0 = sem)")
-          .setStyle(TextInputStyle.Short)
-          .setRequired(false)
-          .setValue(String(((produto.precoOriginalCentavos || 0) / 100).toFixed(2)))
-      ),
-      new ActionRowBuilder().addComponents(
-        new TextInputBuilder()
-          .setCustomId("imagem")
-          .setLabel("URL da foto do item (gif ok)")
-          .setStyle(TextInputStyle.Short)
-          .setRequired(false)
-          .setValue(produto.imagem || "")
-      ),
-      new ActionRowBuilder().addComponents(
-        new TextInputBuilder()
-          .setCustomId("banner")
-          .setLabel("URL do banner/gif do produto")
-          .setStyle(TextInputStyle.Short)
-          .setRequired(false)
-          .setValue(produto.banner || "")
-      ),
-      new ActionRowBuilder().addComponents(
-        new TextInputBuilder()
-          .setCustomId("descricao")
-          .setLabel("Descricao")
-          .setStyle(TextInputStyle.Paragraph)
-          .setRequired(false)
-          .setValue((produto.descricao || "").slice(0, 1000))
-      )
-    );
-    await interaction.showModal(modal);
-    return;
-  }
-
-  if (acao === "editextra") {
-    if (!isStaff(interaction.member)) {
-      await interaction.reply({ content: "So a staff pode editar.", ephemeral: true });
-      return;
-    }
-    const produto = getProduto(valor);
-    if (!produto) {
-      await interaction.reply({ content: "Produto nao encontrado.", ephemeral: true });
-      return;
-    }
-    const modal = new ModalBuilder().setCustomId(`editextra_modal:${valor}`).setTitle(`Extra ${produto.nome}`.slice(0, 45));
-    modal.addComponents(
-      new ActionRowBuilder().addComponents(
-        new TextInputBuilder()
-          .setCustomId("banner_posicao")
-          .setLabel("Banner: top, bottom, thumbnail, float")
-          .setStyle(TextInputStyle.Short)
-          .setRequired(false)
-          .setValue(produto.bannerPosicao || "bottom")
-          .setMaxLength(20)
-      ),
-      new ActionRowBuilder().addComponents(
-        new TextInputBuilder()
-          .setCustomId("instrucoes")
-          .setLabel("Instrucoes do produto")
-          .setStyle(TextInputStyle.Paragraph)
-          .setRequired(false)
-          .setValue((produto.instrucoes || "").slice(0, 1000))
-          .setMaxLength(1000)
-      ),
-      new ActionRowBuilder().addComponents(
-        new TextInputBuilder()
-          .setCustomId("categoria")
-          .setLabel("ID da categoria")
-          .setStyle(TextInputStyle.Short)
-          .setRequired(false)
-          .setValue(produto.categoriaId || "")
-          .setMaxLength(32)
-      )
-    );
-    await interaction.showModal(modal);
-    return;
-  }
-
-  if (acao === "pix_copiar" || acao === "pix_txt") {
-    const pedido = store.pedidos[String(valor)];
-    if (!pedido || !pedido.pixCopiaECola) {
-      await interaction.reply({ content: "Esse Pix nao esta mais disponivel.", ephemeral: true });
-      return;
-    }
-    if (pedido.userId !== interaction.user.id && !isStaff(interaction.member)) {
-      await interaction.reply({ content: "Esse Pix nao e seu.", ephemeral: true });
-      return;
-    }
-    await interaction.showModal(modalPix(pedido));
-    return;
-  }
-
-  if (acao === "entregar") {
-    const member = interaction.member;
-    if (!isStaff(member)) {
-      await interaction.reply({ content: "So a staff pode entregar.", ephemeral: true });
-      return;
-    }
-    const pedido = store.pedidos[valor];
-    if (!pedido || pedido.status !== STATUS.AGUARDANDO_ENTREGA) {
-      await interaction.reply({ content: "Esse pedido nao esta aguardando entrega.", ephemeral: true });
-      return;
-    }
-    const modal = new ModalBuilder().setCustomId(`entregar_modal:${valor}`).setTitle(`Entregar pedido #${valor}`);
-    modal.addComponents(
-      new ActionRowBuilder().addComponents(
-        new TextInputBuilder()
-          .setCustomId("codigo")
-          .setLabel("Codigo / licenca / chave")
-          .setStyle(TextInputStyle.Paragraph)
-          .setRequired(true)
-          .setMaxLength(1000)
-      ),
-      new ActionRowBuilder().addComponents(
-        new TextInputBuilder()
-          .setCustomId("extra")
-          .setLabel("Observacao para o cliente (opcional)")
-          .setStyle(TextInputStyle.Short)
-          .setRequired(false)
-          .setMaxLength(200)
-      )
-    );
-    await interaction.showModal(modal);
-    return;
-  }
-
-  if (acao === "marcarpago") {
-    if (!isStaff(interaction.member)) {
-      await interaction.reply({ content: "So a staff pode marcar pagamento.", ephemeral: true });
-      return;
-    }
-    const pedido = store.pedidos[String(valor)];
-    if (!pedido || pedido.status !== STATUS.AGUARDANDO_PAGAMENTO) {
-      await interaction.reply({ content: "Esse pedido nao esta aguardando Pix.", ephemeral: true });
-      return;
-    }
-    await interaction.deferReply({ ephemeral: true });
-    registrarLog("pagamento_manual", `Pedido #${pedido.id} marcado como pago por <@${interaction.user.id}>.`, {
-      pedidoId: pedido.id,
-      userId: pedido.userId,
-      staffId: interaction.user.id
-    });
-    await confirmarPagamento(pedido, { status: "approved" });
-    await interaction.editReply({ content: `Pedido #${pedido.id} marcado como pago.` });
-    return;
-  }
-
-  if (acao === "cancelar") {
-    await interaction.deferReply({ ephemeral: true });
-    const member = interaction.member;
-    if (!isStaff(member)) {
-      await interaction.editReply({ content: "So a staff pode cancelar." });
-      return;
-    }
-    const pedido = store.pedidos[valor];
-    if (!pedido || [STATUS.ENTREGUE, STATUS.CANCELADO].includes(pedido.status)) {
-      await interaction.editReply({ content: "Esse pedido nao pode ser cancelado." });
-      return;
-    }
-    pedido.status = STATUS.CANCELADO;
-    pedido.canceladoEm = Date.now();
-    salvarStore();
-    registrarLog("cancelado", `Pedido #${pedido.id} cancelado por <@${interaction.user.id}>.`, {
-      pedidoId: pedido.id,
-      userId: pedido.userId,
-      staffId: interaction.user.id
-    });
-    await avisarCliente(pedido, `❌ Pedido #${pedido.id} foi cancelado pela staff.`);
-    await notificarAdmin(pedido, `Cancelado por <@${interaction.user.id}>.`);
-    await interaction.editReply({ content: `Pedido #${pedido.id} cancelado.` });
-    return;
-  }
-
-  if (acao === "avaliar") {
-    const eph = interaction.inGuild() ? { ephemeral: true } : {};
-    const pedido = store.pedidos[String(valor)];
-    if (!pedido) {
-      await interaction.reply({ content: "Pedido nao encontrado.", ...eph });
-      return;
-    }
-    if (pedido.userId !== interaction.user.id && !isStaff(interaction.member)) {
-      await interaction.reply({ content: "Voce so pode avaliar os seus pedidos.", ...eph });
-      return;
-    }
-    if (pedido.feedback) {
-      await interaction.reply({ content: "Voce ja avaliou esse pedido. Obrigado!", ...eph });
-      return;
-    }
-    await interaction.showModal(modalAvaliar(valor));
-    return;
-  }
-
-  if (acao === "fb_msg") {
-    if (!isStaff(interaction.member)) {
-      await interaction.reply({ content: "So a staff pode editar a mensagem.", ephemeral: true });
-      return;
-    }
-    const pedido = store.pedidos[String(valor)];
-    if (!pedido) {
-      await interaction.reply({ content: "Pedido nao encontrado.", ephemeral: true });
-      return;
-    }
-    const modal = new ModalBuilder().setCustomId(`fb_msg_modal:${valor}`).setTitle(`Msg feedback #${valor}`.slice(0, 45));
-    modal.addComponents(
-      new ActionRowBuilder().addComponents(
-        campoTexto("titulo", "Titulo da DM", TextInputStyle.Short, tituloFeedbackPedido(pedido), { required: true, maxLength: 80 })
-      ),
-      new ActionRowBuilder().addComponents(
-        campoTexto(
-          "mensagem",
-          "Texto ({user} {id} {produto} {valor})",
-          TextInputStyle.Paragraph,
-          mensagemFeedbackPedido(pedido),
-          { required: true, maxLength: 1000 }
-        )
-      )
-    );
-    await interaction.showModal(modal);
-    return;
-  }
-
-  if (acao === "ticket_abrir") {
-    await interaction.showModal(modalMotivoTicket());
-    return;
-  }
-
-  if (acao === "ticket_meus") {
-    await mostrarMeusPedidos(interaction);
-    return;
-  }
-
-  if (acao === "ticket_avaliar") {
-    await iniciarAvaliacao(interaction);
-    return;
-  }
-
-  if (acao === "ticket_fechar") {
-    await fecharTicket(interaction, valor);
-    return;
-  }
-
-  if (acao === "carrinho_fechar") {
-    await fecharCarrinho(interaction, valor);
-    return;
-  }
-
-  if (acao === "loja_home") {
-    await interaction.update(payloadLoja()).catch(() => {});
-    return;
-  }
-
-  if (acao === "loja_cat") {
-    await interaction.update(payloadLoja(valor)).catch(() => {});
-    return;
-  }
-
-  if (acao === "cli_meuspedidos") {
-    await interaction.reply({ ...payloadMeusPedidos(interaction.user.id), ephemeral: true });
-    return;
-  }
-
-  if (acao === "cli_avaliar") {
-    const pendentes = pedidosParaAvaliar(interaction.user.id);
-    if (pendentes.length === 1) {
-      await interaction.showModal(modalAvaliar(pendentes[0].id));
-      return;
-    }
-    await interaction.reply({ ...payloadEscolherAvaliacao(interaction.user.id), ephemeral: true });
-    return;
-  }
-
-  if (acao === "cli_avaliacoes") {
-    await interaction.reply({ ...payloadEscolherAvaliacoesProduto(), ephemeral: true });
-    return;
-  }
-
-  if (acao === "entregadm") {
-    const pedido = store.pedidos[String(valor)];
-    if (!pedido || pedido.userId !== interaction.user.id) {
-      await interaction.reply({ content: "Pedido invalido.", ephemeral: true });
-      return;
-    }
-    pedido.entregaMetodo = "dm";
-    pedido.entregaEmail = null;
-    salvarStore();
-    await interaction.reply({ content: "Entrega definida: **DM**. Depois de pagar, o produto chega na sua DM.", ephemeral: true });
-    return;
-  }
-
-  if (acao === "entregaemail") {
-    const pedido = store.pedidos[String(valor)];
-    if (!pedido || pedido.userId !== interaction.user.id) {
-      await interaction.reply({ content: "Pedido invalido.", ephemeral: true });
-      return;
-    }
-    const modal = new ModalBuilder().setCustomId(`email_modal:${valor}`).setTitle("Receber por e-mail");
-    modal.addComponents(
-      new ActionRowBuilder().addComponents(
-        new TextInputBuilder()
-          .setCustomId("email")
-          .setLabel("Seu e-mail")
-          .setStyle(TextInputStyle.Short)
-          .setRequired(true)
-          .setPlaceholder("voce@email.com")
-          .setMaxLength(120)
-      )
-    );
-    await interaction.showModal(modal);
-    return;
-  }
-
-  if (acao === "cfg_banner") {
-    if (!isStaff(interaction.member)) {
-      await interaction.reply({ content: "So a staff pode configurar.", ephemeral: true });
-      return;
-    }
-    const modal = new ModalBuilder().setCustomId("cfg_banner_modal").setTitle("Banner da loja");
-    modal.addComponents(
-      new ActionRowBuilder().addComponents(
-        campoTexto("url", "URL do banner/gif (vazio remove)", TextInputStyle.Short, store.config.banner, {
-          required: false,
-          placeholder: "https://...",
-          maxLength: 400
-        })
-      ),
-      new ActionRowBuilder().addComponents(
-        campoTexto("posicao", "Posicao: top, bottom, thumbnail, float", TextInputStyle.Short, store.config.bannerPosicao || "top", {
-          required: false,
-          maxLength: 20
-        })
-      )
-    );
-    await interaction.showModal(modal);
-    return;
-  }
-
-  if (acao === "cfg_smtp") {
-    if (!isStaff(interaction.member)) {
-      await interaction.reply({ content: "So a staff pode configurar.", ephemeral: true });
-      return;
-    }
-    const modal = new ModalBuilder().setCustomId("cfg_smtp_modal").setTitle("SMTP da loja");
-    modal.addComponents(
-      new ActionRowBuilder().addComponents(
-        campoTexto("host", "Host SMTP", TextInputStyle.Short, store.config.smtpHost, {
-          required: true,
-          placeholder: "smtp.gmail.com",
-          maxLength: 120
-        })
-      ),
-      new ActionRowBuilder().addComponents(
-        campoTexto("porta", "Porta (587 ou 465)", TextInputStyle.Short, store.config.smtpPort || 587, {
-          required: false,
-          maxLength: 5
-        })
-      ),
-      new ActionRowBuilder().addComponents(
-        campoTexto("usuario", "Usuario", TextInputStyle.Short, store.config.smtpUser, {
-          required: true,
-          maxLength: 120
-        })
-      ),
-      new ActionRowBuilder().addComponents(
-        campoTexto("senha", "Senha / app password", TextInputStyle.Short, "", {
-          required: true,
-          maxLength: 200
-        })
-      ),
-      new ActionRowBuilder().addComponents(
-        campoTexto("from", "From (ex: Loja <loja@email.com>)", TextInputStyle.Short, store.config.smtpFrom, {
-          required: true,
-          maxLength: 120
-        })
-      )
-    );
-    await interaction.showModal(modal);
-    return;
-  }
-
-  if (acao === "cfg_pix") {
-    if (!isStaff(interaction.member)) {
-      await interaction.reply({ content: "So a staff pode configurar.", ephemeral: true });
-      return;
-    }
-    const modal = new ModalBuilder().setCustomId("cfg_pix_modal").setTitle("Nome no PIX");
-    modal.addComponents(
-      new ActionRowBuilder().addComponents(
-        campoTexto("nome", "Nome publico no PIX", TextInputStyle.Short, store.config.pixNomePublico || QR_NOME_PUBLICO, {
-          required: true,
-          maxLength: 25
-        })
-      ),
-      new ActionRowBuilder().addComponents(
-        campoTexto("ocultar", "Ocultar nome pessoal? sim ou nao", TextInputStyle.Short, store.config.ocultarNomePix !== false ? "sim" : "nao", {
-          required: false,
-          maxLength: 3
-        })
-      )
-    );
-    await interaction.showModal(modal);
-    return;
-  }
-
-  if (acao === "cfg_publicar") {
-    if (!isStaff(interaction.member)) {
-      await interaction.reply({ content: "So a staff pode configurar.", ephemeral: true });
-      return;
-    }
-    await interaction.deferUpdate();
-    await publicarLojaFixa(interaction.guildId, true);
-    await interaction.editReply(payloadPainelConfig(interaction.guildId));
-    return;
-  }
-
-  if (acao === "cfg_pausar") {
-    if (!isStaff(interaction.member)) {
-      await interaction.reply({ content: "So a staff pode configurar.", ephemeral: true });
-      return;
-    }
-    if (store.config.lojaPausada) {
-      store.config.lojaPausada = false;
-      store.config.lojaPausaMotivo = "";
-      salvarStore();
-      await atualizarLojaFixa();
-      registrarLog("loja_reativada", "Loja reaberta pelo painel.", { staffId: interaction.user.id });
-      await enviarPainelConfig(interaction);
-      return;
-    }
-    const modal = new ModalBuilder().setCustomId("cfg_pausar_modal").setTitle("Pausar loja");
-    modal.addComponents(
-      new ActionRowBuilder().addComponents(
-        campoTexto("motivo", "Motivo (aparece na vitrine)", TextInputStyle.Short, store.config.lojaPausaMotivo || "Manutencao", {
-          required: false,
-          maxLength: 200
-        })
-      )
-    );
-    await interaction.showModal(modal);
-    return;
-  }
-
-  if (acao === "cfg_feedback") {
-    if (!isStaff(interaction.member)) {
-      await interaction.reply({ content: "So a staff pode configurar.", ephemeral: true });
-      return;
-    }
-    const modal = new ModalBuilder().setCustomId("cfg_feedback_modal").setTitle("Mensagem de feedback DM");
-    modal.addComponents(
-      new ActionRowBuilder().addComponents(
-        campoTexto("titulo", "Titulo padrao da DM", TextInputStyle.Short, store.config.feedbackTitulo || FEEDBACK_TITULO_PADRAO, { required: true, maxLength: 80 })
-      ),
-      new ActionRowBuilder().addComponents(
-        campoTexto(
-          "mensagem",
-          "Texto ({user} {id} {produto} {valor})",
-          TextInputStyle.Paragraph,
-          store.config.feedbackMensagem || FEEDBACK_MSG_PADRAO,
-          { required: true, maxLength: 1000 }
-        )
-      )
-    );
-    await interaction.showModal(modal);
-    return;
-  }
-
-  if (acao === "cfg_ticket_painel") {
-    if (!isStaff(interaction.member)) {
-      await interaction.reply({ content: "So a staff pode configurar.", ephemeral: true });
-      return;
-    }
-    const cfg = ticketPainel();
-    const modal = new ModalBuilder().setCustomId("cfg_ticket_texto_modal").setTitle("Personalizar ticket");
-    modal.addComponents(
-      new ActionRowBuilder().addComponents(campoTexto("titulo", "Titulo", TextInputStyle.Short, cfg.titulo, { required: true, maxLength: 256 })),
-      new ActionRowBuilder().addComponents(campoTexto("descricao", "Descricao", TextInputStyle.Paragraph, cfg.descricao, { required: true, maxLength: 1000 })),
-      new ActionRowBuilder().addComponents(campoTexto("botao", "Nome do botao", TextInputStyle.Short, cfg.botaoLabel, { required: true, maxLength: 80 })),
-      new ActionRowBuilder().addComponents(campoTexto("cor", "Cor hex (ex: 5865F2)", TextInputStyle.Short, cfg.cor || "5865F2", { required: false, maxLength: 7 })),
-      new ActionRowBuilder().addComponents(campoTexto("emoji", "Emoji do botao (vazio remove)", TextInputStyle.Short, cfg.botaoEmoji || "", { required: false, maxLength: 32 }))    );
-    await interaction.showModal(modal);
-    return;
-  }
-
-  if (acao === "loja_pausada") {
-    await interaction.reply({ content: motivoLojaPausada(), ephemeral: true }).catch(() => {});
-    return;
-  }
-
-  if (acao === "cfg_ticket_midia") {
-    if (!isStaff(interaction.member)) {
-      await interaction.reply({ content: "So a staff pode configurar.", ephemeral: true });
-      return;
-    }
-    const cfg = ticketPainel();
-    const modal = new ModalBuilder().setCustomId("cfg_ticket_midia_modal").setTitle("Midia do ticket");
-    modal.addComponents(
-      new ActionRowBuilder().addComponents(campoTexto("miniatura", "URL da miniatura (vazio remove)", TextInputStyle.Short, cfg.miniatura, { required: false, maxLength: 400 })),
-      new ActionRowBuilder().addComponents(campoTexto("banner", "URL do banner (vazio remove)", TextInputStyle.Short, cfg.banner, { required: false, maxLength: 400 })),
-      new ActionRowBuilder().addComponents(campoTexto("rodape", "Rodape (vazio remove)", TextInputStyle.Short, cfg.rodape, { required: false, maxLength: 80 }))
-    );
-    await interaction.showModal(modal);
-    return;
-  }
-
-  if (acao === "cfg_ticket_publicar") {
-    if (!isStaff(interaction.member)) {
-      await interaction.reply({ content: "So a staff pode configurar.", ephemeral: true });
-      return;
-    }
-    await interaction.deferUpdate();
-    await atualizarPaineisTicket();
-    await interaction.editReply(payloadPainelConfig(interaction.guildId));
-    return;
-  }
-
-  if (acao === "hub_home") {
-    if (!isStaff(interaction.member)) {
-      await interaction.reply({ content: "So a staff pode usar o painel.", ephemeral: true });
-      return;
-    }
-    await enviarPainelEphemeral(interaction, payloadPainelStaff());
-    return;
-  }
-
-  if (acao === "hub_loja" || acao === "hub_tickets") {
-    if (!isStaff(interaction.member)) {
-      await interaction.reply({ content: "So a staff pode usar o painel.", ephemeral: true });
-      return;
-    }
-    await enviarPainelEphemeral(interaction, payloadPainelConfig(interaction.guildId));
-    return;
-  }
-
-  if (acao === "hub_produto") {
-    if (!isStaff(interaction.member)) {
-      await interaction.reply({ content: "So a staff pode usar o painel.", ephemeral: true });
-      return;
-    }
-    await enviarPainelEphemeral(interaction, payloadHubProdutos());
-    return;
-  }
-
-  if (acao === "hub_categoria") {
-    if (!isStaff(interaction.member)) {
-      await interaction.reply({ content: "So a staff pode usar o painel.", ephemeral: true });
-      return;
-    }
-    await enviarPainelEphemeral(interaction, payloadHubCategorias());
-    return;
-  }
-
-  if (acao.startsWith("gc_")) {
-    if (!isStaff(interaction.member)) {
-      await interaction.reply({ content: "So a staff pode configurar.", ephemeral: true });
-      return;
-    }
-    const cat = store.categorias[valor];
-    if (!cat) {
-      await interaction.reply({ content: "Categoria nao encontrada.", ephemeral: true });
-      return;
-    }
-    if (acao === "gc_nome") {
-      await interaction.showModal(modalCampoProduto(`gc_nome_modal:${valor}`, "Alterar nome", "nome", "Nome da categoria", cat.nome, TextInputStyle.Short, { required: true, maxLength: 80 }));
-      return;
-    }
-    if (acao === "gc_desc") {
-      await interaction.showModal(modalCampoProduto(`gc_desc_modal:${valor}`, "Alterar descricao", "descricao", "Descricao da categoria", cat.descricao, TextInputStyle.Paragraph, { required: false, maxLength: 400 }));
-      return;
-    }
-    if (acao === "gc_emoji") {
-      await interaction.showModal(modalCampoProduto(`gc_emoji_modal:${valor}`, "Alterar emoji", "emoji", "Emoji", cat.emoji || "📁", TextInputStyle.Short, { required: false, maxLength: 8 }));
-      return;
-    }
-    if (acao === "gc_miniatura") {
-      await interaction.showModal(modalCampoProduto(`gc_miniatura_modal:${valor}`, "Alterar miniatura", "url", "URL da miniatura (vazio remove)", cat.imagem, TextInputStyle.Short, { required: false, maxLength: 400 }));
-      return;
-    }
-    if (acao === "gc_banner") {
-      const modal = new ModalBuilder().setCustomId(`gc_banner_modal:${valor}`).setTitle("Alterar banner");
-      modal.addComponents(
-        new ActionRowBuilder().addComponents(campoTexto("url", "URL do banner (vazio remove)", TextInputStyle.Short, cat.banner, { required: false, maxLength: 400 })),
-        new ActionRowBuilder().addComponents(campoTexto("posicao", "Posicao: top, bottom, thumbnail, float", TextInputStyle.Short, cat.bannerPosicao || "top", { required: false, maxLength: 20 }))
-      );
-      await interaction.showModal(modal);
-      return;
-    }
-    if (acao === "gc_rodape") {
-      await interaction.showModal(modalCampoProduto(`gc_rodape_modal:${valor}`, "Editar rodape", "rodape", "Texto do rodape", cat.rodape, TextInputStyle.Short, { required: false, maxLength: 80 }));
-      return;
-    }
-    if (acao === "gc_cor") {
-      await interaction.showModal(modalCampoProduto(`gc_cor_modal:${valor}`, "Alterar cor", "cor", "Cor hex (ex: 9b59b6)", cat.cor || "9b59b6", TextInputStyle.Short, { required: true, maxLength: 7 }));
-      return;
-    }
-  }
-
-  if (acao === "hub_estoque") {
-    if (!isStaff(interaction.member)) {
-      await interaction.reply({ content: "So a staff pode usar o painel.", ephemeral: true });
-      return;
-    }
-    await enviarPainelEphemeral(interaction, payloadHubEstoque());
-    return;
-  }
-
-  if (acao === "hub_cupons") {
-    if (!isStaff(interaction.member)) {
-      await interaction.reply({ content: "So a staff pode usar o painel.", ephemeral: true });
-      return;
-    }
-    await enviarPainelEphemeral(interaction, payloadHubCupons());
-    return;
-  }
-
-  if (acao === "hub_relatorio") {
-    if (!isStaff(interaction.member)) {
-      await interaction.reply({ content: "So a staff pode usar o painel.", ephemeral: true });
-      return;
-    }
-    await handleRelatorio(interaction);
-    return;
-  }
-
-  if (acao === "hub_cupom_criar") {
-    if (!isStaff(interaction.member)) {
-      await interaction.reply({ content: "So a staff pode usar o painel.", ephemeral: true });
-      return;
-    }
-    await interaction.showModal(modalCupomCriar());
-    return;
-  }
-
-  if (acao === "hub_cupom_remover") {
-    if (!isStaff(interaction.member)) {
-      await interaction.reply({ content: "So a staff pode usar o painel.", ephemeral: true });
-      return;
-    }
-    await interaction.showModal(modalCupomRemover());
-    return;
-  }
-
-  if (acao === "hub_cupom_publicar") {
-    if (!isStaff(interaction.member)) {
-      await interaction.reply({ content: "So a staff pode usar o painel.", ephemeral: true });
-      return;
-    }
-    await atualizarPainelCupons().catch(() => {});
-    await interaction.reply({ content: `Painel de cupons publicado em <#${guildCfg(interaction.guildId).canais.cupons}>.`, ephemeral: true });    return;
-  }
-
-  if (acao.startsWith("gp_")) {
-    if (!isStaff(interaction.member)) {
-      await interaction.reply({ content: "So a staff pode configurar.", ephemeral: true });
-      return;
-    }
-    if (acao === "gp_pagina") {
-      const partes = interaction.customId.split(":");
-      const pagina = Number(partes[1]) === 2 ? 2 : 1;
-      const produto = getProduto(partes[2]);
-      if (!produto) {
-        await interaction.reply({ content: "Produto nao encontrado.", ephemeral: true });
-        return;
-      }
-      await enviarPainelProduto(interaction, produto, pagina);
-      return;
-    }
-    const produto = getProduto(valor);
-    if (!produto && acao !== "gp_import") {
-      await interaction.reply({ content: "Produto nao encontrado.", ephemeral: true });
-      return;
-    }
-
-    if (acao === "gp_nome") {
-      await interaction.showModal(modalCampoProduto(`gp_nome_modal:${valor}`, "Alterar nome", "nome", "Nome do produto", produto.nome, TextInputStyle.Short, { required: true, maxLength: 80 }));
-      return;
-    }
-    if (acao === "gp_desc") {
-      await interaction.showModal(modalCampoProduto(`gp_desc_modal:${valor}`, "Alterar descricao", "descricao", "Descricao", produto.descricao, TextInputStyle.Paragraph, { required: true, maxLength: 1000 }));
-      return;
-    }
-    if (acao === "gp_preco") {
-      const modal = new ModalBuilder().setCustomId(`gp_preco_modal:${valor}`).setTitle("Alterar preco");
-      modal.addComponents(
-        new ActionRowBuilder().addComponents(campoTexto("preco", "Preco atual (reais)", TextInputStyle.Short, (produto.precoCentavos / 100).toFixed(2), { required: true, maxLength: 12 })),
-        new ActionRowBuilder().addComponents(campoTexto("preco_original", "Preco riscado (0 = sem)", TextInputStyle.Short, ((produto.precoOriginalCentavos || 0) / 100).toFixed(2), { required: false, maxLength: 12 }))
-      );
-      await interaction.showModal(modal);
-      return;
-    }
-    if (acao === "gp_miniatura") {
-      await interaction.showModal(modalCampoProduto(`gp_miniatura_modal:${valor}`, "Alterar miniatura", "url", "URL da miniatura (vazio remove)", produto.imagem, TextInputStyle.Short, { required: false, maxLength: 400 }));
-      return;
-    }
-    if (acao === "gp_banner") {
-      const modal = new ModalBuilder().setCustomId(`gp_banner_modal:${valor}`).setTitle("Alterar banner");
-      modal.addComponents(
-        new ActionRowBuilder().addComponents(campoTexto("url", "URL do banner (vazio remove)", TextInputStyle.Short, produto.banner, { required: false, maxLength: 400 })),
-        new ActionRowBuilder().addComponents(campoTexto("posicao", "Posicao: top, bottom, thumbnail, float", TextInputStyle.Short, produto.bannerPosicao || "bottom", { required: false, maxLength: 20 }))
-      );
-      await interaction.showModal(modal);
-      return;
-    }
-    if (acao === "gp_backup") {
-      const fila = estoqueDe(valor);
-      const texto = fila.map(i => `#${i.id} ${i.conteudo}`).join("\n") || "(estoque vazio)";
-      await interaction.reply({
-        content: `Backup do estoque de **${produto.nome}** (${fila.length} item(ns)).`,
-        files: [new AttachmentBuilder(Buffer.from(texto, "utf8"), { name: `estoque-${valor}.txt` })],
-        ephemeral: true
-      });
-      return;
-    }
-    if (acao === "gp_rodape") {
-      await interaction.showModal(modalCampoProduto(`gp_rodape_modal:${valor}`, "Editar rodape", "rodape", "Texto do rodape", produto.rodape, TextInputStyle.Short, { required: false, maxLength: 80 }));
-      return;
-    }
-    if (acao === "gp_cor") {
-      await interaction.showModal(modalCampoProduto(`gp_cor_modal:${valor}`, "Alterar cor", "cor", "Cor hex (ex: 9b59b6)", produto.cor || "9b59b6", TextInputStyle.Short, { required: true, maxLength: 7 }));
-      return;
-    }
-    if (acao === "gp_cargo") {
-      await interaction.reply({
-        content: `Cargo atual: ${produto.cargoId ? `<@&${produto.cargoId}> por ${produto.cargoDias || 0} dia(s)` : "nenhum"}. Escolha o cargo:`,
-        components: [
-          new ActionRowBuilder().addComponents(
-            new RoleSelectMenuBuilder().setCustomId(`gp_cargo_sel:${valor}`).setPlaceholder("Cargo temporario")
-          )
-        ],
-        ephemeral: true
-      });
-      return;
-    }
-    if (acao === "gp_cupons") {
-      const modal = new ModalBuilder().setCustomId(`gp_cupom_modal:${valor}`).setTitle("Criar cupom");
-      modal.addComponents(
-        new ActionRowBuilder().addComponents(campoTexto("codigo", "Codigo", TextInputStyle.Short, "", { required: true, maxLength: 32 })),
-        new ActionRowBuilder().addComponents(campoTexto("tipo", "percent ou fixo", TextInputStyle.Short, "percent", { required: true, maxLength: 10 })),
-        new ActionRowBuilder().addComponents(campoTexto("valor", "Valor (% ou reais)", TextInputStyle.Short, "10", { required: true, maxLength: 10 })),
-        new ActionRowBuilder().addComponents(campoTexto("usos", "Usos (0 = ilimitado)", TextInputStyle.Short, "0", { required: false, maxLength: 6 })),
-        new ActionRowBuilder().addComponents(campoTexto("publicar", "Publicar no canal? sim ou nao", TextInputStyle.Short, "sim", { required: false, maxLength: 3 }))
-      );
-      await interaction.showModal(modal);
-      return;
-    }
-    if (acao === "gp_export") {
-      const dados = {
-        produto,
-        override: store.produtoOverrides[valor] || {},
-        estoque: estoqueDe(valor).length
-      };
-      await interaction.reply({
-        content: `Exportacao de **${produto.nome}**.`,
-        files: [new AttachmentBuilder(Buffer.from(JSON.stringify(dados, null, 2), "utf8"), { name: `produto-${valor}.json` })],
-        ephemeral: true
-      });
-      return;
-    }
-    if (acao === "gp_import") {
-      await interaction.showModal(modalCampoProduto(`gp_import_modal:${valor}`, "Importar config", "json", "JSON do produto", "", TextInputStyle.Paragraph, { required: true, maxLength: 4000 }));
-      return;
-    }
-    if (acao === "gp_variante") {
-      const modal = new ModalBuilder().setCustomId(`gp_variante_modal:${valor}`).setTitle("Criar variante");
-      modal.addComponents(
-        new ActionRowBuilder().addComponents(campoTexto("id", "ID interno (ex: nitro_1m_promo)", TextInputStyle.Short, `${valor}_var`, { required: true, maxLength: 32 })),
-        new ActionRowBuilder().addComponents(campoTexto("nome", "Nome da variante", TextInputStyle.Short, `${produto.nome} variante`, { required: true, maxLength: 80 })),
-        new ActionRowBuilder().addComponents(campoTexto("preco", "Preco em reais", TextInputStyle.Short, (produto.precoCentavos / 100).toFixed(2), { required: true, maxLength: 12 }))
-      );
-      await interaction.showModal(modal);
-      return;
-    }
-    if (acao === "gp_ocultar") {
-      patchProduto(valor, { ocultarBotaoConfig: !produto.ocultarBotaoConfig });
-      await atualizarLojaFixa();
-      await enviarPainelProduto(interaction, getProduto(valor), 2);
-      return;
-    }
-    if (acao === "gp_apagar") {
-      patchProduto(valor, { apagado: true, disponivel: false });
-      await atualizarLojaFixa();
-      await interaction.update({ content: `Produto **${produto.nome}** apagado da vitrine.`, embeds: [], components: [] }).catch(async () => {
-        await interaction.reply({ content: `Produto **${produto.nome}** apagado da vitrine.`, ephemeral: true });
-      });
-      return;
-    }
-    if (acao === "gp_salvar") {
-      salvarStore();
-      await atualizarLojaFixa();
-      await interaction.reply({ content: `Produto **${produto.nome}** salvo e vitrine atualizada.`, ephemeral: true });
-      return;
-    }
-  }
-
-  await interaction
-    .reply({ content: "Esse botao ficou desatualizado. Use os comandos de novo.", ephemeral: true })
-    .catch(() => {});
+  return [linha];
 }
 
-async function handleSelect(interaction) {
-  const id = interaction.customId;
-  const valor = interaction.values[0];
-
-  if (id === "cat" || id.startsWith("cat:")) {
-    if (mensagemEfmera(interaction)) {
-      await interaction.update(payloadLoja(valor));
-    } else {
-      await interaction.update(payloadLoja());
-      await interaction.followUp({ ...payloadLoja(valor), ephemeral: true });
-    }
-    return;
-  }
-
-  if (id === "ticket_cat" || id.startsWith("ticket_cat:")) {
-    await interaction.showModal(modalMotivoTicket(valor));
-    await interaction.message.edit(payloadPainelTicket()).catch(() => {});
-    return;
-  }
-
-  if (id === "cli_pedido_sel" || id.startsWith("cli_pedido_sel:")) {
-    const pedido = store.pedidos[String(valor)];
-    if (!pedido) {
-      await interaction.reply({ content: "Pedido nao encontrado.", ephemeral: true });
-      return;
-    }
-    if (pedido.userId !== interaction.user.id && !isStaff(interaction.member)) {
-      await interaction.reply({ content: "Voce so pode ver os seus pedidos.", ephemeral: true });
-      return;
-    }
-    await interaction.reply({
-      embeds: [embedPedidoCliente(pedido)],
-      components: componentsPedidoCliente(pedido),
-      ephemeral: true
-    });
-    return;
-  }
-
-  if (id === "cli_avaliar_sel" || id.startsWith("cli_avaliar_sel:")) {
-    const pedido = store.pedidos[String(valor)];
-    if (!pedido || pedido.userId !== interaction.user.id) {
-      await interaction.reply({ content: "Pedido invalido.", ephemeral: true });
-      return;
-    }
-    if (pedido.status !== STATUS.ENTREGUE) {
-      await interaction.reply({ content: "So da pra avaliar pedidos ja entregues.", ephemeral: true });
-      return;
-    }
-    if (pedido.feedback) {
-      await interaction.reply({ content: "Esse pedido ja foi avaliado.", ephemeral: true });
-      return;
-    }
-    await interaction.showModal(modalAvaliar(valor));
-    return;
-  }
-
-  if (id === "cli_avaliacoes_sel" || id.startsWith("cli_avaliacoes_sel:")) {
-    await interaction.reply({ ...payloadAvaliacoesProduto(valor), ephemeral: true });
-    return;
-  }
-
-  if (id === "ticket_avaliar_sel") {
-    await interaction.showModal(modalAvaliar(valor));
-    return;
-  }
-
-  if (id === "hub_cat_sel") {
-    if (!isStaff(interaction.member)) {
-      await interaction.reply({ content: "So a staff pode usar o painel.", ephemeral: true });
-      return;
-    }
-    const cat = store.categorias[valor];
-    if (!cat) {
-      await interaction.reply({ content: "Categoria nao encontrada.", ephemeral: true });
-      return;
-    }
-    await enviarPainelCategoria(interaction, cat);
-    return;
-  }
-
-  if (id === "hub_prod_sel") {
-    if (!isStaff(interaction.member)) {
-      await interaction.reply({ content: "So a staff pode usar o painel.", ephemeral: true });
-      return;
-    }
-    const produto = getProduto(valor);
-    if (!produto) {
-      await interaction.reply({ content: "Produto nao encontrado.", ephemeral: true });
-      return;
-    }
-    await enviarPainelProduto(interaction, produto);
-    return;
-  }
-
-  if (id === "hub_stock_sel") {
-    if (!isStaff(interaction.member)) {
-      await interaction.reply({ content: "So a staff pode usar o painel.", ephemeral: true });
-      return;
-    }
-    const produto = getProduto(valor);
-    if (!produto) {
-      await interaction.reply({ content: "Produto nao encontrado.", ephemeral: true });
-      return;
-    }
-    const modal = new ModalBuilder().setCustomId(`hub_stock_modal:${valor}`).setTitle(`Estoque — ${String(produto.nome).slice(0, 30)}`);
-    modal.addComponents(
-      new ActionRowBuilder().addComponents(
-        campoTexto("conteudo", "Itens (um por linha)", TextInputStyle.Paragraph, "", { required: true, maxLength: 1000 })
-      )
-    );
-    await interaction.showModal(modal);
-    return;
-  }
-
-  if (id === "cfg_cat_ticket") {
-    if (!isStaff(interaction.member)) {
-      await interaction.reply({ content: "So a staff pode configurar.", ephemeral: true });
-      return;
-    }
-
-    store.guilds[interaction.guildId].ticketCategoryId = valor;
-    salvarStore();
-    await enviarPainelConfig(interaction);
-    return;
-  }
-
-  const [selAcao, selValor] = id.split(":");
-  if (selAcao === "gp_cargo_sel") {
-    if (!isStaff(interaction.member)) {
-      await interaction.reply({ content: "So a staff pode configurar.", ephemeral: true });
-      return;
-    }
-    const produto = getProduto(selValor);
-    if (!produto) {
-      await interaction.reply({ content: "Produto nao encontrado.", ephemeral: true });
-      return;
-    }
-    patchProduto(selValor, { cargoId: valor });
-    const modal = new ModalBuilder().setCustomId(`gp_cargo_modal:${selValor}`).setTitle("Duracao do cargo");
-    modal.addComponents(
-      new ActionRowBuilder().addComponents(campoTexto("dias", "Duracao em dias (0 = permanente)", TextInputStyle.Short, produto.cargoDias || 0, { required: true, maxLength: 4 }))
-    );
-    await interaction.showModal(modal);
-  }
+function descreverBotao(botao, indice) {
+  if (botao.tipo === "link") return `${indice + 1}. 🔗 **${botao.label}** → abre ${botao.url}`;
+  if (botao.tipo === "cargo") return `${indice + 1}. 🎭 **${botao.label}** → dá/tira o cargo <@&${botao.roleId}>`;
+  return `${indice + 1}. 💬 **${botao.label}** → responde: "${botao.texto}"`;
 }
 
-async function handleModal(interaction) {
-  const [acao, valor] = interaction.customId.split(":");
-
-  if (acao === "comprar_modal") {
-    let cupom = "";
-    try {
-      cupom = interaction.fields.getTextInputValue("cupom");
-    } catch {
-      cupom = "";
-    }
-    await criarPedido(interaction, valor, cupom);
-    return;
-  }
-
-  if (acao === "entregar_modal") {
-    await handleEntregarModal(interaction, valor);
-    return;
-  }
-
-  if (acao === "avaliar_modal") {
-    await handleAvaliarModal(interaction, valor);
-    return;
-  }
-
-  if (acao === "fb_msg_modal") {
-    if (!isStaff(interaction.member)) {
-      await interaction.reply({ content: "So a staff pode editar a mensagem.", ephemeral: true });
-      return;
-    }
-    const pedido = store.pedidos[String(valor)];
-    if (!pedido) {
-      await interaction.reply({ content: "Pedido nao encontrado.", ephemeral: true });
-      return;
-    }
-    pedido.feedbackTitulo = (interaction.fields.getTextInputValue("titulo") || "").trim().slice(0, 80);
-    pedido.feedbackMensagem = (interaction.fields.getTextInputValue("mensagem") || "").trim().slice(0, 1000);
-    salvarStore();
-    const enviou = await atualizarDmFeedback(pedido);
-    await interaction.reply({
-      content: enviou
-        ? `Mensagem de feedback do pedido #${pedido.id} atualizada na DM de <@${pedido.userId}>.`
-        : `Mensagem salva para o pedido #${pedido.id}, mas nao consegui editar a DM. Ela sera usada no proximo envio.`,
-      ephemeral: true
-    });
-    return;
-  }
-
-  if (acao === "cfg_feedback_modal") {
-    if (!isStaff(interaction.member)) {
-      await interaction.reply({ content: "So a staff pode configurar.", ephemeral: true });
-      return;
-    }
-    store.config.feedbackTitulo = (interaction.fields.getTextInputValue("titulo") || "").trim().slice(0, 80) || FEEDBACK_TITULO_PADRAO;
-    store.config.feedbackMensagem = (interaction.fields.getTextInputValue("mensagem") || "").trim().slice(0, 1000) || FEEDBACK_MSG_PADRAO;
-    salvarStore();
-    await interaction.reply({ ...payloadPainelConfig(interaction.guildId), ephemeral: true });
-    return;
-  }
-
-  if (acao === "app_embed_modal") {
-    if (!isStaff(interaction.member)) {
-      await interaction.reply({ content: "So a staff pode editar o embed.", ephemeral: true });
-      return;
-    }
-    const message = await interaction.channel.messages.fetch(valor).catch(() => null);
-    if (!message || message.author.id !== client.user.id) {
-      await interaction.reply({ content: "Mensagem do bot nao encontrada neste canal.", ephemeral: true });
-      return;
-    }
-    const embedAtual = embedDaMensagem(message);
-    if (!embedAtual) {
-      await interaction.reply({ content: "Essa mensagem nao tem embed.", ephemeral: true });
-      return;
-    }
-    const titulo = (interaction.fields.getTextInputValue("titulo") || "").trim();
-    const descricao = (interaction.fields.getTextInputValue("descricao") || "").trim();
-    const cor = (interaction.fields.getTextInputValue("cor") || "").trim();
-    const banner = limparUrl(interaction.fields.getTextInputValue("banner"));
-    const rodape = (interaction.fields.getTextInputValue("rodape") || "").trim();
-    if (banner && !urlMidiaValida(banner)) {
-      await interaction.reply({ content: "URL do banner invalida.", ephemeral: true });
-      return;
-    }
-    if (cor && !parseCor(cor)) {
-      await interaction.reply({ content: "Cor invalida. Use hex, ex: 9b59b6.", ephemeral: true });
-      return;
-    }
-    const campos = { titulo, descricao, cor, banner: banner || "", rodape };
-    const origem = origemMensagemBot(message);
-    const salvo = persistirEmbedEditado(origem, campos);
-    if (salvo.tipo === "loja" && salvo.categoriaId) {
-      await message.edit(payloadLoja(salvo.categoriaId)).catch(() => {});
-    } else if (salvo.tipo === "loja") {
-      await atualizarLojaFixa().catch(() => {});
-    } else if (salvo.tipo === "ticket") {
-      await atualizarPaineisTicket().catch(() => {});
-    } else if (salvo.tipo === "cupons") {
-      await atualizarPainelCupons().catch(() => {});
-    } else {
-      const novo = EmbedBuilder.from(embedAtual);
-      aplicarCamposEmbed(novo, campos);
-      if (!banner) novo.data.image = undefined;
-      await message.edit({ embeds: [novo] }).catch(() => {});
-    }
-    await interaction.reply({ content: "Embed atualizado.", ephemeral: true });
-    return;
-  }
-
-  if (acao === "pix_copiar_modal") {
-    await interaction.reply({ content: "Cole o Pix no app do banco.", ephemeral: true }).catch(() => {});
-    return;
-  }
-
-  if (acao === "addstock_modal") {
-    if (!isStaff(interaction.member)) {
-      await interaction.reply({ content: "So a staff pode gerenciar estoque.", ephemeral: true });
-      return;
-    }
-    const produto = getProduto(valor);
-    if (!produto) {
-      await interaction.reply({ content: "Produto nao encontrado.", ephemeral: true });
-      return;
-    }
-    const itens = interaction.fields.getTextInputValue("conteudo").split(/\r?\n/).map(l => l.trim()).filter(Boolean);
-    if (!itens.length) {
-      await interaction.reply({ content: "Envie ao menos um item (um por linha).", ephemeral: true });
-      return;
-    }
-    const fila = estoqueDe(valor);
-    for (const texto of itens) {
-      fila.push({ id: store.nextEstoqueItemId++, conteudo: texto, criadoEm: Date.now() });
-    }
-    salvarStore();
-    await atualizarLojaFixa();
-    await interaction.reply({
-      content: `✅ ${itens.length} item(ns) adicionado(s) ao estoque de **${produto.nome}**. Total agora: **${fila.length}**.`,
-      ephemeral: true
-    });
-    return;
-  }
-
-  if (acao === "email_modal") {
-    const pedido = store.pedidos[String(valor)];
-    if (!pedido || pedido.userId !== interaction.user.id) {
-      await interaction.reply({ content: "Pedido invalido.", ephemeral: true });
-      return;
-    }
-    const email = interaction.fields.getTextInputValue("email").trim();
-    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
-      await interaction.reply({ content: "E-mail invalido.", ephemeral: true });
-      return;
-    }
-    pedido.entregaMetodo = "email";
-    pedido.entregaEmail = email;
-    salvarStore();
-    await interaction.reply({
-      content: `Entrega definida: **e-mail** (${email}). Depois de pagar, o produto chega nesse endereco.`,
-      ephemeral: true
-    });
-    return;
-  }
-
-  if (acao === "editprod_modal") {
-    if (!isStaff(interaction.member)) {
-      await interaction.reply({ content: "So a staff pode editar.", ephemeral: true });
-      return;
-    }
-    const produto = getProduto(valor);
-    if (!produto) {
-      await interaction.reply({ content: "Produto nao encontrado.", ephemeral: true });
-      return;
-    }
-    const patch = store.produtoOverrides[valor] || {};
-    const precoTxt = interaction.fields.getTextInputValue("preco").trim();
-    const originalTxt = interaction.fields.getTextInputValue("preco_original").trim();
-    const imagem = interaction.fields.getTextInputValue("imagem").trim();
-    const banner = interaction.fields.getTextInputValue("banner").trim();
-    const descricao = interaction.fields.getTextInputValue("descricao").trim();
-
-    if (precoTxt) {
-      const n = Number(precoTxt.replace(",", "."));
-      if (!Number.isFinite(n) || n < 0) {
-        await interaction.reply({ content: "Preco invalido.", ephemeral: true });
-        return;
+function botoesFromMensagem(mensagem) {
+  const botoes = [];
+  for (const row of mensagem.components || []) {
+    for (const comp of row.components || []) {
+      const label = comp.label || "Botão";
+      const customId = comp.customId || "";
+      if (comp.style === ButtonStyle.Link && comp.url) {
+        botoes.push({ tipo: "link", label, url: comp.url });
+      } else if (customId.startsWith("embedbtn:cargo:")) {
+        botoes.push({ tipo: "cargo", label, roleId: customId.slice("embedbtn:cargo:".length) });
+      } else if (customId.startsWith("embedbtn:msg:")) {
+        botoes.push({ tipo: "msg", label, texto: customId.slice("embedbtn:msg:".length) });
       }
-      patch.precoCentavos = Math.round(n * 100);
-    }
-    if (originalTxt) {
-      const n = Number(originalTxt.replace(",", "."));
-      if (!Number.isFinite(n) || n < 0) {
-        await interaction.reply({ content: "Preco original invalido.", ephemeral: true });
-        return;
-      }
-      patch.precoOriginalCentavos = Math.round(n * 100);
-    }
-    if (imagem && !urlMidiaValida(imagem)) {
-      await interaction.reply({ content: "URL da imagem invalida.", ephemeral: true });
-      return;
-    }
-    if (banner && !urlMidiaValida(banner)) {
-      await interaction.reply({ content: "URL do banner invalida.", ephemeral: true });
-      return;
-    }
-    patch.imagem = imagem || null;
-    patch.banner = banner || null;
-    if (descricao) patch.descricao = descricao;
-    store.produtoOverrides[valor] = patch;
-    salvarStore();
-    await atualizarLojaFixa();
-    const atual = getProduto(valor);
-    await interaction.reply({
-      content: `✅ **${atual.nome}** atualizado.\nPreco: ${precoVitrine(atual)}`,
-      ephemeral: true
-    });
-    return;
-  }
-
-  if (acao === "editextra_modal") {
-    if (!isStaff(interaction.member)) {
-      await interaction.reply({ content: "So a staff pode editar.", ephemeral: true });
-      return;
-    }
-    const produto = getProduto(valor);
-    if (!produto) {
-      await interaction.reply({ content: "Produto nao encontrado.", ephemeral: true });
-      return;
-    }
-    const patch = store.produtoOverrides[valor] || {};
-    const posicao = interaction.fields.getTextInputValue("banner_posicao").trim().toLowerCase();
-    const instrucoes = interaction.fields.getTextInputValue("instrucoes").trim();
-    const categoriaId = interaction.fields.getTextInputValue("categoria").trim();
-    if (posicao) patch.bannerPosicao = posicao;
-    patch.instrucoes = instrucoes;
-    if (categoriaId) patch.categoriaId = categoriaId;
-    store.produtoOverrides[valor] = patch;
-    salvarStore();
-    await atualizarLojaFixa();
-    await interaction.reply({ content: `✅ Extra de **${produto.nome}** salvo (banner, instrucoes, categoria).`, ephemeral: true });
-    return;
-  }
-
-
-  if (acao === "ticket_motivo_modal") {
-    const motivo = (interaction.fields.getTextInputValue("motivo") || "").trim();
-    if (!motivo) {
-      await interaction.reply({ content: "Informe o motivo do ticket.", ephemeral: true });
-      return;
-    }
-    await interaction.deferReply({ ephemeral: true });
-    const categoria = valor ? store.categorias[valor] : null;
-    const assunto = categoria ? `${categoria.nome}: ${motivo}` : motivo;
-    const canal = await abrirTicket(interaction.guild, interaction.user, assunto);
-    await interaction.editReply(`Ticket aberto em <#${canal.id}>.`);
-    return;
-  }
-
-  if (acao === "hub_stock_modal") {
-    if (!isStaff(interaction.member)) {
-      await interaction.reply({ content: "So a staff pode configurar.", ephemeral: true });
-      return;
-    }
-    const produto = getProduto(valor);
-    if (!produto) {
-      await interaction.reply({ content: "Produto nao encontrado.", ephemeral: true });
-      return;
-    }
-    const itens = (interaction.fields.getTextInputValue("conteudo") || "")
-      .split(/\r?\n/)
-      .map(l => l.trim())
-      .filter(Boolean);
-    if (!itens.length) {
-      await interaction.reply({ content: "Envie ao menos um item (um por linha).", ephemeral: true });
-      return;
-    }
-    const fila = estoqueDe(valor);
-    for (const texto of itens) {
-      fila.push({ id: store.nextEstoqueItemId++, conteudo: texto, criadoEm: Date.now() });
-    }
-    salvarStore();
-    await atualizarLojaFixa().catch(() => {});
-    await interaction.reply({
-      content: `${itens.length} item(ns) adicionado(s) ao estoque de **${produto.nome}**. Total: **${fila.length}**.`,
-      ephemeral: true
-    });
-    return;
-  }
-
-  if (acao === "hub_cupom_criar_modal") {
-    if (!isStaff(interaction.member)) {
-      await interaction.reply({ content: "So a staff pode configurar.", ephemeral: true });
-      return;
-    }
-    const codigo = (interaction.fields.getTextInputValue("codigo") || "").trim().toUpperCase();
-    const tipo = (interaction.fields.getTextInputValue("tipo") || "percent").trim().toLowerCase();
-    const valorTxt = (interaction.fields.getTextInputValue("valor") || "").replace(",", ".");
-    const valorNum = Number(valorTxt);
-    const usos = Number.parseInt(interaction.fields.getTextInputValue("usos") || "0", 10) || 0;
-    const dias = Number.parseInt(interaction.fields.getTextInputValue("dias") || "0", 10) || 0;
-    if (!codigo) {
-      await interaction.reply({ content: "Informe o codigo.", ephemeral: true });
-      return;
-    }
-    if (tipo !== "percent" && tipo !== "fixo") {
-      await interaction.reply({ content: "Tipo precisa ser percent ou fixo.", ephemeral: true });
-      return;
-    }
-    if (!Number.isFinite(valorNum) || valorNum <= 0) {
-      await interaction.reply({ content: "Valor invalido.", ephemeral: true });
-      return;
-    }
-    if (tipo === "percent" && valorNum > 100) {
-      await interaction.reply({ content: "Percentual precisa estar entre 0 e 100.", ephemeral: true });
-      return;
-    }
-    store.cupons[codigo] = {
-      codigo,
-      tipo,
-      valor: tipo === "percent" ? valorNum : Math.round(valorNum * 100),
-      usosMax: Math.max(0, usos),
-      usos: 0,
-      minCentavos: 0,
-      expiraEm: dias > 0 ? Date.now() + dias * DIA_MS : null,
-      ativo: true,
-      criadoEm: Date.now()
-    };
-    salvarStore();
-    await atualizarPainelCupons().catch(() => {});
-    await interaction.reply({
-      content: `Cupom **${codigo}** criado (${tipo === "percent" ? `${valorNum}%` : formatarReais(Math.round(valorNum * 100))}).`,
-      ephemeral: true
-    });
-    return;
-  }
-
-  if (acao === "hub_cupom_remover_modal") {
-    if (!isStaff(interaction.member)) {
-      await interaction.reply({ content: "So a staff pode configurar.", ephemeral: true });
-      return;
-    }
-    const codigo = (interaction.fields.getTextInputValue("codigo") || "").trim().toUpperCase();
-    if (!store.cupons[codigo]) {
-      await interaction.reply({ content: "Cupom nao encontrado.", ephemeral: true });
-      return;
-    }
-    store.cupons[codigo].ativo = false;
-    salvarStore();
-    await atualizarPainelCupons().catch(() => {});
-    await interaction.reply({ content: `Cupom **${codigo}** desativado.`, ephemeral: true });
-    return;
-  }
-
-  if (acao === "cfg_ticket_texto_modal") {
-    if (!isStaff(interaction.member)) {
-      await interaction.reply({ content: "So a staff pode configurar.", ephemeral: true });
-      return;
-    }
-    store.config.ticketPainel.titulo = (interaction.fields.getTextInputValue("titulo") || "").trim().slice(0, 256);
-    store.config.ticketPainel.descricao = (interaction.fields.getTextInputValue("descricao") || "").trim().slice(0, 4096);
-    store.config.ticketPainel.botaoLabel = (interaction.fields.getTextInputValue("botao") || "Abrir ticket").trim().slice(0, 80);
-    store.config.ticketPainel.cor = (interaction.fields.getTextInputValue("cor") || "5865F2").trim().replace(/^#/, "");
-    store.config.ticketPainel.botaoEmoji = (interaction.fields.getTextInputValue("emoji") || "").trim() || null;
-    salvarStore();
-    await atualizarPaineisTicket().catch(() => {});
-    await interaction.reply({ ...payloadPainelConfig(interaction.guildId), ephemeral: true });
-    return;
-  }
-
-  if (acao === "cfg_ticket_midia_modal") {
-    if (!isStaff(interaction.member)) {
-      await interaction.reply({ content: "So a staff pode configurar.", ephemeral: true });
-      return;
-    }
-    const miniatura = limparUrl(interaction.fields.getTextInputValue("miniatura"));
-    const banner = limparUrl(interaction.fields.getTextInputValue("banner"));
-    const rodape = (interaction.fields.getTextInputValue("rodape") || "").trim();
-    if (miniatura && !urlMidiaValida(miniatura)) {
-      await interaction.reply({ content: "URL da miniatura invalida.", ephemeral: true });
-      return;
-    }
-    if (banner && !urlMidiaValida(banner)) {
-      await interaction.reply({ content: "URL do banner invalida.", ephemeral: true });
-      return;
-    }
-    store.config.ticketPainel.miniatura = miniatura || null;
-    store.config.ticketPainel.banner = banner || null;
-    store.config.ticketPainel.rodape = rodape || null;
-    salvarStore();
-    await atualizarPaineisTicket().catch(() => {});
-    await interaction.reply({ ...payloadPainelConfig(interaction.guildId), ephemeral: true });
-    return;
-  }
-  if (acao === "cfg_banner_modal") {
-    if (!isStaff(interaction.member)) {
-      await interaction.reply({ content: "So a staff pode configurar.", ephemeral: true });
-      return;
-    }
-    const url = limparUrl(interaction.fields.getTextInputValue("url"));
-    const posicao = (interaction.fields.getTextInputValue("posicao") || "top").trim().toLowerCase();
-    if (url && !urlMidiaValida(url)) {
-      await interaction.reply({ content: "URL invalida. Use um link http/https (gif funciona).", ephemeral: true });
-      return;
-    }
-    store.config.banner = url || null;
-    if (posicao) store.config.bannerPosicao = posicao;
-    salvarStore();
-    await atualizarLojaFixa().catch(error => console.error("Falha ao atualizar loja fixa:", error.message));
-
-    await interaction.reply({ ...payloadPainelConfig(interaction.guildId), ephemeral: true });    return;
-  }
-
-  if (acao === "cfg_smtp_modal") {
-    if (!isStaff(interaction.member)) {
-      await interaction.reply({ content: "So a staff pode configurar.", ephemeral: true });
-      return;
-    }
-    store.config.smtpHost = (interaction.fields.getTextInputValue("host") || "").trim();
-    store.config.smtpPort = Number.parseInt(interaction.fields.getTextInputValue("porta") || "587", 10) || 587;
-    store.config.smtpUser = (interaction.fields.getTextInputValue("usuario") || "").trim();
-    store.config.smtpPass = interaction.fields.getTextInputValue("senha") || "";
-    store.config.smtpFrom = (interaction.fields.getTextInputValue("from") || "").trim();
-    salvarStore();
-    await interaction.reply({ ...payloadPainelConfig(interaction.guildId), ephemeral: true });
-    return;
-  }
-
-  if (acao === "cfg_pausar_modal") {
-    if (!isStaff(interaction.member)) {
-      await interaction.reply({ content: "So a staff pode configurar.", ephemeral: true });
-      return;
-    }
-    store.config.lojaPausada = true;
-    store.config.lojaPausaMotivo = (interaction.fields.getTextInputValue("motivo") || "").trim();
-    salvarStore();
-    await atualizarLojaFixa().catch(() => {});
-    registrarLog("loja_pausada", `Loja pausada. ${store.config.lojaPausaMotivo}`, { staffId: interaction.user.id });
-    await interaction.reply({ ...payloadPainelConfig(interaction.guildId), ephemeral: true });
-    return;
-  }
-
-  if (acao === "cfg_pix_modal") {
-    if (!isStaff(interaction.member)) {
-      await interaction.reply({ content: "So a staff pode configurar.", ephemeral: true });
-      return;
-    }
-    store.config.pixNomePublico = (interaction.fields.getTextInputValue("nome") || QR_NOME_PUBLICO).trim();
-    const ocultar = (interaction.fields.getTextInputValue("ocultar") || "sim").trim().toLowerCase();
-    store.config.ocultarNomePix = !["nao", "não", "no", "n", "false", "0"].includes(ocultar);
-    salvarStore();
-
-    await interaction.reply({ ...payloadPainelConfig(interaction.guildId), ephemeral: true });    return;
-  }
-
-  if (acao.startsWith("gc_") && acao.endsWith("_modal")) {
-    if (!isStaff(interaction.member)) {
-      await interaction.reply({ content: "So a staff pode configurar.", ephemeral: true });
-      return;
-    }
-    const cat = store.categorias[valor];
-    if (!cat) {
-      await interaction.reply({ content: "Categoria nao encontrada.", ephemeral: true });
-      return;
-    }
-    const recarregarCat = async () => {
-      await atualizarLojaFixa().catch(() => {});
-      const atual = store.categorias[valor];
-      if (atual) await enviarPainelCategoria(interaction, atual);
-      else await interaction.reply({ content: "Salvo.", ephemeral: true });
-    };
-    if (acao === "gc_nome_modal") {
-      patchCategoria(valor, { nome: interaction.fields.getTextInputValue("nome").trim() });
-      await recarregarCat();
-      return;
-    }
-    if (acao === "gc_desc_modal") {
-      patchCategoria(valor, { descricao: interaction.fields.getTextInputValue("descricao").trim() });
-      await recarregarCat();
-      return;
-    }
-    if (acao === "gc_emoji_modal") {
-      patchCategoria(valor, { emoji: (interaction.fields.getTextInputValue("emoji") || "📁").trim().slice(0, 8) });
-      await recarregarCat();
-      return;
-    }
-    if (acao === "gc_miniatura_modal") {
-      const url = limparUrl(interaction.fields.getTextInputValue("url"));
-      if (url && !urlMidiaValida(url)) {
-        await interaction.reply({ content: "URL invalida.", ephemeral: true });
-        return;
-      }
-      patchCategoria(valor, { imagem: url || null });
-      await recarregarCat();
-      return;
-    }
-    if (acao === "gc_banner_modal") {
-      const url = limparUrl(interaction.fields.getTextInputValue("url"));
-      if (url && !urlMidiaValida(url)) {
-        await interaction.reply({ content: "URL invalida.", ephemeral: true });
-        return;
-      }
-      patchCategoria(valor, {
-        banner: url || null,
-        bannerPosicao: (interaction.fields.getTextInputValue("posicao") || "top").trim().toLowerCase()
-      });
-      await recarregarCat();
-      return;
-    }
-    if (acao === "gc_rodape_modal") {
-      patchCategoria(valor, { rodape: interaction.fields.getTextInputValue("rodape").trim() || null });
-      await recarregarCat();
-      return;
-    }
-    if (acao === "gc_cor_modal") {
-      const cor = interaction.fields.getTextInputValue("cor").trim();
-      if (!parseCor(cor)) {
-        await interaction.reply({ content: "Cor invalida. Use hex, ex: 9b59b6.", ephemeral: true });
-        return;
-      }
-      patchCategoria(valor, { cor: cor.replace(/^#/, "") });
-      await recarregarCat();
-      return;
     }
   }
-
-  if (acao.startsWith("gp_") && acao.endsWith("_modal")) {
-    if (!isStaff(interaction.member)) {
-      await interaction.reply({ content: "So a staff pode configurar.", ephemeral: true });
-      return;
-    }
-    const produto = getProduto(valor);
-    if (!produto && acao !== "gp_import_modal") {
-      await interaction.reply({ content: "Produto nao encontrado.", ephemeral: true });
-      return;
-    }
-
-    const recarregar = async () => {
-      await atualizarLojaFixa().catch(() => {});
-      const atual = getProduto(valor);
-      if (atual) await enviarPainelProduto(interaction, atual);
-      else await interaction.reply({ content: "Salvo.", ephemeral: true });
-    };
-
-    if (acao === "gp_nome_modal") {
-      patchProduto(valor, { nome: interaction.fields.getTextInputValue("nome").trim() });
-      await recarregar();
-      return;
-    }
-    if (acao === "gp_desc_modal") {
-      patchProduto(valor, { descricao: interaction.fields.getTextInputValue("descricao").trim() });
-      await recarregar();
-      return;
-    }
-    if (acao === "gp_preco_modal") {
-      const n = Number(interaction.fields.getTextInputValue("preco").replace(",", "."));
-      const o = Number((interaction.fields.getTextInputValue("preco_original") || "0").replace(",", "."));
-      if (!Number.isFinite(n) || n < 0 || !Number.isFinite(o) || o < 0) {
-        await interaction.reply({ content: "Preco invalido.", ephemeral: true });
-        return;
-      }
-      patchProduto(valor, { precoCentavos: Math.round(n * 100), precoOriginalCentavos: Math.round(o * 100) });
-      await recarregar();
-      return;
-    }
-    if (acao === "gp_miniatura_modal") {
-      const url = limparUrl(interaction.fields.getTextInputValue("url"));
-      if (url && !urlMidiaValida(url)) {
-        await interaction.reply({ content: "URL invalida.", ephemeral: true });
-        return;
-      }
-      patchProduto(valor, { imagem: url || null });
-      await recarregar();
-      return;
-    }
-    if (acao === "gp_banner_modal") {
-      const url = limparUrl(interaction.fields.getTextInputValue("url"));
-      if (url && !urlMidiaValida(url)) {
-        await interaction.reply({ content: "URL invalida.", ephemeral: true });
-        return;
-      }
-      patchProduto(valor, { banner: url || null, bannerPosicao: (interaction.fields.getTextInputValue("posicao") || "bottom").trim().toLowerCase() });
-      await recarregar();
-      return;
-    }
-    if (acao === "gp_rodape_modal") {
-      patchProduto(valor, { rodape: interaction.fields.getTextInputValue("rodape").trim() || null });
-      await recarregar();
-      return;
-    }
-    if (acao === "gp_cor_modal") {
-      const cor = interaction.fields.getTextInputValue("cor").trim();
-      if (!parseCor(cor)) {
-        await interaction.reply({ content: "Cor invalida. Use hex, ex: 9b59b6.", ephemeral: true });
-        return;
-      }
-      patchProduto(valor, { cor: cor.replace(/^#/, "") });
-      await recarregar();
-      return;
-    }
-    if (acao === "gp_cargo_modal") {
-      const dias = Number.parseInt(interaction.fields.getTextInputValue("dias") || "0", 10);
-      if (!Number.isFinite(dias) || dias < 0) {
-        await interaction.reply({ content: "Dias invalidos.", ephemeral: true });
-        return;
-      }
-      patchProduto(valor, { cargoDias: dias });
-      await recarregar();
-      return;
-    }
-    if (acao === "gp_cupom_modal") {
-      const codigo = interaction.fields.getTextInputValue("codigo").trim().toUpperCase();
-      const tipo = interaction.fields.getTextInputValue("tipo").trim().toLowerCase() === "fixo" ? "fixo" : "percent";
-      const valorCupom = Number(interaction.fields.getTextInputValue("valor").replace(",", "."));
-      const usos = Number.parseInt(interaction.fields.getTextInputValue("usos") || "0", 10) || 0;
-      let publicarTexto = "sim";
-      try {
-        publicarTexto = (interaction.fields.getTextInputValue("publicar") || "sim").trim().toLowerCase();
-      } catch {
-        publicarTexto = "sim";
-      }
-      const devePublicar = !["nao", "não", "no", "n", "false", "0"].includes(publicarTexto);
-      if (!codigo || !Number.isFinite(valorCupom) || valorCupom <= 0) {
-        await interaction.reply({ content: "Cupom invalido.", ephemeral: true });
-        return;
-      }
-      store.cupons[codigo] = {
-        codigo,
-        tipo,
-        valor: tipo === "percent" ? valorCupom : Math.round(valorCupom * 100),
-        usosMax: Math.max(0, usos),
-        usos: 0,
-        minCentavos: 0,
-        expiraEm: null,
-        ativo: true,
-        criadoEm: Date.now(),
-        produtoId: valor
-      };
-      salvarStore();
-      if (devePublicar) await atualizarPainelCupons().catch(() => {});
-      await interaction.reply({
-        content: `Cupom **${codigo}** criado. Canal de cupons: **${devePublicar ? "atualizado" : "nao publicado"}**.`,
-        ephemeral: true
-      });
-      return;
-    }
-    if (acao === "gp_import_modal") {
-      let dados;
-      try {
-        dados = JSON.parse(interaction.fields.getTextInputValue("json"));
-      } catch {
-        await interaction.reply({ content: "JSON invalido.", ephemeral: true });
-        return;
-      }
-      const src = dados.override || dados.produto || dados;
-      if (!src || typeof src !== "object") {
-        await interaction.reply({ content: "JSON sem dados de produto.", ephemeral: true });
-        return;
-      }
-      const keep = ["nome", "descricao", "precoCentavos", "precoOriginalCentavos", "imagem", "banner", "bannerPosicao", "rodape", "cor", "cargoId", "cargoDias", "instrucoes", "emoji", "modo", "disponivel", "categoriaId"];
-      const patch = {};
-      for (const k of keep) {
-        if (src[k] !== undefined) patch[k] = src[k];
-      }
-      patchProduto(valor, patch);
-      await recarregar();
-      return;
-    }
-    if (acao === "gp_variante_modal") {
-      const id = interaction.fields.getTextInputValue("id").trim().toLowerCase().replace(/[^a-z0-9_-]/g, "").slice(0, 32);
-      const nome = interaction.fields.getTextInputValue("nome").trim();
-      const preco = Number(interaction.fields.getTextInputValue("preco").replace(",", "."));
-      if (!id || !nome || !Number.isFinite(preco) || preco < 0) {
-        await interaction.reply({ content: "Dados da variante invalidos.", ephemeral: true });
-        return;
-      }
-      if (getProduto(id)) {
-        await interaction.reply({ content: "Ja existe um produto com esse ID.", ephemeral: true });
-        return;
-      }
-      store.produtos[id] = {
-        ...produto,
-        id,
-        nome,
-        precoCentavos: Math.round(preco * 100),
-        varianteDe: valor
-      };
-      salvarStore();
-      await atualizarLojaFixa();
-      await interaction.reply({ content: `Variante **${nome}** (\`${id}\`) criada.`, ephemeral: true });
-      return;
-    }
-  }
-
-  await interaction
-    .reply({ content: "Esse formulario ficou desatualizado. Tente novamente.", ephemeral: interaction.inGuild() })
-    .catch(() => {});
+  return botoes.slice(0, EMBED_BOTOES_MAX);
 }
 
-async function handleAutocomplete(interaction) {
-  const focused = interaction.options.getFocused(true);
-  if (focused.name === "produto") {
-    await interaction.respond(opcoesAutocompleteProduto(focused.value)).catch(() => {});
-  }
+function draftFromMensagem(mensagem, autorNome) {
+  const embed = mensagem.embeds[0];
+  return {
+    titulo: embed.title || "Sem título",
+    descricao: embed.description || " ",
+    cor: Number.isInteger(embed.color) ? embed.color : 0x5865f2,
+    imagemUrl: embed.image?.url || null,
+    footer: embed.footer?.text || null,
+    linkTitulo: embed.url || null,
+    canalId: mensagem.channelId,
+    botoes: botoesFromMensagem(mensagem),
+    autorNome,
+    editMessageId: mensagem.id,
+    editChannelId: mensagem.channelId
+  };
 }
 
+async function handleEditarEmbedContext(interaction) {
+  const mensagem = interaction.targetMessage;
 
-client.on("guildCreate", async guild => {
-  if (!guildPermitida(guild.id)) {
-    console.warn(`Servidor nao autorizado: ${guild.name} (${guild.id}). Saindo.`);
-    await guild.leave().catch(() => {});
-  }
-});
-client.on("interactionCreate", async interaction => {
-  if (interaction.guildId && !guildPermitida(interaction.guildId)) {
-    if (typeof interaction.isRepliable === "function" && interaction.isRepliable()) {
-      await interaction.reply({ content: "Este bot nao esta autorizado neste servidor.", ephemeral: true }).catch(() => {});
-    }
+  if (!mensagem) {
+    await interaction.reply({ content: "❌ Não achei essa mensagem.", ephemeral: true });
     return;
   }
-  try {
-    if (interaction.isAutocomplete()) {
-      await handleAutocomplete(interaction);
-      return;
-    }
-    if (interaction.isChatInputCommand()) {
-      await handleCommand(interaction);
-      return;
-    }
-    if (interaction.isMessageContextMenuCommand()) {
-      if (interaction.commandName === "Editar embed") {
-        await handleAppEditarEmbed(interaction);
-      }
-      return;
-    }
-    if (interaction.isStringSelectMenu() || interaction.isChannelSelectMenu() || interaction.isRoleSelectMenu()) {
-      await handleSelect(interaction);
-      return;
-    }
-    if (interaction.isButton()) {
-      await handleButton(interaction);
-      return;
-    }
-    if (interaction.isModalSubmit()) {
-      await handleModal(interaction);
-    }
-  } catch (error) {
-    console.error("Erro na interacao:", error);
-    const payload = { content: "Deu ruim aqui. Tenta de novo.", ephemeral: true };
-    if (typeof interaction.inGuild === "function" && !interaction.inGuild()) delete payload.ephemeral;
-    if (interaction.replied || interaction.deferred) {
-      await interaction.followUp(payload).catch(() => {});
-    } else {
-      await interaction.reply(payload).catch(() => {});
-    }
-  }
-});
 
-function lerBody(req) {
-  return new Promise((resolve, reject) => {
-    const chunks = [];
-    req.on("data", c => chunks.push(c));
-    req.on("end", () => resolve(Buffer.concat(chunks)));
-    req.on("error", reject);
+  if (!client.user || mensagem.author.id !== client.user.id) {
+    await interaction.reply({
+      content: "❌ Só dá pra editar embeds que eu postei pelo `/embed`.",
+      ephemeral: true
+    });
+    return;
+  }
+
+  if (!mensagem.embeds.length) {
+    await interaction.reply({
+      content: "❌ Essa mensagem não tem embed pra editar.",
+      ephemeral: true
+    });
+    return;
+  }
+
+  const draft = draftFromMensagem(mensagem, interaction.user.username);
+  embedDrafts.set(interaction.user.id, draft);
+
+  await interaction.reply({
+    ...payloadEmbedBuilder(draft),
+    ephemeral: true
   });
+
+  console.log("✅ Apps → Editar embed aberto");
 }
 
-function validarAssinaturaMp(req, rawBody) {
-  if (!MP_WEBHOOK_SECRET) return true;
-  const header = req.headers["x-signature"];
-  const requestId = req.headers["x-request-id"];
-  if (!header || !requestId) return false;
-  const partes = Object.fromEntries(
-    String(header).split(",").map(p => p.trim().split("=")).filter(p => p.length === 2)
+// Tudo que o construtor mostra: texto com a lista de botões + prévia + controles
+function payloadEmbedBuilder(draft) {
+  const botoes = draft.botoes || [];
+  const partes = [];
+
+  if (draft.editMessageId) {
+    partes.push("✏️ Editando o embed publicado. Clique em **Salvar alterações** pra atualizar a mensagem.");
+  }
+  if (botoes.length > 0) {
+    partes.push(`**Botões do embed (${botoes.length}/${EMBED_BOTOES_MAX}):**\n${botoes.map(descreverBotao).join("\n")}`);
+  }
+
+  return {
+    content: partes.length > 0 ? partes.join("\n\n") : null,
+    embeds: [montarPreviewEmbed(draft)],
+    components: montarComponentesEmbedBuilder(draft),
+    allowedMentions: { parse: [] }
+  };
+}
+
+function montarPreviewEmbed(draft) {
+  const cor = draft.cor === null ? Math.floor(Math.random() * 0xffffff) : draft.cor;
+
+  const embed = new EmbedBuilder()
+    .setTitle(draft.titulo)
+    .setDescription(draft.descricao)
+    .setColor(cor)
+    .setFooter({ text: draft.footer || `Postado por ${draft.autorNome}` });
+
+  if (draft.imagemUrl) embed.setImage(draft.imagemUrl);
+  if (draft.linkTitulo) embed.setURL(draft.linkTitulo);
+
+  return embed;
+}
+
+function montarComponentesEmbedBuilder(draft) {
+  const editando = Boolean(draft?.editMessageId);
+
+  const linhaCanal = new ActionRowBuilder().addComponents(
+    new ChannelSelectMenuBuilder()
+      .setCustomId("embedbuilder_canal")
+      .setPlaceholder(editando ? "📌 Canal travado (editando a mensagem)" : "📌 Escolher canal (padrão: este canal)")
+      .addChannelTypes(ChannelType.GuildText)
+      .setDisabled(editando)
   );
-  const ts = partes.ts;
-  const v1 = partes.v1;
-  if (!ts || !v1) return false;
-  const dataId = new URL(req.url, "http://localhost").searchParams.get("data.id") || "";
-  const manifesto = `id:${dataId};request-id:${requestId};ts:${ts};`;
-  const hash = crypto.createHmac("sha256", MP_WEBHOOK_SECRET).update(manifesto).digest("hex");
-  return hash === v1;
+
+  const linhaCor = new ActionRowBuilder().addComponents(
+    new StringSelectMenuBuilder()
+      .setCustomId("embedbuilder_cor")
+      .setPlaceholder("🎨 Escolher cor")
+      .addOptions(
+        Object.entries(CORES_EMBED).map(([id, cor]) => ({
+          label: cor.nome,
+          value: id
+        }))
+      )
+  );
+
+  const linhaBotoes1 = new ActionRowBuilder().addComponents(
+    new ButtonBuilder().setCustomId("embedbuilder_titulo").setLabel("📝 Título").setStyle(ButtonStyle.Secondary),
+    new ButtonBuilder().setCustomId("embedbuilder_descricao").setLabel("📄 Texto").setStyle(ButtonStyle.Secondary),
+    new ButtonBuilder().setCustomId("embedbuilder_imagem").setLabel("🖼️ Imagem").setStyle(ButtonStyle.Secondary),
+    new ButtonBuilder().setCustomId("embedbuilder_footer").setLabel("📌 Rodapé").setStyle(ButtonStyle.Secondary),
+    new ButtonBuilder().setCustomId("embedbuilder_link").setLabel("🔗 Link do título").setStyle(ButtonStyle.Secondary)
+  );
+
+  const linhaBotoes2 = new ActionRowBuilder().addComponents(
+    new ButtonBuilder()
+      .setCustomId("embedbuilder_publicar")
+      .setLabel(editando ? "💾 Salvar alterações" : "✅ Publicar")
+      .setStyle(ButtonStyle.Success),
+    new ButtonBuilder().setCustomId("embedbuilder_cancelar").setLabel("❌ Cancelar").setStyle(ButtonStyle.Danger)
+  );
+
+  const linhaBotaoTipo = new ActionRowBuilder().addComponents(
+    new StringSelectMenuBuilder()
+      .setCustomId("embedbuilder_botao_tipo")
+      .setPlaceholder("🔘 Adicionar botão ao embed")
+      .addOptions([
+        { label: "🔗 Botão de link", description: "Abre um site quando clicar", value: "link" },
+        { label: "🎭 Botão de cargo", description: "Dá ou tira um cargo de quem clicar", value: "cargo" },
+        { label: "💬 Botão de resposta", description: "Manda uma mensagem só pra quem clicar", value: "msg" },
+        { label: "🗑️ Remover todos os botões", description: "Limpa os botões deste embed", value: "limpar" }
+      ])
+  );
+
+  return [linhaCanal, linhaCor, linhaBotaoTipo, linhaBotoes1, linhaBotoes2];
 }
 
-const server = http.createServer(async (req, res) => {
-  if (req.method === "GET" && (req.url === "/" || req.url === "/health")) {
-    res.writeHead(200, { "Content-Type": "text/plain; charset=utf-8" });
-    res.end("Bot de vendas Baguncinha online.");
+async function handleEmbedBuilderInteraction(interaction) {
+  const userId = interaction.user.id;
+  const draft = embedDrafts.get(userId);
+
+  if (!draft) {
+    const resposta = { content: "❌ Essa sessão de embed expirou. Roda `/embed` de novo.", ephemeral: true };
+    if (interaction.isModalSubmit() || interaction.isMessageComponent()) {
+      await interaction.reply(resposta).catch(() => {});
+    }
     return;
   }
 
-  if (req.method === "GET" && req.url.startsWith("/pix/")) {
-    const id = decodeURIComponent(req.url.slice("/pix/".length).split("?")[0] || "");
-    const pedido = store.pedidos[id];
-    if (!pedido || !pedido.pixCopiaECola || pedido.status !== STATUS.AGUARDANDO_PAGAMENTO) {
-      res.writeHead(404, { "Content-Type": "text/plain; charset=utf-8" });
-      res.end("Pix nao encontrado ou expirado.");
+  // Botões que abrem um modal (título, texto, imagem, rodapé, link)
+  if (interaction.isButton() && ["embedbuilder_titulo", "embedbuilder_descricao", "embedbuilder_imagem", "embedbuilder_footer", "embedbuilder_link"].includes(interaction.customId)) {
+    const campoMap = {
+      embedbuilder_titulo: {
+        customId: "embedbuilder_modal_titulo",
+        titulo: "Título do embed",
+        label: "Título",
+        valorAtual: draft.titulo || "",
+        estilo: TextInputStyle.Short,
+        max: 256,
+        obrigatorio: true
+      },
+      embedbuilder_descricao: {
+        customId: "embedbuilder_modal_descricao",
+        titulo: "Texto do embed",
+        label: "Descrição",
+        valorAtual: (draft.descricao || "").slice(0, 4000),
+        estilo: TextInputStyle.Paragraph,
+        max: 4000,
+        obrigatorio: true
+      },
+      embedbuilder_imagem: {
+        customId: "embedbuilder_modal_imagem",
+        titulo: "Link da imagem",
+        label: "URL da imagem (vazio = remover)",
+        valorAtual: draft.imagemUrl || "",
+        estilo: TextInputStyle.Short,
+        max: 400,
+        obrigatorio: false
+      },
+      embedbuilder_footer: {
+        customId: "embedbuilder_modal_footer",
+        titulo: "Rodapé do embed",
+        label: "Texto do rodapé (vazio = remover)",
+        valorAtual: draft.footer || "",
+        estilo: TextInputStyle.Short,
+        max: 2048,
+        obrigatorio: false
+      },
+      embedbuilder_link: {
+        customId: "embedbuilder_modal_link",
+        titulo: "Link do título",
+        label: "URL que o título vai abrir (vazio = remover)",
+        valorAtual: draft.linkTitulo || "",
+        estilo: TextInputStyle.Short,
+        max: 400,
+        obrigatorio: false
+      }
+    };
+
+    const campo = campoMap[interaction.customId];
+
+    const modal = new ModalBuilder().setCustomId(campo.customId).setTitle(campo.titulo);
+    const input = new TextInputBuilder()
+      .setCustomId("valor")
+      .setLabel(campo.label)
+      .setStyle(campo.estilo || TextInputStyle.Short)
+      .setRequired(Boolean(campo.obrigatorio))
+      .setMaxLength(campo.max || 400);
+
+    if (campo.valorAtual) input.setValue(campo.valorAtual);
+
+    modal.addComponents(new ActionRowBuilder().addComponents(input));
+    await interaction.showModal(modal);
+    return;
+  }
+
+  // Escolha do tipo de botão (abre um formulário pra definir o que ele faz)
+  if (interaction.isStringSelectMenu() && interaction.customId === "embedbuilder_botao_tipo") {
+    const tipo = interaction.values[0];
+
+    if (tipo === "limpar") {
+      draft.botoes = [];
+      await interaction.update(payloadEmbedBuilder(draft));
       return;
     }
-    res.writeHead(200, { "Content-Type": "text/html; charset=utf-8", "Cache-Control": "no-store" });
-    res.end(paginaCopiarPix(pedido));
+
+    if ((draft.botoes || []).length >= EMBED_BOTOES_MAX) {
+      await interaction.reply({
+        content: `❌ Já tem ${EMBED_BOTOES_MAX} botões (o máximo). Remove os botões e adiciona de novo se quiser trocar.`,
+        ephemeral: true
+      });
+      return;
+    }
+
+    const config = {
+      link: { titulo: "Botão de link", label: "URL que o botão abre (https://...)", estilo: TextInputStyle.Short, max: 300 },
+      cargo: { titulo: "Botão de cargo", label: "Cargo (nome, ID ou @menção)", estilo: TextInputStyle.Short, max: 100 },
+      msg: { titulo: "Botão de resposta", label: `Mensagem da resposta (até ${EMBED_BOTAO_MSG_MAX} letras)`, estilo: TextInputStyle.Short, max: EMBED_BOTAO_MSG_MAX }
+    }[tipo];
+
+    const modal = new ModalBuilder()
+      .setCustomId(`embedbuilder_modal_botao_${tipo}`)
+      .setTitle(config.titulo);
+
+    modal.addComponents(
+      new ActionRowBuilder().addComponents(
+        new TextInputBuilder()
+          .setCustomId("label")
+          .setLabel("Texto que aparece no botão")
+          .setStyle(TextInputStyle.Short)
+          .setRequired(true)
+          .setMaxLength(80)
+      ),
+      new ActionRowBuilder().addComponents(
+        new TextInputBuilder()
+          .setCustomId("valor")
+          .setLabel(config.label)
+          .setStyle(config.estilo)
+          .setRequired(true)
+          .setMaxLength(config.max)
+      )
+    );
+
+    await interaction.showModal(modal);
     return;
   }
 
-  if (req.method === "POST" && req.url.startsWith("/webhook/mercadopago")) {
-    try {
-      const raw = await lerBody(req);
-      if (!validarAssinaturaMp(req, raw)) {
-        res.writeHead(401);
-        res.end("invalid signature");
+  // Seleção de cor
+  if (interaction.isStringSelectMenu() && interaction.customId === "embedbuilder_cor") {
+    draft.cor = CORES_EMBED[interaction.values[0]].valor;
+    await interaction.update(payloadEmbedBuilder(draft));
+    return;
+  }
+
+  // Seleção de canal
+  if (interaction.isChannelSelectMenu() && interaction.customId === "embedbuilder_canal") {
+    draft.canalId = interaction.values[0];
+    await interaction.update(payloadEmbedBuilder(draft));
+    return;
+  }
+
+  // Publicar / salvar edição
+  if (interaction.isButton() && interaction.customId === "embedbuilder_publicar") {
+    if (draft.editMessageId) {
+      const canal = await interaction.guild.channels.fetch(draft.editChannelId).catch(() => null);
+      const mensagem = canal
+        ? await canal.messages.fetch(draft.editMessageId).catch(() => null)
+        : null;
+
+      if (!mensagem) {
+        await interaction.reply({ content: "❌ Não achei a mensagem original pra editar.", ephemeral: true });
         return;
       }
-      const payload = raw.length ? JSON.parse(raw.toString("utf-8")) : {};
-      const tipo = payload.type || payload.action || "";
-      const paymentId = payload.data?.id || payload.resource;
-      res.writeHead(200);
-      res.end("ok");
-      if (tipo.includes("payment") && paymentId) {
-        processarWebhookPagamento(String(paymentId)).catch(error => {
-          console.error("Erro no webhook:", error.message);
+
+      try {
+        await mensagem.edit({
+          embeds: [montarPreviewEmbed(draft)],
+          components: montarBotoesPublicos(draft.botoes)
+        });
+        embedDrafts.delete(userId);
+        await interaction.update({ content: `✅ Embed atualizado em ${canal}.`, embeds: [], components: [] });
+      } catch (error) {
+        console.error("❌ Erro ao editar embed:", error);
+        await interaction.reply({
+          content: "❌ Não consegui editar essa mensagem. Confere se eu tenho permissão no canal.",
+          ephemeral: true
         });
       }
+      return;
+    }
+
+    const canal = draft.canalId
+      ? await interaction.guild.channels.fetch(draft.canalId).catch(() => null)
+      : interaction.channel;
+
+    if (!canal) {
+      await interaction.reply({ content: "❌ Não achei o canal escolhido.", ephemeral: true });
+      return;
+    }
+
+    try {
+      await canal.send({ embeds: [montarPreviewEmbed(draft)], components: montarBotoesPublicos(draft.botoes) });
+      embedDrafts.delete(userId);
+      await interaction.update({ content: `✅ Anúncio postado em ${canal}.`, embeds: [], components: [] });
     } catch (error) {
-      console.error("Webhook invalido:", error.message);
-      res.writeHead(400);
-      res.end("bad request");
+      console.error("❌ Erro ao publicar embed:", error);
+      await interaction.reply({
+        content: "❌ Não consegui postar nesse canal. Confere se eu tenho permissão lá.",
+        ephemeral: true
+      });
     }
     return;
   }
 
-  res.writeHead(404);
-  res.end("not found");
-});
-
-client.on("messageCreate", async message => {
-  try {
-    await handleAvaliacaoPorTexto(message);
-  } catch (error) {
-    console.error("Erro no feedback por texto:", error.message);
+  // Cancelar
+  if (interaction.isButton() && interaction.customId === "embedbuilder_cancelar") {
+    embedDrafts.delete(userId);
+    await interaction.update({ content: "❌ Cancelado.", embeds: [], components: [] });
+    return;
   }
-});
 
-client.once("ready", () => {
-  console.log(`Bot conectado como ${client.user.tag}`);
+  // Retorno do formulário de botão
+  if (interaction.isModalSubmit() && interaction.customId.startsWith("embedbuilder_modal_botao_")) {
+    const tipo = interaction.customId.replace("embedbuilder_modal_botao_", "");
+    const label = interaction.fields.getTextInputValue("label").trim();
+    const valor = interaction.fields.getTextInputValue("valor").trim();
 
-  for (const g of client.guilds.cache.values()) {
-    if (!guildPermitida(g.id)) {
-      console.warn(`Saindo do servidor nao autorizado: ${g.name} (${g.id}).`);
-      g.leave().catch(() => {});
+    const erro = async mensagem => {
+      await interaction.reply({ content: `❌ ${mensagem}`, ephemeral: true });
+    };
+
+    if (!label) return erro("O botão precisa de um texto.");
+    if ((draft.botoes || []).length >= EMBED_BOTOES_MAX) return erro(`Máximo de ${EMBED_BOTOES_MAX} botões.`);
+
+    let botao;
+
+    if (tipo === "link") {
+      if (!urlValida(valor)) return erro("O link precisa começar com http:// ou https://");
+      botao = { tipo: "link", label, url: valor };
+    } else if (tipo === "cargo") {
+      const membroCriador = await interaction.guild.members.fetch(interaction.user.id).catch(() => null);
+      const role = acharCargoPorTexto(interaction.guild, valor);
+      const motivo = validarCargoParaBotao(interaction.guild, role, membroCriador);
+      if (motivo) return erro(motivo);
+      botao = { tipo: "cargo", label, roleId: role.id };
+    } else if (tipo === "msg") {
+      botao = { tipo: "msg", label, texto: valor.slice(0, EMBED_BOTAO_MSG_MAX) };
+    } else {
+      return erro("Tipo de botão desconhecido.");
     }
-  }
 
-  try {
-    verificarPrazos();
-  } catch (err) {
-    console.error("Erro em verificarPrazos:", err);
-  }
-
-  try {
-    removerCargosExpirados();
-  } catch (err) {
-    console.error("Erro em removerCargosExpirados:", err);
-  }
-
-  publicarCanaisFixos().catch(err => console.error("Erro ao publicar canais fixos:", err.message));
-});
-
-function verificarPrazos() {
-  const agora = Date.now();
-  let mudou = false;
-  for (const pedido of Object.values(store.pedidos)) {
-    if (pedido.status === STATUS.AGUARDANDO_PAGAMENTO && agora - pedido.criadoEm > 45 * 60 * 1000) {
-      pedido.status = STATUS.EXPIRADO;
-      mudou = true;
-      registrarLog("expirado", `Pedido #${pedido.id} expirou sem pagamento.`, { pedidoId: pedido.id, userId: pedido.userId });
-      avisarCliente(pedido, `⌛ Seu pedido #${pedido.id} foi fechado por falta de pagamento.`).catch(() => {});
+    // dois botões iguais gerariam o mesmo ID interno e o Discord recusaria o embed
+    const idNovo = customIdDoBotao(botao);
+    if (idNovo && draft.botoes.some(b => customIdDoBotao(b) === idNovo)) {
+      return erro("Já existe um botão igual a esse.");
     }
-    if (
-      pedido.status === STATUS.AGUARDANDO_ENTREGA &&
-      pedido.prazoEntregaAte &&
-      agora > pedido.prazoEntregaAte &&
-      !pedido.prazoAvisado
-    ) {
-      pedido.prazoAvisado = true;
-      mudou = true;
-      registrarLog("prazo_estourado", `Pedido #${pedido.id} passou do prazo de entrega.`, { pedidoId: pedido.id, userId: pedido.userId });
-    }
+
+    draft.botoes.push(botao);
+    await interaction.update(payloadEmbedBuilder(draft));
+    return;
   }
-  if (mudou) salvarStore();
+
+  // Retorno dos modais (imagem, rodapé, link)
+  if (interaction.isModalSubmit()) {
+    const valor = interaction.fields.getTextInputValue("valor").trim();
+
+    if (interaction.customId === "embedbuilder_modal_titulo") {
+      if (!valor) {
+        await interaction.reply({ content: "❌ O título não pode ficar vazio.", ephemeral: true });
+        return;
+      }
+      draft.titulo = valor.slice(0, 256);
+    } else if (interaction.customId === "embedbuilder_modal_descricao") {
+      if (!valor) {
+        await interaction.reply({ content: "❌ O texto não pode ficar vazio.", ephemeral: true });
+        return;
+      }
+      draft.descricao = valor.slice(0, 4096);
+    } else if (interaction.customId === "embedbuilder_modal_imagem") {
+      draft.imagemUrl = urlValida(valor) ? valor : null;
+    } else if (interaction.customId === "embedbuilder_modal_footer") {
+      draft.footer = valor || null;
+    } else if (interaction.customId === "embedbuilder_modal_link") {
+      draft.linkTitulo = urlValida(valor) ? valor : null;
+    }
+
+    await interaction.update(payloadEmbedBuilder(draft));
+    return;
+  }
 }
+
+// Alguém clicou num botão de um embed publicado
+async function handleEmbedBotaoClique(interaction) {
+  const [, tipo, ...resto] = interaction.customId.split(":");
+  const valor = resto.join(":");
+
+  if (tipo === "msg") {
+    await interaction.reply({ content: valor, ephemeral: true, allowedMentions: { parse: [] } });
+    return;
+  }
+
+  if (tipo === "cargo") {
+    const guild = interaction.guild;
+    const role = guild.roles.cache.get(valor);
+
+    // confere de novo na hora do clique: as permissões do cargo podem ter mudado
+    const motivo = validarCargoParaBotao(guild, role, null);
+    if (motivo) {
+      await interaction.reply({ content: `❌ Esse botão não está funcionando: ${motivo}`, ephemeral: true });
+      return;
+    }
+
+    try {
+      const member = await guild.members.fetch(interaction.user.id);
+
+      if (member.roles.cache.has(role.id)) {
+        await member.roles.remove(role.id);
+        await interaction.reply({ content: `➖ Tirei o cargo **${role.name}** de você.`, ephemeral: true });
+      } else {
+        await member.roles.add(role.id);
+        await interaction.reply({ content: `➕ Você ganhou o cargo **${role.name}**!`, ephemeral: true });
+      }
+    } catch (error) {
+      console.error("❌ Erro no botão de cargo:", error);
+      await interaction.reply({ content: "❌ Não consegui mexer nesse cargo agora.", ephemeral: true }).catch(() => {});
+    }
+    return;
+  }
+}
+
+// =========================
+// INTERAÇÕES
+// =========================
+client.on("interactionCreate", async interaction => {
+  // Componentes/modais do construtor de /embed (não são slash commands)
+  if (interaction.customId && interaction.customId.startsWith("embedbuilder_")) {
+    await handleEmbedBuilderInteraction(interaction);
+    return;
+  }
+
+  // Botões que os admins criaram dentro de um /embed
+  if (interaction.customId && interaction.customId.startsWith("embedbtn:")) {
+    await handleEmbedBotaoClique(interaction);
+    return;
+  }
+
+  // Componentes da Baguncinha Store
+  if (interaction.customId && interaction.customId.startsWith("loja_")) {
+    await handleLojaInteraction(interaction);
+    return;
+  }
+
+  // Componentes do Pedra, Papel ou Tesoura
+  if (interaction.customId && interaction.customId.startsWith("ppt:")) {
+    await handlePptInteraction(interaction);
+    return;
+  }
+
+  if (interaction.customId && interaction.customId.startsWith(VERIFICACAO_BTN_PREFIX)) {
+    await handleVerificacaoBotao(interaction);
+    return;
+  }
+
+  if (interaction.isMessageContextMenuCommand() && interaction.commandName === "Editar embed") {
+    try {
+      await handleEditarEmbedContext(interaction);
+    } catch (error) {
+      console.error("❌ Erro no Apps → Editar embed:", error);
+      if (!interaction.replied && !interaction.deferred) {
+        await interaction.reply({ content: "❌ Não consegui abrir o editor desse embed.", ephemeral: true }).catch(() => {});
+      }
+    }
+    return;
+  }
+
+  if (!interaction.isChatInputCommand()) {
+    return;
+  }
+
+  console.log(`📥 Comando recebido: /${interaction.commandName}`);
+
+  const replyOriginal = interaction.reply.bind(interaction);
+  const editOriginal = interaction.editReply.bind(interaction);
+  const deferOriginal = interaction.deferReply.bind(interaction);
+  let rankingAnexado = false;
+  let skipRanking = false;
+  const RANK_A_CADA = 8;
+  const dadosRank = getUserData(interaction.user.id);
+  dadosRank.comandosDesdeRank = (dadosRank.comandosDesdeRank || 0) + 1;
+  const mostrarRanking = dadosRank.comandosDesdeRank >= RANK_A_CADA;
+  if (mostrarRanking) dadosRank.comandosDesdeRank = 0;
+  salvarDados();
+
+  interaction.deferReply = async options => {
+    if (options && options.ephemeral) skipRanking = true;
+    return deferOriginal(options);
+  };
+
+  const payloadComRanking = async options => {
+    if (interaction.commandName === "rank" || rankingAnexado || skipRanking || !mostrarRanking) return options;
+    const ephemeral = typeof options === "object" && options !== null && options.ephemeral;
+    if (ephemeral) return options;
+
+    try {
+      const rankEmbed = await montarEmbedRanking(10);
+      rankingAnexado = true;
+      if (typeof options === "string") {
+        return { content: options, embeds: [rankEmbed] };
+      }
+      const embeds = Array.isArray(options?.embeds) ? [...options.embeds, rankEmbed] : [rankEmbed];
+      return { ...options, embeds: embeds.slice(0, 10) };
+    } catch (error) {
+      console.error("Nao consegui montar o ranking:", error.message);
+      return options;
+    }
+  };
+
+  interaction.reply = async options => replyOriginal(await payloadComRanking(options));
+  interaction.editReply = async options => editOriginal(await payloadComRanking(options));
+
+  try {
+    if (interaction.guild) {
+      atualizarTop1(interaction.guild).catch(() => {});
+    }
+    // =========================
+    // PING
+    // =========================
+    if (interaction.commandName === "ping") {
+      await interaction.reply(
+        `🏓 Salve! Tô on.\nPing: **${client.ws.ping}ms**`
+      );
+      console.log("✅ /ping respondido");
+      return;
+    }
+
+    // =========================
+    // HELP
+    // =========================
+    if (interaction.commandName === "help") {
+      await interaction.reply(
+        "**🤖 Bot Baguncinha — oq posso fazer no server**\n\n" +
+        "🏓 `/ping` — Confere se eu tô on e de boa.\n" +
+        "❓ `/help` — mostra todos os comandos disponivel.\n" +
+        "🖼️ `/avatar` — Manda a foto de alguém em HD.\n" +
+        "👤 `/userinfo` — Perfil completo da pessoa.\n" +
+        "🏠 `/serverinfo` — Os dados do nosso servidor.\n" +
+        "🧹 `/clear` — Zera as mensagem (só staff).\n" +
+        "⏰ `/lembrete` — Te dou um toque na hora programada.\n" +
+        "📊 `/perfil` — Teu nível e XP no servidor.\n" +
+        "🏆 `/rank` — Quem tá mandando mais no server todo.\n" +
+        "💰 `/rankmoedas` — Ranking de quem tem mais moedas.\n" +
+        "📢 `/embed` — Cria um anúncio bonito (só staff).\n" +
+        "💰 `/carteira` — Vê quantas moedas você tem (carteira + banco).\n" +
+        "🏦 `/banco` — Guarda moedas no banco (protegidas de roubo) ou saca.\n" +
+        "🎁 `/daily` — Recompensa diária de 250 a 500 moedas.\n" +
+        "💼 `/trabalhar` — Faz um trampo por moedas.\n" +
+        "🎣 `/pescar` — Pesca por moedas (risco de dar red).\n" +
+        "🕵️ `/roubar` — Minigame pra assaltar alguém; se for pego paga 40% do valor da vítima e vai PRESO.\n" +
+        "🤝 `/doar` — Doa moedas pra outra pessoa.\n" +
+        "🎪 `/loja` — Abre a Baguncinha Store com prévia dos itens.\n" +
+        "🛍️ `/comprar` — Compra um item da loja direto por comando.\n" +
+        "🪙 `/apostar` — Aposta suas moedas em cara ou coroa.\n" +
+        "🎰 `/roleta` — Aposta moedas na Roleta.\n" +
+        "🪨 `/ppt` — Desafia alguém pra Pedra, Papel ou Tesoura apostando moedas.\n" +
+        "🏆 `/conquistas` — Vê e resgata suas conquistas do servidor.\n" +
+        "⚽ `/jogos` — Próximos jogos do Brasileirão, Libertadores e da Seleção.\n"
+      );
+      console.log("✅ /help respondido");
+      return;
+    }
+
+    // =========================
+    // AVATAR
+    // =========================
+    if (interaction.commandName === "avatar") {
+      const user = interaction.options.getUser("usuario") || interaction.user;
+
+      const embed = new EmbedBuilder()
+        .setTitle(`Foto de ${user.username}`)
+        .setImage(user.displayAvatarURL({ size: 1024, extension: "png" }))
+        .setColor(0x5865f2);
+
+      await interaction.reply({ embeds: [embed] });
+      console.log("✅ /avatar respondido");
+      return;
+    }
+
+    // =========================
+    // USERINFO
+    // =========================
+    if (interaction.commandName === "userinfo") {
+      const user = interaction.options.getUser("usuario") || interaction.user;
+      const member = await interaction.guild.members.fetch(user.id);
+
+      const embed = new EmbedBuilder()
+        .setTitle(`Perfil de ${user.username}`)
+        .setThumbnail(user.displayAvatarURL({ size: 256 }))
+        .addFields(
+          { name: "ID", value: user.id, inline: true },
+          { name: "Apelido", value: member.nickname || "Nenhum", inline: true },
+          { name: "Cargos", value: `${member.roles.cache.size - 1}`, inline: true },
+          { name: "Chegou na área", value: `<t:${Math.floor(member.joinedTimestamp / 1000)}:R>` },
+          { name: "Conta criada", value: `<t:${Math.floor(user.createdTimestamp / 1000)}:R>` }
+        )
+        .setColor(0x5865f2);
+
+      await interaction.reply({ embeds: [embed] });
+      console.log("✅ /userinfo respondido");
+      return;
+    }
+
+    // =========================
+    // SERVERINFO
+    // =========================
+    if (interaction.commandName === "serverinfo") {
+      const guild = interaction.guild;
+
+      const embed = new EmbedBuilder()
+        .setTitle(`Dados da quebrada — ${guild.name}`)
+        .setThumbnail(guild.iconURL({ size: 256 }) || null)
+        .addFields(
+          { name: "Membros", value: `${guild.memberCount}`, inline: true },
+          { name: "Cargos", value: `${guild.roles.cache.size}`, inline: true },
+          { name: "Canais", value: `${guild.channels.cache.size}`, inline: true },
+          { name: "Fundado em", value: `<t:${Math.floor(guild.createdTimestamp / 1000)}:R>` }
+        )
+        .setColor(0x5865f2);
+
+      await interaction.reply({ embeds: [embed] });
+      console.log("✅ /serverinfo respondido");
+      return;
+    }
+
+    // =========================
+    // CLEAR
+    // =========================
+    if (interaction.commandName === "clear") {
+      const quantidade = interaction.options.getInteger("quantidade");
+
+      await interaction.deferReply({ ephemeral: true });
+
+      const deleted = await interaction.channel.bulkDelete(quantidade, true);
+
+      await interaction.editReply(
+        `🧹 Pronto, sumi com essas ${deleted.size} mensagem(ns) meu parceiro.`
+      );
+      console.log("✅ /clear respondido");
+      return;
+    }
+
+    // =========================
+    // LEMBRETE
+    // =========================
+    if (interaction.commandName === "lembrete") {
+      const minutos = interaction.options.getInteger("minutos");
+      const mensagem = interaction.options.getString("mensagem");
+
+      await interaction.reply(
+        `⏰ certo! Te dou um toque em **${minutos} minuto(s)**: "${mensagem}"`
+      );
+
+      setTimeout(() => {
+        interaction.followUp(
+          `🔔 Ô ${interaction.user}, chegou a hora: **${mensagem}**`
+        ).catch(() => {});
+      }, minutos * 60 * 1000);
+
+      console.log("✅ /lembrete respondido");
+      return;
+    }
+
+    // =========================
+    // PERFIL
+    // =========================
+    if (interaction.commandName === "perfil") {
+      const user = interaction.options.getUser("usuario") || interaction.user;
+      const data = getUserData(user.id);
+      const totalLevel = getTotalLevel(data);
+      const cargoAtualId = getRoleIdForLevel(totalLevel);
+      const cargoTexto = cargoAtualId && !cargoAtualId.startsWith("COLOQUE_")
+        ? `<@&${cargoAtualId}>`
+        : "Nenhum ainda";
+
+      const embed = new EmbedBuilder()
+        .setTitle(`Perfil de ${user.username}`)
+        .setThumbnail(user.displayAvatarURL({ size: 256 }))
+        .addFields(
+          { name: "💬 Nível de texto", value: `${data.textLevel} (${data.textXp}/${xpForNextLevel(data.textLevel, "text")} XP)`, inline: true },
+          { name: "🎙️ Nível de voz", value: `${data.voiceLevel} (${data.voiceXp}/${xpForNextLevel(data.voiceLevel, "voice")} XP)`, inline: true },
+          { name: "⭐ Nível de atividade", value: `${totalLevel} (o maior entre os dois)`, inline: true },
+          { name: "Cargo pela correria", value: cargoTexto }
+        )
+        .setColor(0x57f287);
+
+      await interaction.reply({ embeds: [embed] });
+      console.log("✅ /perfil respondido");
+      return;
+    }
+
+    // =========================
+    // RANK (LEADERBOARD)
+    // =========================
+    if (interaction.commandName === "rank") {
+      const embed = await montarEmbedRanking(10);
+      await interaction.reply({ embeds: [embed] });
+      await atualizarTop1(interaction.guild);
+      console.log("/rank respondido");
+      return;
+    }
+
+    // =========================
+    // RANK DE MOEDAS
+    // =========================
+    if (interaction.commandName === "rankmoedas") {
+      const ranking = [...xpData.entries()]
+        .map(([userId, dados]) => [userId, normalizarDadosUsuario(dados)])
+        .sort((a, b) => getTotalMoedas(b[1]) - getTotalMoedas(a[1]))
+        .slice(0, 10);
+
+      if (ranking.length === 0) {
+        await interaction.reply("Ninguém tem moeda nenhuma ainda. Usa `/daily` ou `/trabalhar`!");
+        return;
+      }
+
+      const MEDALHAS = ["🥇", "🥈", "🥉"];
+
+      const usuarios = await Promise.all(
+        ranking.map(([userId]) => client.users.fetch(userId).catch(() => null))
+      );
+
+      const linhas = ranking.map(([, data], index) => {
+        const user = usuarios[index];
+        const nome = user ? user.username : "Usuário desconhecido";
+        const posicao = MEDALHAS[index] || `**${index + 1}.**`;
+        const detalheBanco = data.banco > 0
+          ? ` _(carteira ${formatarMoedas(data.coins)} + banco ${formatarMoedas(data.banco)})_`
+          : "";
+        return `${posicao} **${nome}** — ${formatarMoedas(getTotalMoedas(data))}${detalheBanco}`;
+      });
+
+      const embed = new EmbedBuilder()
+        .setTitle("💰 Ranking de Moedas")
+        .setDescription(linhas.join("\n"))
+        .setColor(0xf1c40f)
+        .setThumbnail(usuarios[0]?.displayAvatarURL({ size: 256 }) || null);
+
+      await interaction.reply({ embeds: [embed] });
+      console.log("✅ /rankmoedas respondido");
+      return;
+    }
+
+    // =========================
+    // EMBED (STAFF)
+    // =========================
+    if (interaction.commandName === "embed") {
+      const titulo = interaction.options.getString("titulo");
+      const descricao = interaction.options.getString("descricao").replace(/\\n/g, "\n");
+
+      const draft = {
+        titulo,
+        descricao,
+        cor: 0x5865f2,
+        imagemUrl: null,
+        footer: null,
+        linkTitulo: null,
+        canalId: null,
+        botoes: [],
+        autorNome: interaction.user.username
+      };
+
+      embedDrafts.set(interaction.user.id, draft);
+
+      await interaction.reply({
+        ...payloadEmbedBuilder(draft),
+        ephemeral: true
+      });
+
+      console.log("✅ /embed (construtor) aberto");
+      return;
+    }
+
+    // =========================
+    // CARTEIRA
+    // =========================
+    if (interaction.commandName === "carteira") {
+      const user = interaction.options.getUser("usuario") || interaction.user;
+      const data = getUserData(user.id);
+
+      await interaction.reply(
+        `💰 A carteira de **${user.username}** tá com ${formatarMoedas(data.coins)}.\n` +
+        `🏦 No banco: ${formatarMoedas(data.banco)} (total ${formatarMoedas(getTotalMoedas(data))}).\n` +
+        `🎫 Tickets de sorteio: **${data.ticketsSorteio || 0}**.`
+      );
+      console.log("✅ /carteira respondido");
+      return;
+    }
+
+    // =========================
+    // BANCO
+    // =========================
+    if (interaction.commandName === "banco") {
+      const data = getUserData(interaction.user.id);
+      const acao = interaction.options.getString("acao") || "ver";
+      const quantidade = interaction.options.getInteger("quantidade");
+
+      const resumoBanco = () =>
+        `🏦 **Banco de ${interaction.user.username}**\n` +
+        `👛 Carteira: ${formatarMoedas(data.coins)}\n` +
+        `🏦 Banco: ${formatarMoedas(data.banco)}\n` +
+        `💰 Total: ${formatarMoedas(getTotalMoedas(data))}\n\n` +
+        `_Moedas no banco ficam protegidas de roubos — só a carteira pode ser assaltada._`;
+
+      if (acao === "ver") {
+        await interaction.reply({ content: resumoBanco() });
+        console.log("✅ /banco (ver) respondido");
+        return;
+      }
+
+      const valor = acao === "depositar_tudo"
+        ? data.coins
+        : acao === "sacar_tudo"
+          ? data.banco
+          : quantidade;
+
+      if (!valor || valor <= 0) {
+        await interaction.reply({
+          content: "❌ Diz a quantidade que você quer mover (ou use *Depositar tudo* / *Sacar tudo*).",
+          ephemeral: true
+        });
+        return;
+      }
+
+      const depositando = acao === "depositar" || acao === "depositar_tudo";
+
+      if (depositando) {
+        if (data.coins < valor) {
+          await interaction.reply({
+            content: `❌ Você só tem ${formatarMoedas(data.coins)} na carteira.`,
+            ephemeral: true
+          });
+          return;
+        }
+        data.coins -= valor;
+        data.banco += valor;
+      } else {
+        if (data.banco < valor) {
+          await interaction.reply({
+            content: `❌ Você só tem ${formatarMoedas(data.banco)} no banco.`,
+            ephemeral: true
+          });
+          return;
+        }
+        data.banco -= valor;
+        data.coins += valor;
+      }
+
+      salvarDados();
+
+      await interaction.reply({
+        content: `✅ ${depositando ? "Depositaste" : "Sacaste"} ${formatarMoedas(valor)}.\n\n${resumoBanco()}`
+      });
+      console.log("✅ /banco respondido");
+      return;
+    }
+
+    // =========================
+    // DAILY
+    // =========================
+    if (interaction.commandName === "daily") {
+      const data = getUserData(interaction.user.id);
+      const now = Date.now();
+
+      if (now - data.lastDaily < DAILY_COOLDOWN_MS) {
+        const restante = DAILY_COOLDOWN_MS - (now - data.lastDaily);
+        const horas = Math.ceil(restante / (60 * 60 * 1000));
+        await interaction.reply({
+          content: `⏳ Você já pegou seu daily. Volta em ~${horas}h.`,
+          ephemeral: true
+        });
+        return;
+      }
+
+      const ganho = Math.floor(Math.random() * (DAILY_MAX - DAILY_MIN + 1)) + DAILY_MIN;
+      data.coins += ganho;
+      data.lastDaily = now;
+
+      await verificarMarcosMoedas(interaction.guild, interaction.user.id, data);
+      salvarDados();
+
+      await interaction.reply(`🎁 Você resgatou seu presente diario e ganhou ${formatarMoedas(ganho)}!`);
+      console.log("✅ /daily respondido");
+      return;
+    }
+
+    // =========================
+    // TRABALHAR
+    // =========================
+    if (interaction.commandName === "trabalhar") {
+      const data = getUserData(interaction.user.id);
+      const now = Date.now();
+
+      const mensagemPrisao = checarPrisao(data);
+      if (mensagemPrisao) {
+        await interaction.reply({ content: mensagemPrisao, ephemeral: true });
+        return;
+      }
+
+      const trabalharCooldown = getTrabalharCooldown(data);
+      if (now - data.lastTrabalhar < trabalharCooldown) {
+        const restante = trabalharCooldown - (now - data.lastTrabalhar);
+        const minutos = Math.ceil(restante / (60 * 1000));
+        await interaction.reply({
+          content: `⏳ Você já trabalhou hoje. Volta em ~${minutos} min.`,
+          ephemeral: true
+        });
+        return;
+      }
+
+      const TRAMPOS = [
+        "entregou uns panfleto",
+        "lavou uns carro na rua",
+        "ajudou a organizar o mercado",
+        "fez um freela de design",
+        "vendeu uns doce na praça",
+        "trabalhou de flanelinha",
+        "trabalhou de ambulante",
+        "trabalhou de entregador da shopee",
+        "trabalhou de faxineiro(a)",
+        "trabalhou de jardineiro",
+        "trabalhou de ajudante de pedreiro"
+      ];
+      const trampo = TRAMPOS[Math.floor(Math.random() * TRAMPOS.length)];
+      const ganho = Math.floor(Math.random() * 81) + 50; // 50 a 130
+
+      data.coins += ganho;
+      data.lastTrabalhar = now;
+
+      await verificarMarcosMoedas(interaction.guild, interaction.user.id, data);
+      salvarDados();
+
+      await interaction.reply(`💼 Você ${trampo} e faturou ${formatarMoedas(ganho)}.`);
+      console.log("✅ /trabalhar respondido");
+      return;
+    }
+
+    // =========================
+    // PESCAR
+    // =========================
+    if (interaction.commandName === "pescar") {
+      const data = getUserData(interaction.user.id);
+      const now = Date.now();
+
+      const mensagemPrisao = checarPrisao(data);
+      if (mensagemPrisao) {
+        await interaction.reply({ content: mensagemPrisao, ephemeral: true });
+        return;
+      }
+
+      if (now - data.lastPescar < PESCAR_COOLDOWN_MS) {
+        const restante = PESCAR_COOLDOWN_MS - (now - data.lastPescar);
+        const minutos = Math.ceil(restante / (60 * 1000));
+        await interaction.reply({
+          content: `⏳ Sua vara ainda tá descansando. Volta em ~${minutos} min.`,
+          ephemeral: true
+        });
+        return;
+      }
+
+      data.lastPescar = now;
+
+      const deuNada = Math.random() < 0.25; // 25% de chance de não pegar nada
+
+      if (deuNada) {
+        await interaction.reply("🎣 Você ficou horas na beira do rio e não fisgou nada. Mais Sorte no próximo mn.");
+        console.log("✅ /pescar respondido (nada)");
+        return;
+      }
+
+      const ganho = Math.floor(Math.random() * 91) + 20; // 20 a 110
+      data.coins += ganho;
+
+      await verificarMarcosMoedas(interaction.guild, interaction.user.id, data);
+      salvarDados();
+
+      await interaction.reply(`🎣 Fisgou um peixe daora e vendeu por ${formatarMoedas(ganho)}!`);
+      console.log("✅ /pescar respondido");
+      return;
+    }
+
+    // =========================
+    // ROUBAR
+    // =========================
+    if (interaction.commandName === "roubar") {
+      const alvo = interaction.options.getUser("usuario");
+
+      if (alvo.id === interaction.user.id) {
+        await interaction.reply({ content: "❌ Não dá pra roubar de si mesmo, mn. (???)", ephemeral: true });
+        return;
+      }
+      if (alvo.bot) {
+        await interaction.reply({ content: "❌ ta achando que ta facil assim ė?.", ephemeral: true });
+        return;
+      }
+
+      const ladrao = getUserData(interaction.user.id);
+      const vitima = getUserData(alvo.id);
+      const now = Date.now();
+
+      const mensagemPrisao = checarPrisao(ladrao);
+      if (mensagemPrisao) {
+        await interaction.reply({ content: mensagemPrisao, ephemeral: true });
+        return;
+      }
+
+      if (now - ladrao.lastRoubar < ROUBAR_COOLDOWN_MS) {
+        const restante = ROUBAR_COOLDOWN_MS - (now - ladrao.lastRoubar);
+        const minutos = Math.ceil(restante / (60 * 1000));
+        await interaction.reply({
+          content: `⏳ Tá muito na cara, espera uns ~${minutos} min antes de tentar de novo.`,
+          ephemeral: true
+        });
+        return;
+      }
+
+      if (vitima.coins < ROUBO_MIN_VITIMA) {
+        await interaction.reply({
+          content: `❌ ${alvo.username} tá quebrado, não vale nem a pena tentar.`,
+          ephemeral: true
+        });
+        return;
+      }
+
+      ladrao.lastRoubar = now;
+      salvarDados(); // já garante o cooldown mesmo se o bot reiniciar no meio do minigame
+
+      await iniciarRouboMinigame(interaction, alvo, ladrao, vitima);
+      console.log("✅ /roubar (minigame) respondido");
+      return;
+    }
+
+    // =========================
+    // DOAR
+    // =========================
+    if (interaction.commandName === "doar") {
+      const alvo = interaction.options.getUser("usuario");
+      const quantidade = interaction.options.getInteger("quantidade");
+
+      if (alvo.id === interaction.user.id) {
+        await interaction.reply({ content: "❌ Não dá pra doar pra si mesmo mn (???).", ephemeral: true });
+        return;
+      }
+      if (alvo.bot) {
+        await interaction.reply({ content: "❌ ta me chamando de duro?.", ephemeral: true });
+        return;
+      }
+
+      const doador = getUserData(interaction.user.id);
+
+      if (doador.coins < quantidade) {
+        await interaction.reply({
+          content: `❌ Você não tem ${formatarMoedas(quantidade)} pra doar. Sua carteira: ${formatarMoedas(doador.coins)}.`,
+          ephemeral: true
+        });
+        return;
+      }
+
+      const recebedor = getUserData(alvo.id);
+
+      doador.coins -= quantidade;
+      recebedor.coins += quantidade;
+
+      await verificarMarcosMoedas(interaction.guild, alvo.id, recebedor);
+      salvarDados();
+
+      await interaction.reply(
+        `🤝 Você doou ${formatarMoedas(quantidade)} pra **${alvo.username}**. Bonito gesto mn.`
+      );
+      console.log("✅ /doar respondido");
+      return;
+    }
+
+    // =========================
+    // LOJA (embed + menus + botões)
+    // =========================
+    if (interaction.commandName === "loja") {
+      await interaction.reply({
+        embeds: [montarEmbedLojaPrincipal()],
+        components: montarComponentesLojaPrincipal()
+      });
+      console.log("✅ /loja respondido");
+      return;
+    }
+
+    // =========================
+    // COMPRAR (atalho por comando)
+    // =========================
+    if (interaction.commandName === "comprar") {
+      const itemId = interaction.options.getString("item");
+      await comprarItem(interaction, itemId);
+      console.log("✅ /comprar respondido");
+      return;
+    }
+
+    // =========================
+    // LOJA IMAGEM (SÓ O DONO)
+    // =========================
+    if (interaction.commandName === "lojaimagem") {
+      if (!OWNER_ID || interaction.user.id !== OWNER_ID) {
+        await interaction.reply({ content: "❌ Só o dono do bot pode mexer nas imagens da loja.", ephemeral: true });
+        return;
+      }
+
+      const itemId = interaction.options.getString("item");
+      const url = (interaction.options.getString("url") || "").trim();
+
+      if (!LOJA_ITEMS[itemId]) {
+        await interaction.reply({ content: "❌ Esse item não existe.", ephemeral: true });
+        return;
+      }
+
+      // sem URL = remove a imagem
+      if (!url) {
+        delete lojaImagens[itemId];
+        salvarDados();
+        await interaction.reply({
+          content: `🗑️ Imagem de **${LOJA_ITEMS[itemId].nome}** removida.`,
+          ephemeral: true
+        });
+        console.log("✅ /lojaimagem (removida)");
+        return;
+      }
+
+      if (!urlValida(url)) {
+        await interaction.reply({ content: "❌ A URL precisa começar com http:// ou https://", ephemeral: true });
+        return;
+      }
+
+      lojaImagens[itemId] = url;
+      salvarDados();
+
+      await interaction.reply({
+        content: `✅ Imagem de **${LOJA_ITEMS[itemId].nome}** atualizada. Prévia abaixo:`,
+        embeds: [montarEmbedItem(itemId)],
+        ephemeral: true
+      });
+      console.log("✅ /lojaimagem respondido");
+      return;
+    }
+
+    // =========================
+    // APOSTAR
+    // =========================
+    if (interaction.commandName === "apostar") {
+      const quantidade = interaction.options.getInteger("quantidade");
+      const escolha = interaction.options.getString("escolha");
+      const data = getUserData(interaction.user.id);
+
+      if (data.coins < quantidade) {
+        await interaction.reply({
+          content: `❌ Você não tem ${formatarMoedas(quantidade)} pra apostar. Sua carteira: ${formatarMoedas(data.coins)}.`,
+          ephemeral: true
+        });
+        return;
+      }
+
+      const resultado = Math.random() < 0.5 ? "cara" : "coroa";
+      const ganhou = resultado === escolha;
+
+      if (ganhou) {
+        data.coins += quantidade;
+        await verificarMarcosMoedas(interaction.guild, interaction.user.id, data);
+        salvarDados();
+
+        await interaction.reply(
+          `🪙 Deu **${resultado}**! Você dobrou a aposta e ganhou ${formatarMoedas(quantidade)}.`
+        );
+      } else {
+        data.coins -= quantidade;
+        salvarDados();
+
+        await interaction.reply(
+          `🪙 Deu **${resultado}**... você perdeu ${formatarMoedas(quantidade)}. Próxima.`
+        );
+      }
+
+      console.log("✅ /apostar respondido");
+      return;
+    }
+
+    // =========================
+    // ROLETA
+    // =========================
+    if (interaction.commandName === "roleta") {
+      const quantidade = interaction.options.getInteger("quantidade");
+      const data = getUserData(interaction.user.id);
+      const now = Date.now();
+
+      if (now - data.lastRoleta < ROLETA_COOLDOWN_MS) {
+        const restante = ROLETA_COOLDOWN_MS - (now - data.lastRoleta);
+        const segundos = Math.ceil(restante / 1000);
+        await interaction.reply({
+          content: `⏳ A roleta ainda tá girando. Espera ~${segundos}s.`,
+          ephemeral: true
+        });
+        return;
+      }
+
+      if (data.coins < quantidade) {
+        await interaction.reply({
+          content: `❌ Você não tem ${formatarMoedas(quantidade)}. Sua carteira: ${formatarMoedas(data.coins)}.`,
+          ephemeral: true
+        });
+        return;
+      }
+
+      data.lastRoleta = now;
+      data.coins -= quantidade;
+
+      const resultado = sortearRoleta();
+      const premio = Math.floor(quantidade * resultado.multiplicador);
+      data.coins += premio;
+
+      await verificarMarcosMoedas(interaction.guild, interaction.user.id, data);
+      salvarDados();
+
+      const embed = new EmbedBuilder()
+        .setTitle("🎰 ROLETA BAGUNCINHA 🎰")
+        .setDescription(
+          `Você apostou ${formatarMoedas(quantidade)}.\n\n` +
+          `${resultado.label}\n\n` +
+          `Você ganhou: ${formatarMoedas(premio)}\n` +
+          `Saldo atual: ${formatarMoedas(data.coins)}`
+        )
+        .setColor(resultado.multiplicador >= 5 ? 0xf1c40f : resultado.multiplicador === 0 ? 0xe74c3c : 0x2ecc71);
+
+      await interaction.reply({ embeds: [embed] });
+      console.log("✅ /roleta respondido");
+      return;
+    }
+
+    // =========================
+    // PPT (PEDRA, PAPEL OU TESOURA)
+    // =========================
+    if (interaction.commandName === "ppt") {
+      const alvo = interaction.options.getUser("usuario");
+      const quantidade = interaction.options.getInteger("quantidade");
+
+      if (alvo.id === interaction.user.id) {
+        await interaction.reply({ content: "❌ Não dá pra desafiar você mesmo.", ephemeral: true });
+        return;
+      }
+      if (alvo.bot) {
+        await interaction.reply({ content: "❌ Bot não joga PPT.", ephemeral: true });
+        return;
+      }
+
+      const desafianteData = getUserData(interaction.user.id);
+      if (desafianteData.coins < quantidade) {
+        await interaction.reply({
+          content: `❌ Você não tem ${formatarMoedas(quantidade)}. Sua carteira: ${formatarMoedas(desafianteData.coins)}.`,
+          ephemeral: true
+        });
+        return;
+      }
+
+      const matchId = interaction.id;
+      pptMatches.set(matchId, {
+        desafianteId: interaction.user.id,
+        desafiadoId: alvo.id,
+        aposta: quantidade,
+        status: "aguardando",
+        escolhas: {}
+      });
+
+      const linhaBotoes = new ActionRowBuilder().addComponents(
+        new ButtonBuilder().setCustomId(`ppt:aceitar:${matchId}`).setLabel("✅ Aceitar").setStyle(ButtonStyle.Success),
+        new ButtonBuilder().setCustomId(`ppt:recusar:${matchId}`).setLabel("❌ Recusar").setStyle(ButtonStyle.Danger)
+      );
+
+      await interaction.reply({
+        content: ` ${interaction.user} desafiou ${alvo} para Pedra, Papel ou Tesoura apostando ${formatarMoedas(quantidade)}!\n${alvo}, aceita?`,
+        components: [linhaBotoes]
+      });
+
+      console.log("✅ /ppt respondido");
+      return;
+    }
+
+    // =========================
+    // CONQUISTAS
+    // =========================
+    if (interaction.commandName === "conquistas") {
+      const data = getUserData(interaction.user.id);
+      const member = await interaction.guild.members.fetch(interaction.user.id);
+
+      const desbloqueadasAgora = await verificarConquistas(member, data);
+
+      if (desbloqueadasAgora.length > 0) {
+        await verificarMarcosMoedas(interaction.guild, interaction.user.id, data);
+      }
+      salvarDados();
+
+      const linhas = Object.entries(CONQUISTAS).map(([id, conquista]) => {
+        const status = data.conquistas.includes(id) ? "✅" : "🔒";
+        return `${status} **${conquista.nome}** — ${conquista.descricao}`;
+      });
+
+      const embed = new EmbedBuilder()
+        .setTitle(`🏆 Conquistas de ${interaction.user.username}`)
+        .setDescription(linhas.join("\n"))
+        .setColor(0xf1c40f);
+
+      if (desbloqueadasAgora.length > 0) {
+        embed.addFields({
+          name: "🎉 Novas conquistas desbloqueadas!",
+          value: desbloqueadasAgora
+            .map(c => `${c.badge} ${c.nome} — +${formatarMoedas(c.moedas)}`)
+            .join("\n")
+        });
+      }
+
+      await interaction.reply({ embeds: [embed] });
+      console.log("✅ /conquistas respondido");
+      return;
+    }
+
+    // =========================
+    // JOGOS (BRASILEIRÃO + SELEÇÃO)
+    // =========================
+    if (interaction.commandName === "jogos") {
+      await interaction.deferReply();
+
+      try {
+        let fixtures;
+
+        if (jogosCache.dados && Date.now() - jogosCache.timestamp < JOGOS_CACHE_MS) {
+          fixtures = jogosCache.dados;
+        } else {
+          const agora = Date.now();
+          const eventos = await coletarEventosFutebol();
+
+          fixtures = eventos
+            .filter(jogo => {
+              const status = normalizarStatusFutebol(jogo.strStatus);
+              const kickoff = parseKickoffMs(jogo);
+              return status === "NS" || status === "LIVE" || (kickoff && kickoff >= agora - 3 * 60 * 60 * 1000);
+            })
+            .sort((a, b) => parseKickoffMs(a) - parseKickoffMs(b));
+
+          jogosCache = { timestamp: Date.now(), dados: fixtures };
+        }
+
+        if (fixtures.length === 0) {
+          await interaction.editReply("Não achei nenhum jogo marcado por enquanto.");
+          return;
+        }
+
+        const linhas = fixtures
+          .slice(0, 12)
+          .map(jogo => {
+            const status = normalizarStatusFutebol(jogo.strStatus);
+            const prefixo = status === "LIVE" ? "🔴 AO VIVO " : "";
+            return (
+              `${prefixo}⚽ **${nomeMandante(jogo)} x ${nomeVisitante(jogo)}**\n` +
+              `　　🏆 ${nomeCompeticao(jogo)} — 🕐 ${formatarHorarioJogo(parseKickoffMs(jogo))}`
+            );
+          });
+
+        const embed = new EmbedBuilder()
+          .setTitle("📅 Próximos jogos")
+          .setDescription(linhas.join("\n\n"))
+          .setColor(0x2ecc71)
+          .setFooter({ text: "Fonte: TheSportsDB" });
+
+        await interaction.editReply({ embeds: [embed] });
+      } catch (error) {
+        console.error("❌ Erro ao buscar jogos:", error);
+        await interaction.editReply("❌ Deu ruim buscando os jogos. Tenta de novo mais tarde.");
+      }
+
+      console.log("✅ /jogos respondido");
+      return;
+    }
+
+    // =========================
+    // SORTEAR (STAFF)
+    // =========================
+    if (interaction.commandName === "sortear") {
+      const premio = interaction.options.getString("premio");
+
+      const participantes = [...xpData.entries()].filter(([, data]) => {
+        return data && typeof data === "object" && (data.ticketsSorteio || 0) > 0;
+      });
+
+      if (participantes.length === 0) {
+        await interaction.reply({
+          content: "❌ Ninguém tem ticket de sorteio. Compra na `/loja` primeiro.",
+          ephemeral: true
+        });
+        return;
+      }
+
+      const pool = [];
+      let totalTickets = 0;
+      for (const [userId, data] of participantes) {
+        const tickets = data.ticketsSorteio;
+        totalTickets += tickets;
+        for (let i = 0; i < tickets; i++) {
+          pool.push(userId);
+        }
+      }
+
+      const vencedorId = pool[Math.floor(Math.random() * pool.length)];
+      const ticketsVencedor = getUserData(vencedorId).ticketsSorteio;
+
+      for (const [, data] of participantes) {
+        data.ticketsSorteio = 0;
+      }
+      salvarDados();
+
+      const vencedor = await client.users.fetch(vencedorId).catch(() => null);
+      const nomeVencedor = vencedor ? vencedor.username : "Usuário desconhecido";
+
+      const embed = new EmbedBuilder()
+        .setTitle("🎫 Resultado do Sorteio")
+        .setDescription(
+          `🎉 O ganhador foi <@${vencedorId}> (**${nomeVencedor}**)!\n\n` +
+          (premio ? `🎁 Prêmio: **${premio}**\n\n` : "") +
+          `Tinha **${ticketsVencedor}** ticket(s) de **${totalTickets}** no total.\n` +
+          `Participantes: **${participantes.length}**.`
+        )
+        .setColor(0xf1c40f)
+        .setThumbnail(vencedor?.displayAvatarURL({ size: 256 }) || null)
+        .setFooter({ text: "Todos os tickets foram consumidos neste sorteio." });
+
+      await interaction.reply({ embeds: [embed] });
+      console.log("✅ /sortear respondido");
+      return;
+    }
+
+    // =========================
+    // EDITAR MOEDAS (ADMIN)
+    // =========================
+    if (interaction.commandName === "editarmoedas") {
+      const alvo = interaction.options.getUser("usuario");
+      const acao = interaction.options.getString("acao");
+      const quantidade = interaction.options.getInteger("quantidade");
+
+      const data = getUserData(alvo.id);
+
+      if (acao === "adicionar") {
+        data.coins += quantidade;
+      } else if (acao === "remover") {
+        data.coins = Math.max(0, data.coins - quantidade);
+      } else if (acao === "definir") {
+        data.coins = quantidade;
+      }
+
+      await verificarMarcosMoedas(interaction.guild, alvo.id, data);
+      salvarDados();
+
+      await interaction.reply({
+        content: `✅ Feito. Carteira de **${alvo.username}** agora tá em ${formatarMoedas(data.coins)}.`,
+        ephemeral: true
+      });
+      console.log("✅ /editarmoedas respondido");
+      return;
+    }
+
+    // =========================
+    // BLOQUEAR CANAIS (ADMIN)
+    // =========================
+    if (interaction.commandName === "bloquearcanais") {
+      if (NAO_VERIFICADO_ROLE_ID.startsWith("COLOQUE_")) {
+        await interaction.reply({
+          content: "❌ Configura o NAO_VERIFICADO_ROLE_ID no código antes de usar isso.",
+          ephemeral: true
+        });
+        return;
+      }
+
+      await interaction.deferReply({ ephemeral: true });
+
+      const guild = interaction.guild;
+      const canalVerificacao = guild.channels.cache.find(
+        c => c.name === "verificacao" && c.type === ChannelType.GuildText
+      );
+
+      let sucesso = 0;
+      let falhas = 0;
+
+      for (const canal of guild.channels.cache.values()) {
+        if (canalVerificacao && canal.id === canalVerificacao.id) continue;
+        if (!canal.permissionOverwrites) continue;
+
+        try {
+          await canal.permissionOverwrites.edit(NAO_VERIFICADO_ROLE_ID, { ViewChannel: false });
+          sucesso++;
+        } catch (error) {
+          falhas++;
+        }
+      }
+
+      if (canalVerificacao) {
+        await canalVerificacao.permissionOverwrites
+          .edit(NAO_VERIFICADO_ROLE_ID, { ViewChannel: true })
+          .catch(() => {});
+      }
+
+      await interaction.editReply(
+        `✅ Bloqueado em ${sucesso} canal(is).` +
+        (falhas > 0 ? ` ⚠️ Falhou em ${falhas} (confere se meu cargo tá acima e se eu tenho "Gerenciar Cargos/Canais" lá).` : "")
+      );
+      console.log("✅ /bloquearcanais respondido");
+      return;
+    }
+
+    // =========================
+    // DESCONHECIDO
+    // =========================
+    if (!interaction.replied && !interaction.deferred) {
+      await interaction.reply({
+        content: "❌ Esse comando aí não existe, porra.",
+        ephemeral: true
+      });
+    }
+
+  } catch (error) {
+    console.error("❌ ERRO AO RESPONDER INTERAÇÃO:");
+    console.error(error);
+
+    try {
+      if (interaction.replied || interaction.deferred) {
+        await interaction.followUp({
+          content: "❌ Deu ruim aqui, porra. Tenta de novo.",
+          ephemeral: true
+        });
+      } else {
+        await interaction.reply({
+          content: "❌ Deu ruim aqui, porra. Tenta de novo.",
+          ephemeral: true
+        });
+      }
+    } catch (replyError) {
+      console.error("❌ Não foi possível enviar mensagem de erro:");
+      console.error(replyError);
+    }
+  }
+});
+
+// =========================
+// ERROS DO CLIENTE
+// =========================
+client.on("error", error => {
+  console.error("❌ Erro do Discord Client:");
+  console.error(error);
+});
+
+client.on("warn", warning => {
+  console.warn("⚠️ Aviso Discord:");
+  console.warn(warning);
+});
+
+// =========================
+// CARGOS POR INTERESSE (ONBOARDING NA ENTRADA)
+// =========================
+// Cole aqui os IDs dos cargos que cada interesse libera.
+const INTEREST_ROLES = {
+  valorant: "1476004304690348117",
+  minecraft: "1553649152779485272",
+  cs: "1553649152779485272",
+  roblox: "1553649152779485272",
+  fortnite: "COLOQUE_O_ID_DO_CARGO_FORTNITE",
+  futebol: "COLOQUE_O_ID_DO_CARGO_FUTEBOL",
+  nitros: "COLOQUE_O_ID_DO_CARGO_NITROS",
+  promocao: "COLOQUE_O_ID_DO_CARGO_PROMOCAO",
+  geral: "1373017679379828908"
+};
+
+const NOMES_INTERESSES = {
+  valorant: "🎯 Valorant",
+  minecraft: "⛏️ Minecraft",
+  cs: "🔫 CS",
+  roblox: "🧱 Roblox",
+  fortnite: "🪂 Fortnite",
+  futebol: "⚽ Futebol",
+  nitros: "💎 Nitros",
+  promocao: "🏷️ Promoções",
+  geral: "💬 Geral"
+};
+
+async function ensureInterestRoles(guild) {
+  if (!guild) return;
+
+  await guild.roles.fetch().catch(() => {});
+
+  for (const [interesse, nome] of Object.entries(NOMES_INTERESSES)) {
+    const atual = INTEREST_ROLES[interesse];
+    if (atual && !String(atual).startsWith("COLOQUE_")) {
+      if (guild.roles.cache.has(atual)) continue;
+    }
+
+    const nomeCargo = nome.replace(/^[^\p{L}\p{N}]+/u, "").trim();
+    let cargo = guild.roles.cache.find(r => r.name.toLowerCase() === nomeCargo.toLowerCase());
+
+    if (!cargo) {
+      try {
+        cargo = await guild.roles.create({
+          name: nomeCargo,
+          mentionable: false,
+          reason: `Cargo de interesse: ${nomeCargo}`
+        });
+        console.log(`✅ Cargo de interesse criado: ${nomeCargo} (${cargo.id})`);
+      } catch (error) {
+        console.error(`❌ Não consegui criar o cargo "${nomeCargo}":`, error.message);
+        continue;
+      }
+    }
+
+    INTEREST_ROLES[interesse] = cargo.id;
+  }
+}
+
+// =========================
+// SERVIDOR HTTP — RENDER (só pra manter o serviço vivo)
+// =========================
+const server = http.createServer((req, res) => {
+  res.writeHead(200, {
+    "Content-Type": "text/plain; charset=utf-8"
+  });
+  res.end("🤖 Bot Baguncinha na área, tudo certo!");
+});
 
 server.listen(PORT, "0.0.0.0", () => {
-  console.log(`HTTP na porta ${PORT}`);
+  console.log(`🌐 Servidor HTTP rodando na porta ${PORT}`);
 });
 
+// =========================
+// INICIALIZAÇÃO
+// =========================
 async function start() {
-  if (!TOKEN || !CLIENT_ID || !GUILD_IDS.length) {
-    console.error("Faltam TOKEN, CLIENT_ID ou GUILD_ID.");
-    return;
+  try {
+    if (!TOKEN || !CLIENT_ID) {
+      console.error("❌ TOKEN ou CLIENT_ID ausente.");
+      return;
+    }
+
+    await carregarDados();
+
+    // Zera os saldos inflados uma única vez (ver ECONOMIA_RESET_VERSAO)
+    aplicarResetEconomiaSeNecessario();
+
+    await registerCommands();
+
+    console.log("🔌 Conectando ao Discord...");
+    await client.login(TOKEN);
+  } catch (error) {
+    console.error("❌ ERRO AO INICIAR O BOT:");
+    console.error(error);
   }
-  await diagnosticoInicial();
-  await registerCommands().catch(error => {
-    console.error("Falha ao registrar comandos:", error.message);
-  });
-  await client.login(TOKEN);
 }
 
-setInterval(async () => {
-  verificarPrazos();
-  await removerCargosExpirados().catch(() => {});
-}, 5 * 60 * 1000);
+// Salva no disco a cada 2 minutos
+setInterval(salvarDados, 2 * 60 * 1000);
 
-start().catch(error => {
-  console.error("Falha ao iniciar:", error);
-});
+// Sobe pro GitHub a cada 5 minutos, mas só se algo mudou desde o último envio
+setInterval(() => {
+  if (dadosAlterados) githubSalvar();
+}, GITHUB_SAVE_INTERVAL_MS);
+
+// Quando o Render manda desligar (deploy novo, reinício), salva no disco E no GitHub
+// antes de fechar — é isso que evita perder o progresso dos últimos minutos.
+let encerrando = false;
+async function encerrarComSalvamento() {
+  if (encerrando) return;
+  encerrando = true;
+
+  console.log("💾 Salvando banco de dados antes de encerrar...");
+  salvarDados();
+
+  // se já tem um envio em andamento, espera ele terminar (até ~10s)
+  for (let i = 0; i < 20 && salvandoGithub; i++) {
+    await new Promise(resolve => setTimeout(resolve, 500));
+  }
+  await githubSalvar();
+
+  process.exit(0);
+}
+process.on("SIGINT", encerrarComSalvamento);
+process.on("SIGTERM", encerrarComSalvamento);
+
+start();
