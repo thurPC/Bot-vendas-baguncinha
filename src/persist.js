@@ -3,26 +3,46 @@ const path = require("path");
 
 const DATA_DIR = path.join(__dirname, "..", "data");
 const JSON_FILE = path.join(DATA_DIR, "store.json");
+const JSON_BAK = path.join(DATA_DIR, "store.json.bak");
+const JSON_TMP = path.join(DATA_DIR, "store.json.tmp");
 const SQLITE_FILE = path.join(DATA_DIR, "loja.db");
 
 function ensureDir() {
   fs.mkdirSync(DATA_DIR, { recursive: true });
 }
 
+function parseStoreFile(file) {
+  if (!fs.existsSync(file)) return null;
+  const raw = fs.readFileSync(file, "utf-8");
+  if (!raw || !String(raw).trim()) return null;
+  const parsed = JSON.parse(raw);
+  return parsed && typeof parsed === "object" && !Array.isArray(parsed) ? parsed : null;
+}
+
 function loadJson() {
-  try {
-    if (fs.existsSync(JSON_FILE)) {
-      return JSON.parse(fs.readFileSync(JSON_FILE, "utf-8"));
+  for (const file of [JSON_FILE, JSON_BAK]) {
+    try {
+      const parsed = parseStoreFile(file);
+      if (parsed) return parsed;
+    } catch (error) {
+      console.error("Erro ao ler", path.basename(file) + ":", error.message);
     }
-  } catch (error) {
-    console.error("Erro ao ler store.json:", error.message);
   }
   return null;
 }
 
 function saveJson(store) {
   ensureDir();
-  fs.writeFileSync(JSON_FILE, JSON.stringify(store, null, 2));
+  const data = JSON.stringify(store, null, 2);
+  fs.writeFileSync(JSON_TMP, data);
+  if (fs.existsSync(JSON_FILE)) {
+    try {
+      fs.copyFileSync(JSON_FILE, JSON_BAK);
+    } catch (error) {
+      console.error("Erro ao gravar store.json.bak:", error.message);
+    }
+  }
+  fs.renameSync(JSON_TMP, JSON_FILE);
 }
 
 function openSqlite() {
@@ -44,7 +64,8 @@ function loadSqlite() {
     const row = db.prepare("SELECT v FROM kv WHERE k = 'store'").get();
     db.close();
     if (!row || !row.v) return null;
-    return JSON.parse(row.v);
+    const parsed = JSON.parse(row.v);
+    return parsed && typeof parsed === "object" && !Array.isArray(parsed) ? parsed : null;
   } catch (error) {
     console.error("Erro ao ler loja.db:", error.message);
     try { db.close(); } catch { /* ignore */ }
@@ -69,7 +90,7 @@ function saveSqlite(store) {
 
 function configScore(store) {
   const c = store && store.config && typeof store.config === "object" ? store.config : {};
-  return ["smtpHost", "smtpUser", "smtpPass", "smtpFrom", "ticketCategoryId", "banner"]
+  return ["smtpHost", "smtpUser", "smtpPass", "smtpFrom", "ticketCategoryId", "banner", "feedbackMensagem"]
     .filter(k => c[k] != null && c[k] !== "")
     .length;
 }
@@ -89,6 +110,11 @@ function mergeStores(a, b) {
     if (merged.config[key] == null || merged.config[key] === "") {
       merged.config[key] = prefer[key] != null && prefer[key] !== "" ? prefer[key] : fallback[key];
     }
+  }
+  for (const key of ["pedidos", "pagamentos", "cupons", "estoque", "produtos", "produtoOverrides", "tickets", "carrinhos", "categorias", "guilds"]) {
+    const aObj = a[key] && typeof a[key] === "object" ? a[key] : {};
+    const bObj = b[key] && typeof b[key] === "object" ? b[key] : {};
+    merged[key] = { ...aObj, ...bObj, ...(merged[key] && typeof merged[key] === "object" ? merged[key] : {}) };
   }
   return merged;
 }
