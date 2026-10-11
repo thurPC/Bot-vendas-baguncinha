@@ -46,6 +46,24 @@
       "userId": null,
       "staffId": "1108518941434843290",
       "guildId": "1370256381701128192"
+    },
+    {
+      "em": 1791757923727,
+      "tipo": "loja_pausada",
+      "detalhe": "Loja pausada. Manutencao",
+      "pedidoId": null,
+      "userId": null,
+      "staffId": "1108518941434843290",
+      "guildId": "1370256381701128192"
+    },
+    {
+      "em": 1791757928348,
+      "tipo": "loja_reativada",
+      "detalhe": "Loja reaberta pelo painel.",
+      "pedidoId": null,
+      "userId": null,
+      "staffId": "1108518941434843290",
+      "guildId": "1370256381701128192"
     }
   ],
   "produtoOverrides": {},
@@ -107,14 +125,14 @@
   "config": {
     "banner": null,
     "bannerPosicao": "top",
-    "pixNomePublico": "BAGUNCINHA",
-    "ocultarNomePix": true,
+    "pixNomePublico": "BGC STORE",
+    "ocultarNomePix": false,
     "ticketCategoryId": null,
-    "smtpHost": null,
-    "smtpPort": 587,
-    "smtpUser": null,
-    "smtpPass": null,
-    "smtpFrom": null,
+    "smtpHost": "Smtp.gmail.com",
+    "smtpPort": 465,
+    "smtpUser": "Bgcstore.shop@gmail.com",
+    "smtpPass": "ywbl uuto ubbf gfjl",
+    "smtpFrom": "BCG STORE BGCSTORE.SHOP@GMAIL.COM",
     "lojaPausada": false,
     "lojaPausaMotivo": "",
     "lojaTitulo": "Loja Baguncinha",
@@ -198,5 +216,5 @@
       "rodape": null
     }
   },
-  "savedAt": 1791757630895
+  "savedAt": 1791757928348
 }
