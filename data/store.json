@@ -3,10 +3,42 @@
   "pagamentos": {},
   "nextPedidoId": 1001,
   "cupons": {},
-  "estoque": {},
+  "estoque": {
+    "nitro_1m": [],
+    "nitro_3m": [],
+    "boost_2": []
+  },
   "nextEstoqueItemId": 1,
   "cargosTemporarios": [],
-  "logs": [],
+  "logs": [
+    {
+      "em": 1791754382886,
+      "tipo": "loja_pausada",
+      "detalhe": "Loja pausada. Manutencao",
+      "pedidoId": null,
+      "userId": null,
+      "staffId": "1108518941434843290",
+      "guildId": "1370256381701128192"
+    },
+    {
+      "em": 1791755657335,
+      "tipo": "loja_reativada",
+      "detalhe": "Loja reaberta pelo painel.",
+      "pedidoId": null,
+      "userId": null,
+      "staffId": "1108518941434843290",
+      "guildId": "1370256381701128192"
+    },
+    {
+      "em": 1791755666008,
+      "tipo": "loja_pausada",
+      "detalhe": "Loja pausada. Manutencao",
+      "pedidoId": null,
+      "userId": null,
+      "staffId": "1108518941434843290",
+      "guildId": "1370256381701128192"
+    }
+  ],
   "produtoOverrides": {},
   "produtos": {
     "nitro_1m": {
@@ -74,11 +106,11 @@
     "smtpUser": null,
     "smtpPass": null,
     "smtpFrom": null,
-    "lojaPausada": false,
-    "lojaPausaMotivo": "",
-    "lojaTitulo": "Loja pausada",
-    "lojaDescricao": "A loja esta pausada no momento. Motivo: Manutencao",
-    "lojaCor": "ed4245",
+    "lojaPausada": true,
+    "lojaPausaMotivo": "Manutencao",
+    "lojaTitulo": "Loja Baguncinha",
+    "lojaDescricao": "Selecione uma categoria para ver os produtos. O bot gera o Pix, confirma o pagamento e entrega.\n\nPrazo: ate **2 horas** depois do Pix confirmado.",
+    "lojaCor": "9b59b6",
     "lojaRodape": "",
     "feedbackTitulo": "Obrigado pela compra!",
     "feedbackMensagem": "Obrigado pela compra, {user}!\n\nSeu pedido #{id} ({produto}) foi entregue com sucesso.\n\nSe puder, clique no botao abaixo e deixe seu feedback. Isso ajuda demais a loja.",
@@ -92,7 +124,7 @@
       "botaoEmoji": "🎫",
       "cor": "",
       "miniatura": null,
-      "banner": "https://cdn.discordapp.com/attachments/1552387591704158378/1556949547383787520/file_000000006d00820e8bf1e151be2120ea.png?backend=b2&ex=6acd4602&is=6acbf482&hm=da8f67a9fb31caa2a4a4c9f076c410dc5e73bcc52b14d5ad96632b81953244d2&",
+      "banner": "https://cdn.discordapp.com/attachments/1552387591704158378/1556949547383787520/file_000000006d00820e8bf1e151be2120ea.png?backend=b2&ex=6acb4bc2&is=6ac9fa42&hm=36122ee81239f2690af0557cff3ba57c19dc728fb1afdab0320ffcc900bba310&",
       "rodape": null
     }
   },
@@ -157,5 +189,5 @@
       "rodape": null
     }
   },
-  "savedAt": 1791755247790
+  "savedAt": 1791755666008
 }
