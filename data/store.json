@@ -1,0 +1,161 @@
+{
+  "pedidos": {},
+  "pagamentos": {},
+  "nextPedidoId": 1001,
+  "cupons": {},
+  "estoque": {},
+  "nextEstoqueItemId": 1,
+  "cargosTemporarios": [],
+  "logs": [],
+  "produtoOverrides": {},
+  "produtos": {
+    "nitro_1m": {
+      "id": "nitro_1m",
+      "nome": "Discord Nitro 1 mes",
+      "descricao": "Nitro Classic/Full sob encomenda. Entrega do codigo apos o Pix.",
+      "precoCentavos": 2490,
+      "emoji": "💎",
+      "disponivel": true,
+      "modo": "auto",
+      "cargoId": null,
+      "cargoDias": 0,
+      "imagem": null,
+      "banner": null,
+      "bannerPosicao": "bottom",
+      "categoriaId": "nitro",
+      "instrucoes": "Apos receber o codigo, abra discord.com/nitro e resgate.",
+      "precoOriginalCentavos": 0
+    },
+    "nitro_3m": {
+      "id": "nitro_3m",
+      "nome": "Discord Nitro 3 meses",
+      "descricao": "Nitro sob encomenda. Entrega do codigo apos o Pix.",
+      "precoCentavos": 6490,
+      "emoji": "💎",
+      "disponivel": true,
+      "modo": "auto",
+      "cargoId": null,
+      "cargoDias": 0,
+      "imagem": null,
+      "banner": null,
+      "bannerPosicao": "bottom",
+      "categoriaId": "nitro",
+      "instrucoes": "Apos receber o codigo, abra discord.com/nitro e resgate.",
+      "precoOriginalCentavos": 0
+    },
+    "boost_2": {
+      "id": "boost_2",
+      "nome": "2 Boosts de servidor",
+      "descricao": "Boosts sob encomenda. Entrega apos o Pix.",
+      "precoCentavos": 1990,
+      "emoji": "🚀",
+      "disponivel": true,
+      "modo": "semi",
+      "cargoId": null,
+      "cargoDias": 0,
+      "imagem": null,
+      "banner": null,
+      "bannerPosicao": "bottom",
+      "categoriaId": "boost",
+      "instrucoes": "A staff envia o procedimento de boost apos o pagamento.",
+      "precoOriginalCentavos": 0
+    }
+  },
+  "tickets": {},
+  "carrinhos": {},
+  "config": {
+    "banner": null,
+    "bannerPosicao": "top",
+    "pixNomePublico": "BAGUNCINHA",
+    "ocultarNomePix": true,
+    "ticketCategoryId": null,
+    "smtpHost": null,
+    "smtpPort": 587,
+    "smtpUser": null,
+    "smtpPass": null,
+    "smtpFrom": null,
+    "lojaPausada": false,
+    "lojaPausaMotivo": "",
+    "lojaTitulo": "Loja pausada",
+    "lojaDescricao": "A loja esta pausada no momento. Motivo: Manutencao",
+    "lojaCor": "ed4245",
+    "lojaRodape": "",
+    "feedbackTitulo": "Obrigado pela compra!",
+    "feedbackMensagem": "Obrigado pela compra, {user}!\n\nSeu pedido #{id} ({produto}) foi entregue com sucesso.\n\nSe puder, clique no botao abaixo e deixe seu feedback. Isso ajuda demais a loja.",
+    "cuponsPainel": {
+      "titulo": "Cupons da loja"
+    },
+    "ticketPainel": {
+      "titulo": "ATENDIMENTO AO CLIENTE",
+      "descricao": "Se voce estiver enfrentando algum problema ou precisar de ajuda com nossos servicos, abra um ticket. Nossa equipe responde o mais breve possivel.\n\n*(Podendo haver atrasos e lentidao no atendimento Sab/Dom)*",
+      "botaoLabel": "Abrir ticket",
+      "botaoEmoji": "🎫",
+      "cor": "",
+      "miniatura": null,
+      "banner": "https://cdn.discordapp.com/attachments/1552387591704158378/1556949547383787520/file_000000006d00820e8bf1e151be2120ea.png?backend=b2&ex=6acd4602&is=6acbf482&hm=da8f67a9fb31caa2a4a4c9f076c410dc5e73bcc52b14d5ad96632b81953244d2&",
+      "rodape": null
+    }
+  },
+  "lojaFixa": {
+    "channelId": null,
+    "messageId": null
+  },
+  "paineisFixos": {
+    "ticket": null,
+    "cupons": null
+  },
+  "guilds": {
+    "1370256381701128192": {
+      "lojaFixa": {
+        "channelId": "1554894024849104926",
+        "messageId": "1558318211207012446"
+      },
+      "paineisFixos": {
+        "ticket": "1557393159674138689",
+        "cupons": "1558318217653387305"
+      },
+      "ticketCategoryId": null
+    },
+    "1556310348703858771": {
+      "lojaFixa": {
+        "channelId": "1556411543321575484",
+        "messageId": "1558318212221767715"
+      },
+      "paineisFixos": {
+        "ticket": "1558318215644581989",
+        "cupons": "1558318219226521624",
+        "feedbacks": null
+      },
+      "ticketCategoryId": null
+    }
+  },
+  "categorias": {
+    "nitro": {
+      "id": "nitro",
+      "nome": "Nitro",
+      "emoji": "💎",
+      "descricao": "Discord Nitro",
+      "posicao": 0,
+      "ativo": true,
+      "banner": null,
+      "bannerPosicao": "top",
+      "imagem": null,
+      "cor": null,
+      "rodape": null
+    },
+    "boost": {
+      "id": "boost",
+      "nome": "Boosts",
+      "emoji": "🚀",
+      "descricao": "Boosts de servidor",
+      "posicao": 1,
+      "ativo": true,
+      "banner": null,
+      "bannerPosicao": "top",
+      "imagem": null,
+      "cor": null,
+      "rodape": null
+    }
+  },
+  "savedAt": 1791755247790
+}
