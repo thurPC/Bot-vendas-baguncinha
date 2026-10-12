@@ -182,7 +182,7 @@
         "ticket": "1557393159674138689",
         "cupons": "1558318217653387305"
       },
-      "ticketCategoryId": null
+      "ticketCategoryId": "1555480580588703826"
     },
     "1556310348703858771": {
       "lojaFixa": {
@@ -225,5 +225,5 @@
       "rodape": null
     }
   },
-  "savedAt": 1791783722791
+  "savedAt": 1791783836471
 }
