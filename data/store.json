@@ -132,7 +132,7 @@
   "tickets": {},
   "carrinhos": {},
   "config": {
-    "banner": null,
+    "banner": "https://cdn.discordapp.com/attachments/1552387591704158378/1555779777757974538/BGC_STORE_Logo_Reveal_60fps_v2.gif?backend=b2&ex=6acda1d4&is=6acc5054&hm=01e93bda29e29e2746ebcf3670e23ffd0e62d50c45856f00a9b60dd040a2f1e8&",
     "bannerPosicao": "top",
     "pixNomePublico": "BGC STORE",
     "ocultarNomePix": false,
@@ -159,7 +159,7 @@
       "botaoLabel": "Abrir ticket",
       "botaoEmoji": "🎫",
       "cor": "",
-      "miniatura": null,
+      "miniatura": "https://cdn.discordapp.com/attachments/1552387591704158378/1556949547383787520/file_000000006d00820e8bf1e151be2120ea.png?backend=b2&ex=6acd4602&is=6acbf482&hm=da8f67a9fb31caa2a4a4c9f076c410dc5e73bcc52b14d5ad96632b81953244d2&",
       "banner": "https://cdn.discordapp.com/attachments/1552387591704158378/1556949547383787520/file_000000006d00820e8bf1e151be2120ea.png?backend=b2&ex=6acb4bc2&is=6ac9fa42&hm=36122ee81239f2690af0557cff3ba57c19dc728fb1afdab0320ffcc900bba310&",
       "rodape": null
     }
@@ -225,5 +225,5 @@
       "rodape": null
     }
   },
-  "savedAt": 1791778696874
+  "savedAt": 1791783722791
 }
