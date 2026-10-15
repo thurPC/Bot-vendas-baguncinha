@@ -279,6 +279,20 @@ if (store.config.ticketPainel.cor === undefined) store.config.ticketPainel.cor =
 if (store.config.ticketPainel.miniatura === undefined) store.config.ticketPainel.miniatura = null;
 if (store.config.ticketPainel.banner === undefined) store.config.ticketPainel.banner = null;
 if (store.config.ticketPainel.rodape === undefined) store.config.ticketPainel.rodape = null;
+if (!Array.isArray(store.config.ticketPainel.opcoes) || !store.config.ticketPainel.opcoes.length) {
+  store.config.ticketPainel.opcoes = [
+    { id: "duvidas", label: "Duvidas", emoji: "❓" },
+    { id: "entrega", label: "Entrega de produto", emoji: "📦" }
+  ];
+}
+store.config.ticketPainel.opcoes = store.config.ticketPainel.opcoes
+  .filter(opcao => opcao && typeof opcao === "object")
+  .slice(0, 25)
+  .map((opcao, indice) => ({
+    id: String(opcao.id || `opcao_${indice + 1}`).slice(0, 100),
+    label: String(opcao.label || opcao.id || `Opcao ${indice + 1}`).slice(0, 100),
+    emoji: opcao.emoji === undefined ? null : opcao.emoji
+  }));
 if (!store.categorias) {
   store.categorias = {
     nitro: { id: "nitro", nome: "Nitro", emoji: "💎", descricao: "Discord Nitro", posicao: 0, ativo: true },
@@ -579,7 +593,7 @@ function avisoComandoBloqueado(interaction) {
 }
 
 function logCanalPublico(tipo) {
-  return tipo === "entregue";
+  return tipo === "pagamento_confirmado" || tipo === "entregue";
 }
 
 function registrarLog(tipo, detalhe, dados = {}) {
@@ -599,15 +613,26 @@ function registrarLog(tipo, detalhe, dados = {}) {
 }
 
 function embedLog(entrada) {
+  const pedido = entrada.pedidoId ? store.pedidos[String(entrada.pedidoId)] : null;
   const linhas = [];
+  if (pedido) {
+    linhas.push(`Cliente: <@${pedido.userId}>`);
+    linhas.push(`Produto: **${pedido.produtoNome}**`);
+    linhas.push(`Valor: **${formatarReais(pedido.valorCentavos)}**`);
+  } else if (entrada.userId) {
+    linhas.push(`Usuario: <@${entrada.userId}>`);
+  }
   if (entrada.pedidoId) linhas.push(`Pedido: **#${entrada.pedidoId}**`);
-  if (entrada.userId) linhas.push(`Usuario: <@${entrada.userId}>`);
-  if (entrada.staffId) linhas.push(`Fechado por: <@${entrada.staffId}>`);
-  return new EmbedBuilder()
+  if (entrada.staffId) linhas.push(`Staff: <@${entrada.staffId}>`);
+  const embed = new EmbedBuilder()
     .setTitle(LOG_LABEL[entrada.tipo] || entrada.tipo)
     .setDescription(`${entrada.detalhe}${linhas.length ? `\n\n${linhas.join("\n")}` : ""}`)
-    .setColor(0x5865f2)
+    .setColor(entrada.tipo === "entregue" ? 0x57f287 : 0x5865f2)
     .setTimestamp(entrada.em);
+  if (entrada.em) {
+    embed.addFields({ name: "Data e hora", value: `<t:${Math.floor(entrada.em / 1000)}:F>` });
+  }
+  return embed;
 }
 
 async function enviarLogCanal(entrada) {
@@ -889,6 +914,34 @@ function ticketPainel() {
   return store.config.ticketPainel || {};
 }
 
+function opcoesTicket() {
+  const opcoes = Array.isArray(ticketPainel().opcoes) ? ticketPainel().opcoes : [];
+  const validas = opcoes.filter(opcao => opcao && opcao.label);
+  if (validas.length) return validas;
+  return [
+    { id: "duvidas", label: "Duvidas", emoji: "❓" },
+    { id: "entrega", label: "Entrega de produto", emoji: "📦" }
+  ];
+}
+
+function selectOpcoesTicket() {
+  const opcoes = opcoesTicket().slice(0, 25);
+  if (!opcoes.length) return null;
+  return new ActionRowBuilder().addComponents(
+    new StringSelectMenuBuilder()
+      .setCustomId(`ticket_opc:${Date.now()}`)
+      .setPlaceholder("Selecione o assunto do ticket")
+      .addOptions(
+        opcoes.map((opcao, indice) => ({
+          label: String(opcao.label).slice(0, 100),
+          value: String(opcao.id || `opcao_${indice + 1}`).slice(0, 100),
+          description: (opcao.descricao || "Abrir este tipo de atendimento").slice(0, 100),
+          emoji: opcao.emoji && String(opcao.emoji).length <= 32 ? opcao.emoji : undefined
+        }))
+      )
+  );
+}
+
 function payloadPainelTicket() {
   const cfg = ticketPainel();
   const embed = new EmbedBuilder()
@@ -899,7 +952,7 @@ function payloadPainelTicket() {
   if (urlMidiaValida(cfg.banner)) embed.setImage(cfg.banner);
   if (cfg.rodape) embed.setFooter({ text: String(cfg.rodape).slice(0, 2048) });
   const components = [];
-  const sel = selectCategorias("ticket_cat");
+  const sel = selectOpcoesTicket();
   if (sel) components.push(sel);
   const botao = new ButtonBuilder()
     .setCustomId("ticket_abrir")
@@ -2603,11 +2656,13 @@ function resumoConfig(gid = GUILD_ID) {
 
 function payloadPainelConfig(gid = GUILD_ID) {
   const cfg = ticketPainel();
+  const opcoes = opcoesTicket().map(o => `${o.emoji ? `${o.emoji} ` : ""}${o.label}`).join(", ");
   const embed = new EmbedBuilder()
     .setTitle("Configuracao da loja")
     .setDescription(
       resumoConfig(gid) +
       `\n\n**Painel de ticket**\nTitulo: ${cfg.titulo}\nBotao: ${cfg.botaoLabel}` +
+      `\nOpcoes: ${opcoes || "(nenhuma)"}` +
       "\n\nUse os botoes abaixo. Tudo e salvo na hora."
     )
     .setColor(0x9b59b6);
@@ -2627,6 +2682,7 @@ function payloadPainelConfig(gid = GUILD_ID) {
       ),
       new ActionRowBuilder().addComponents(
         new ButtonBuilder().setCustomId("cfg_ticket_painel").setLabel("Texto do ticket").setStyle(ButtonStyle.Secondary),
+        new ButtonBuilder().setCustomId("cfg_ticket_opcoes").setLabel("Opcoes do ticket").setStyle(ButtonStyle.Secondary),
         new ButtonBuilder().setCustomId("cfg_ticket_midia").setLabel("Midia do ticket").setStyle(ButtonStyle.Secondary),
         new ButtonBuilder().setCustomId("cfg_ticket_publicar").setLabel("Publicar tickets").setStyle(ButtonStyle.Success),
         new ButtonBuilder().setCustomId("cfg_feedback").setLabel("Msg feedback DM").setStyle(ButtonStyle.Secondary)
@@ -2640,6 +2696,7 @@ function payloadPainelConfig(gid = GUILD_ID) {
           .addChannelTypes(ChannelType.GuildCategory)
       ),
       new ActionRowBuilder().addComponents(
+        new ButtonBuilder().setCustomId("cfg_backup").setLabel("Backup completo (TUDO)").setStyle(ButtonStyle.Success),
         new ButtonBuilder().setCustomId("hub_home").setLabel("Voltar ao painel").setStyle(ButtonStyle.Secondary)
       )
     ]
@@ -4877,6 +4934,48 @@ async function handleButton(interaction) {
     return;
   }
 
+  if (acao === "cfg_ticket_opcoes") {
+    if (!isStaff(interaction.member)) {
+      await interaction.reply({ content: "So a staff pode configurar.", ephemeral: true });
+      return;
+    }
+    const opcoes = opcoesTicket();
+    const modal = new ModalBuilder().setCustomId("cfg_ticket_opcoes_modal").setTitle("Opcoes do ticket");
+    modal.addComponents(
+      new ActionRowBuilder().addComponents(campoTexto("op1_label", "Opcao 1 - nome", TextInputStyle.Short, opcoes[0]?.label || "Duvidas", { required: true, maxLength: 100 })),
+      new ActionRowBuilder().addComponents(campoTexto("op1_emoji", "Opcao 1 - emoji (vazio remove)", TextInputStyle.Short, opcoes[0]?.emoji || "", { required: false, maxLength: 32 })),
+      new ActionRowBuilder().addComponents(campoTexto("op2_label", "Opcao 2 - nome", TextInputStyle.Short, opcoes[1]?.label || "Entrega de produto", { required: true, maxLength: 100 })),
+      new ActionRowBuilder().addComponents(campoTexto("op2_emoji", "Opcao 2 - emoji (vazio remove)", TextInputStyle.Short, opcoes[1]?.emoji || "", { required: false, maxLength: 32 }))
+    );
+    await interaction.showModal(modal);
+    return;
+  }
+
+  if (acao === "cfg_backup") {
+    if (!isStaff(interaction.member)) {
+      await interaction.reply({ content: "So a staff pode usar o painel.", ephemeral: true });
+      return;
+    }
+    await interaction.deferReply({ ephemeral: true });
+    const dump = snapshotStoreCompleto();
+    let githubOk = false;
+    try {
+      githubOk = await persist.githubSalvarAgora(store);
+    } catch (error) {
+      console.error("Falha no backup do GitHub:", error.message);
+    }
+    const resumo =
+      "Backup completo da loja (config, banner, categorias, produtos, estoque, cupons, pedidos, tickets, cargos e logs)." +
+      (githubOk
+        ? "\n✅ Tambem salvo no GitHub (branch de dados)."
+        : "\n⚠️ GitHub nao configurado ou indisponivel — apenas o arquivo abaixo foi gerado.");
+    await interaction.editReply({
+      content: resumo,
+      files: [new AttachmentBuilder(Buffer.from(JSON.stringify(dump, null, 2), "utf8"), { name: `backup-loja-${Date.now()}.json` })]
+    });
+    return;
+  }
+
   if (acao === "cfg_ticket_midia") {
     if (!isStaff(interaction.member)) {
       await interaction.reply({ content: "So a staff pode configurar.", ephemeral: true });
@@ -5201,7 +5300,7 @@ async function handleSelect(interaction) {
     return;
   }
 
-  if (id === "ticket_cat" || id.startsWith("ticket_cat:")) {
+  if (id === "ticket_opc" || id.startsWith("ticket_opc:")) {
     await interaction.showModal(modalMotivoTicket(valor));
     await interaction.message.edit(payloadPainelTicket()).catch(() => {});
     return;
@@ -5607,8 +5706,8 @@ async function handleModal(interaction) {
       return;
     }
     await interaction.deferReply({ ephemeral: true });
-    const categoria = valor ? store.categorias[valor] : null;
-    const assunto = categoria ? `${categoria.nome}: ${motivo}` : motivo;
+    const opcao = opcoesTicket().find(item => String(item.id) === String(valor));
+    const assunto = opcao ? `${opcao.label}: ${motivo}` : motivo;
     const canal = await abrirTicket(interaction.guild, interaction.user, assunto);
     await interaction.editReply(`Ticket aberto em <#${canal.id}>.`);
     return;
@@ -5719,6 +5818,32 @@ async function handleModal(interaction) {
     store.config.ticketPainel.botaoLabel = (interaction.fields.getTextInputValue("botao") || "Abrir ticket").trim().slice(0, 80);
     store.config.ticketPainel.cor = (interaction.fields.getTextInputValue("cor") || "5865F2").trim().replace(/^#/, "");
     store.config.ticketPainel.botaoEmoji = (interaction.fields.getTextInputValue("emoji") || "").trim() || null;
+    salvarStore();
+    await atualizarPaineisTicket().catch(() => {});
+    await interaction.reply({ ...payloadPainelConfig(interaction.guildId), ephemeral: true });
+    return;
+  }
+
+  if (acao === "cfg_ticket_opcoes_modal") {
+    if (!isStaff(interaction.member)) {
+      await interaction.reply({ content: "So a staff pode configurar.", ephemeral: true });
+      return;
+    }
+    const atuais = opcoesTicket();
+    const ler = (campo, valorPadrao) => (interaction.fields.getTextInputValue(campo) || "").trim() || valorPadrao;
+    const opcoes = [
+      {
+        id: atuais[0]?.id || "duvidas",
+        label: ler("op1_label", "Duvidas").slice(0, 100),
+        emoji: (interaction.fields.getTextInputValue("op1_emoji") || "").trim() || null
+      },
+      {
+        id: atuais[1]?.id || "entrega",
+        label: ler("op2_label", "Entrega de produto").slice(0, 100),
+        emoji: (interaction.fields.getTextInputValue("op2_emoji") || "").trim() || null
+      }
+    ];
+    store.config.ticketPainel.opcoes = opcoes;
     salvarStore();
     await atualizarPaineisTicket().catch(() => {});
     await interaction.reply({ ...payloadPainelConfig(interaction.guildId), ephemeral: true });
@@ -6219,7 +6344,10 @@ client.once("ready", () => {
     console.error("Erro em removerCargosExpirados:", err);
   }
 
-  publicarCanaisFixos().catch(err => console.error("Erro ao publicar canais fixos:", err.message));
+  // Painel de loja, ticket, cupons e feedbacks NAO sao republicados/atualizados
+  // automaticamente a cada reinicio (deploy/atualizacao do codigo). A publicacao
+  // e sempre manual pela staff (/catalogo, "Publicar loja"/"Publicar tickets" no
+  // painel, /cupom publicar). Assim nada e reenviado sozinho nesses canais.
 });
 
 function verificarPrazos() {
