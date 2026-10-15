@@ -73,6 +73,15 @@
       "userId": null,
       "staffId": "1108518941434843290",
       "guildId": "1370256381701128192"
+    },
+    {
+      "em": 1792027384824,
+      "tipo": "ticket_aberto",
+      "detalhe": "Ticket de <@1024343156407423087>: Ah.",
+      "pedidoId": null,
+      "userId": "1024343156407423087",
+      "staffId": null,
+      "guildId": "1370256381701128192"
     }
   ],
   "produtoOverrides": {},
@@ -129,7 +138,14 @@
       "precoOriginalCentavos": 0
     }
   },
-  "tickets": {},
+  "tickets": {
+    "1560100667245199473": {
+      "userId": "1024343156407423087",
+      "abertoEm": 1792027384461,
+      "assunto": "Ah",
+      "status": "aberto"
+    }
+  },
   "carrinhos": {},
   "config": {
     "banner": "https://cdn.discordapp.com/attachments/1552387591704158378/1555779777757974538/BGC_STORE_Logo_Reveal_60fps_v2.gif?backend=b2&ex=6acda1d4&is=6acc5054&hm=01e93bda29e29e2746ebcf3670e23ffd0e62d50c45856f00a9b60dd040a2f1e8&",
@@ -225,5 +241,5 @@
       "rodape": null
     }
   },
-  "savedAt": 1791783836471
+  "savedAt": 1792027384824
 }
