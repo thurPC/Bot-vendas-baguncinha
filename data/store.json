@@ -82,6 +82,15 @@
       "userId": "1024343156407423087",
       "staffId": null,
       "guildId": "1370256381701128192"
+    },
+    {
+      "em": 1792030024629,
+      "tipo": "ticket_fechado",
+      "detalhe": "Ticket de <@1024343156407423087> fechado por <@1108518941434843290>.",
+      "pedidoId": null,
+      "userId": "1024343156407423087",
+      "staffId": "1108518941434843290",
+      "guildId": "1370256381701128192"
     }
   ],
   "produtoOverrides": {},
@@ -143,7 +152,9 @@
       "userId": "1024343156407423087",
       "abertoEm": 1792027384461,
       "assunto": "Ah",
-      "status": "aberto"
+      "status": "fechado",
+      "fechadoEm": 1792030024609,
+      "fechadoPor": "1108518941434843290"
     }
   },
   "carrinhos": {},
@@ -241,5 +252,5 @@
       "rodape": null
     }
   },
-  "savedAt": 1792027384824
+  "savedAt": 1792030024629
 }
