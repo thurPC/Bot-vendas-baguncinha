@@ -326,6 +326,34 @@ function estrelas(nota) {
   return "⭐".repeat(n) + "☆".repeat(5 - n);
 }
 
+// Converte um emoji digitado pela staff no formato aceito pelo Discord.
+// Funciona com emoji unicode (🎫), custom/animated colado como <:nome:id> ou
+// <a:nome:id>, e tambem com "nome:id" ou apenas o id. Animados usam a flag animated.
+function resolverEmoji(entrada) {
+  if (entrada === undefined || entrada === null) return undefined;
+  const texto = String(entrada).trim();
+  if (!texto) return undefined;
+  const custom = texto.match(/^<?(a?):?([a-zA-Z0-9_]{2,32}):(\d{15,25})>?$/);
+  if (custom) {
+    return { animated: custom[1] === "a", name: custom[2], id: custom[3] };
+  }
+  if (/^\d{15,25}$/.test(texto)) {
+    return { id: texto };
+  }
+  return texto;
+}
+
+// Extensao ok? Emoji custom fica longo (<a:nome:id>), entao validamos pelo
+// formato custom primeiro e so limitamos o tamanho de emojis unicode.
+function emojiValido(entrada) {
+  if (entrada === undefined || entrada === null) return false;
+  const texto = String(entrada).trim();
+  if (!texto) return false;
+  if (/^<?(a?):?([a-zA-Z0-9_]{2,32}):(\d{15,25})>?$/.test(texto)) return true;
+  if (/^\d{15,25}$/.test(texto)) return true;
+  return [...texto].length <= 8;
+}
+
 function proximoPedidoId() {
   const id = store.nextPedidoId;
   store.nextPedidoId += 1;
@@ -737,7 +765,7 @@ function selectCategorias(customId = "cat") {
           label: c.nome.slice(0, 100),
           value: String(c.id),
           description: (c.descricao || "Ver produtos").slice(0, 100),
-          emoji: c.emoji && String(c.emoji).length <= 8 ? c.emoji : undefined
+          emoji: emojiValido(c.emoji) ? resolverEmoji(c.emoji) : undefined
         }))
       )
   );
@@ -936,7 +964,7 @@ function selectOpcoesTicket() {
           label: String(opcao.label).slice(0, 100),
           value: String(opcao.id || `opcao_${indice + 1}`).slice(0, 100),
           description: (opcao.descricao || "Abrir este tipo de atendimento").slice(0, 100),
-          emoji: opcao.emoji && String(opcao.emoji).length <= 32 ? opcao.emoji : undefined
+          emoji: emojiValido(opcao.emoji) ? resolverEmoji(opcao.emoji) : undefined
         }))
       )
   );
@@ -959,7 +987,7 @@ function payloadPainelTicket() {
     .setLabel(String(cfg.botaoLabel || "Abrir ticket").slice(0, 80))
     .setStyle(ButtonStyle.Secondary);
   if (cfg.botaoEmoji) {
-    try { botao.setEmoji(cfg.botaoEmoji); } catch { /* emoji invalido */ }
+    try { botao.setEmoji(resolverEmoji(cfg.botaoEmoji)); } catch { /* emoji invalido */ }
   }
   components.push(new ActionRowBuilder().addComponents(botao));
   return { embeds: [embed], components };
@@ -1181,6 +1209,14 @@ async function publicarCanaisFixos() {
   await atualizarPaineisTicket(false);
   await atualizarPainelCupons(false);
   await removerPainelFeedbacks().catch(() => {});
+}
+
+async function republicarEmbeds() {
+  for (const gid of GUILD_IDS) {
+    await publicarLojaFixa(gid, true).catch(err => console.error(`Loja (${gid}):`, err.message));
+  }
+  await atualizarPaineisTicket(true);
+  await atualizarPainelCupons(true);
 }
 
 function embedPedidoCliente(pedido, extra, opcoes = {}) {
@@ -2469,7 +2505,7 @@ async function handleProduto(interaction) {
     const categoriaId = (interaction.options.getString("categoria") || "geral").trim().toLowerCase();
     const modo = interaction.options.getString("modo") || "semi";
     const descricao = (interaction.options.getString("descricao") || "Produto da Baguncinha.").trim();
-    const emoji = (interaction.options.getString("emoji") || "📦").trim().slice(0, 8);
+    const emoji = (interaction.options.getString("emoji") || "📦").trim().slice(0, 64);
     if (!id || !nome || !Number.isFinite(preco) || preco < 0) {
       await interaction.reply({ content: "ID, nome e preco validos sao obrigatorios.", ephemeral: true });
       return;
@@ -2696,6 +2732,7 @@ function payloadPainelConfig(gid = GUILD_ID) {
           .addChannelTypes(ChannelType.GuildCategory)
       ),
       new ActionRowBuilder().addComponents(
+        new ButtonBuilder().setCustomId("cfg_publicar_tudo").setLabel("Republicar embeds").setStyle(ButtonStyle.Primary),
         new ButtonBuilder().setCustomId("cfg_backup").setLabel("Backup completo (TUDO)").setStyle(ButtonStyle.Success),
         new ButtonBuilder().setCustomId("hub_home").setLabel("Voltar ao painel").setStyle(ButtonStyle.Secondary)
       )
@@ -2728,6 +2765,9 @@ function payloadPainelStaff() {
         new ButtonBuilder().setCustomId("hub_estoque").setLabel("Estoque").setStyle(ButtonStyle.Secondary),
         new ButtonBuilder().setCustomId("hub_cupons").setLabel("Cupons").setStyle(ButtonStyle.Secondary),
         new ButtonBuilder().setCustomId("hub_relatorio").setLabel("Relatorio").setStyle(ButtonStyle.Secondary)
+      ),
+      new ActionRowBuilder().addComponents(
+        new ButtonBuilder().setCustomId("cfg_publicar_tudo").setLabel("Republicar embeds").setStyle(ButtonStyle.Primary)
       )
     ]
   };
@@ -3528,7 +3568,7 @@ const commands = [
             .addChoices({ name: "Automatico", value: "auto" }, { name: "Staff", value: "semi" })
         )
         .addStringOption(o => o.setName("descricao").setDescription("Descricao").setMaxLength(1000))
-        .addStringOption(o => o.setName("emoji").setDescription("Emoji").setMaxLength(8))
+        .addStringOption(o => o.setName("emoji").setDescription("Emoji unicode ou custom <a:nome:id>").setMaxLength(64))
     )
     .addSubcommand(sub =>
       sub.setName("editar").setDescription("Edita um produto.")
@@ -3638,7 +3678,7 @@ const commands = [
       sub.setName("criar").setDescription("Cria uma categoria.")
         .addStringOption(o => o.setName("id").setDescription("ID interno (ex: nitro)").setRequired(true).setMaxLength(32))
         .addStringOption(o => o.setName("nome").setDescription("Nome visivel").setRequired(true).setMaxLength(80))
-        .addStringOption(o => o.setName("emoji").setDescription("Emoji").setMaxLength(8))
+        .addStringOption(o => o.setName("emoji").setDescription("Emoji unicode ou custom <a:nome:id>").setMaxLength(64))
         .addStringOption(o => o.setName("descricao").setDescription("Descricao").setMaxLength(200))
     )
     .addSubcommand(sub => sub.setName("listar").setDescription("Lista as categorias."))
@@ -4858,6 +4898,17 @@ async function handleButton(interaction) {
     await interaction.deferUpdate();
     await publicarLojaFixa(interaction.guildId, true);
     await interaction.editReply(payloadPainelConfig(interaction.guildId));
+    return;
+  }
+
+  if (acao === "cfg_publicar_tudo") {
+    if (!isStaff(interaction.member)) {
+      await interaction.reply({ content: "So a staff pode configurar.", ephemeral: true });
+      return;
+    }
+    await interaction.deferReply({ ephemeral: true });
+    await republicarEmbeds().catch(error => console.error("Falha ao republicar embeds:", error.message));
+    await interaction.editReply({ content: "Embeds republicados: loja, tickets e cupons (editados no lugar ou reenviados se apagados)." });
     return;
   }
 
