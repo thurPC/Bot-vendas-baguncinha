@@ -211,7 +211,7 @@
         {
           "id": "duvidas",
           "label": "Duvidas",
-          "emoji": "<a:foguete:1489436127936122962>"
+          "emoji": "⁉️"
         },
         {
           "id": "entrega",
@@ -258,8 +258,8 @@
     "nitro": {
       "id": "nitro",
       "nome": "Nitro",
-      "emoji": "💎",
-      "descricao": "Discord Nitro",
+      "emoji": "💠",
+      "descricao": "Discord Nitro <a:7496paymentsnitro:1489434727952683018>",
       "posicao": 0,
       "ativo": true,
       "banner": null,
@@ -282,5 +282,5 @@
       "rodape": null
     }
   },
-  "savedAt": 1792129086265
+  "savedAt": 1792129345136
 }
