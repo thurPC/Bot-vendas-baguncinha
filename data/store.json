@@ -255,7 +255,7 @@
   "carrinhos": {},
   "config": {
     "banner": "https://cdn.discordapp.com/attachments/1552387591704158378/1555779777757974538/BGC_STORE_Logo_Reveal_60fps_v2.gif?backend=b2&ex=6ad2e7d4&is=6ad19654&hm=88f4afea6c776f3808911b932bdd3918bb3f5659ebeba15e9d639daac852cf8f&",
-    "bannerPosicao": "float",
+    "bannerPosicao": "bottom",
     "pixNomePublico": "BGC STORE",
     "ocultarNomePix": false,
     "ticketCategoryId": null,
@@ -359,5 +359,5 @@
       "rodape": null
     }
   },
-  "savedAt": 1792129976557
+  "savedAt": 1792130046452
 }
