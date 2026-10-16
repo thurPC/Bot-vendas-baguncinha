@@ -168,7 +168,7 @@
   },
   "carrinhos": {},
   "config": {
-    "banner": "https://cdn.discordapp.com/attachments/1552387591704158378/1555779777757974538/BGC_STORE_Logo_Reveal_60fps_v2.gif?backend=b2&ex=6acda1d4&is=6acc5054&hm=01e93bda29e29e2746ebcf3670e23ffd0e62d50c45856f00a9b60dd040a2f1e8&",
+    "banner": "https://cdn.discordapp.com/attachments/1552387591704158378/1555779777757974538/BGC_STORE_Logo_Reveal_60fps_v2.gif?backend=b2&ex=6ad2e7d4&is=6ad19654&hm=88f4afea6c776f3808911b932bdd3918bb3f5659ebeba15e9d639daac852cf8f&",
     "bannerPosicao": "top",
     "pixNomePublico": "BGC STORE",
     "ocultarNomePix": false,
@@ -273,5 +273,5 @@
       "rodape": null
     }
   },
-  "savedAt": 1792126188106
+  "savedAt": 1792126250453
 }
