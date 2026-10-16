@@ -138,7 +138,12 @@
       "guildId": "1370256381701128192"
     }
   ],
-  "produtoOverrides": {},
+  "produtoOverrides": {
+    "nitro_1m": {
+      "cargoId": "1560529540856680448",
+      "cargoDias": 0
+    }
+  },
   "produtos": {
     "nitro_1m": {
       "id": "nitro_1m",
@@ -148,7 +153,7 @@
       "emoji": "💎",
       "disponivel": true,
       "modo": "auto",
-      "cargoId": null,
+      "cargoId": "1560529540856680448",
       "cargoDias": 0,
       "imagem": null,
       "banner": null,
@@ -309,5 +314,5 @@
       "rodape": null
     }
   },
-  "savedAt": 1792129392964
+  "savedAt": 1792129704706
 }
