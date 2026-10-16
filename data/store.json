@@ -182,7 +182,7 @@
     },
     "ticketPainel": {
       "titulo": "ATENDIMENTO AO CLIENTE",
-      "descricao": "Se voce estiver enfrentando algum problema ou precisar de ajuda com nossos servicos, abra um ticket. Nossa equipe responde o mais breve possivel. Assim que recebermos seu ticket, nossa equipe de suporte entrará em contato com você para solucionar o problema o mais breve possível. Obrigado pela sua compreensão e cooperação.\n\n**(Podendo haver atrasos e lentidao no atendimento Sab/Dom)**",
+      "descricao": "Se você estiver enfrentando algum problema ou precisar de ajuda com nossos serviços, por favor, abra um ticket de suporte. Assim que recebermos seu ticket, nossa equipe de suporte entrará em contato com você para solucionar o problema o mais breve possível. Obrigado pela sua compreensão e cooperação. \n\n**(Podendo haver atrasos e lentidao no atendimento Sab/Dom)**",
       "botaoLabel": "Abrir ticket",
       "botaoEmoji": "🎫",
       "cor": "5865f2",
@@ -264,5 +264,5 @@
       "rodape": null
     }
   },
-  "savedAt": 1792125704112
+  "savedAt": 1792125783715
 }
