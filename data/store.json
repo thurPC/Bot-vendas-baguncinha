@@ -109,6 +109,33 @@
       "userId": null,
       "staffId": "1108518941434843290",
       "guildId": "1370256381701128192"
+    },
+    {
+      "em": 1792129356450,
+      "tipo": "loja_reativada",
+      "detalhe": "Loja reaberta pelo painel.",
+      "pedidoId": null,
+      "userId": null,
+      "staffId": "1108518941434843290",
+      "guildId": "1370256381701128192"
+    },
+    {
+      "em": 1792129388162,
+      "tipo": "loja_pausada",
+      "detalhe": "Loja pausada. Manutencao",
+      "pedidoId": null,
+      "userId": null,
+      "staffId": "1108518941434843290",
+      "guildId": "1370256381701128192"
+    },
+    {
+      "em": 1792129392964,
+      "tipo": "loja_reativada",
+      "detalhe": "Loja reaberta pelo painel.",
+      "pedidoId": null,
+      "userId": null,
+      "staffId": "1108518941434843290",
+      "guildId": "1370256381701128192"
     }
   ],
   "produtoOverrides": {},
@@ -187,8 +214,8 @@
     "smtpUser": "Bgcstore.shop@gmail.com",
     "smtpPass": "ywbl uuto ubbf gfjl",
     "smtpFrom": "BCG STORE BGCSTORE.SHOP@GMAIL.COM",
-    "lojaPausada": true,
-    "lojaPausaMotivo": "Manutenção",
+    "lojaPausada": false,
+    "lojaPausaMotivo": "",
     "lojaTitulo": "Loja Baguncinha",
     "lojaDescricao": "Selecione uma categoria para ver os produtos. O bot gera o Pix, confirma o pagamento e entrega.\n\nPrazo: ate **2 horas** depois do Pix confirmado.",
     "lojaCor": "9b59b6",
@@ -282,5 +309,5 @@
       "rodape": null
     }
   },
-  "savedAt": 1792129345136
+  "savedAt": 1792129392964
 }
