@@ -136,31 +136,76 @@
       "userId": null,
       "staffId": "1108518941434843290",
       "guildId": "1370256381701128192"
+    },
+    {
+      "em": 1792129948209,
+      "tipo": "loja_pausada",
+      "detalhe": "Loja pausada. Manutencao",
+      "pedidoId": null,
+      "userId": null,
+      "staffId": "1108518941434843290",
+      "guildId": "1370256381701128192"
+    },
+    {
+      "em": 1792129956056,
+      "tipo": "loja_reativada",
+      "detalhe": "Loja reaberta pelo painel.",
+      "pedidoId": null,
+      "userId": null,
+      "staffId": "1108518941434843290",
+      "guildId": "1370256381701128192"
+    },
+    {
+      "em": 1792129967420,
+      "tipo": "loja_pausada",
+      "detalhe": "Loja pausada. Manutencao.",
+      "pedidoId": null,
+      "userId": null,
+      "staffId": "1108518941434843290",
+      "guildId": "1370256381701128192"
+    },
+    {
+      "em": 1792129976557,
+      "tipo": "loja_reativada",
+      "detalhe": "Loja reaberta pelo painel.",
+      "pedidoId": null,
+      "userId": null,
+      "staffId": "1108518941434843290",
+      "guildId": "1370256381701128192"
     }
   ],
   "produtoOverrides": {
     "nitro_1m": {
       "cargoId": "1560529540856680448",
-      "cargoDias": 0
+      "cargoDias": 0,
+      "descricao": "Entrega do link em até 2hr apos pagamento confirmado.\nRECEBIMENTO VIA DM!!",
+      "precoCentavos": 1390,
+      "precoOriginalCentavos": 2499,
+      "imagem": "https://cdn.discordapp.com/attachments/1552387591704158378/1555841618857173062/ChatGPT_Image_3_de_out._de_2026_04_18_19.png?backend=b2&ex=6ac1fdec&is=6ac0ac6c&hm=36a8ab3ab603b7570791a721972c34922699b793220b963fffc68439d480f501&",
+      "banner": "https://cdn.discordapp.com/attachments/1555398339514601483/1556105151041904710/cartao-1-mes.png?backend=b2&ex=6ac5965b&is=6ac444db&hm=a66e992b0eac418c7f2c500a662dfa9e17eea337aa0f35c577542810e0a52a23&",
+      "bannerPosicao": "bottom",
+      "instrucoes": "necessário nunca ter obtido nitro antes.\nTer cartão de crédito para resgatar (seu saldo é reembolsado)",
+      "modo": "semi",
+      "disponivel": true
     }
   },
   "produtos": {
     "nitro_1m": {
       "id": "nitro_1m",
       "nome": "Discord Nitro 1 mes",
-      "descricao": "Nitro Classic/Full sob encomenda. Entrega do codigo apos o Pix.",
-      "precoCentavos": 2490,
+      "descricao": "Entrega do link em até 2hr apos pagamento confirmado.\nRECEBIMENTO VIA DM!!",
+      "precoCentavos": 1390,
       "emoji": "💎",
       "disponivel": true,
-      "modo": "auto",
+      "modo": "semi",
       "cargoId": "1560529540856680448",
       "cargoDias": 0,
-      "imagem": null,
-      "banner": null,
+      "imagem": "https://cdn.discordapp.com/attachments/1552387591704158378/1555841618857173062/ChatGPT_Image_3_de_out._de_2026_04_18_19.png?backend=b2&ex=6ac1fdec&is=6ac0ac6c&hm=36a8ab3ab603b7570791a721972c34922699b793220b963fffc68439d480f501&",
+      "banner": "https://cdn.discordapp.com/attachments/1555398339514601483/1556105151041904710/cartao-1-mes.png?backend=b2&ex=6ac5965b&is=6ac444db&hm=a66e992b0eac418c7f2c500a662dfa9e17eea337aa0f35c577542810e0a52a23&",
       "bannerPosicao": "bottom",
       "categoriaId": "nitro",
-      "instrucoes": "Apos receber o codigo, abra discord.com/nitro e resgate.",
-      "precoOriginalCentavos": 0
+      "instrucoes": "necessário nunca ter obtido nitro antes.\nTer cartão de crédito para resgatar (seu saldo é reembolsado)",
+      "precoOriginalCentavos": 2499
     },
     "nitro_3m": {
       "id": "nitro_3m",
@@ -210,7 +255,7 @@
   "carrinhos": {},
   "config": {
     "banner": "https://cdn.discordapp.com/attachments/1552387591704158378/1555779777757974538/BGC_STORE_Logo_Reveal_60fps_v2.gif?backend=b2&ex=6ad2e7d4&is=6ad19654&hm=88f4afea6c776f3808911b932bdd3918bb3f5659ebeba15e9d639daac852cf8f&",
-    "bannerPosicao": "top",
+    "bannerPosicao": "float",
     "pixNomePublico": "BGC STORE",
     "ocultarNomePix": false,
     "ticketCategoryId": null,
@@ -314,5 +359,5 @@
       "rodape": null
     }
   },
-  "savedAt": 1792129704706
+  "savedAt": 1792129976557
 }
