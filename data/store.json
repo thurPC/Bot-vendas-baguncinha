@@ -261,9 +261,9 @@
     },
     "boost": {
       "id": "boost",
-      "nome": "Boosts",
-      "emoji": "🚀",
-      "descricao": "Boosts de servidor",
+      "nome": "Conta discord",
+      "emoji": "foguete~",
+      "descricao": "Contas virgens do discord",
       "posicao": 1,
       "ativo": true,
       "banner": null,
@@ -273,5 +273,5 @@
       "rodape": null
     }
   },
-  "savedAt": 1792126007178
+  "savedAt": 1792126188106
 }
