@@ -308,6 +308,12 @@ for (const cat of Object.values(store.categorias || {})) {
   if (cat.rodape === undefined) cat.rodape = null;
 }
 
+function escolhasProdutos() {
+  return todosProdutos()
+    .slice(0, 25)
+    .map(p => ({ name: String(p.nome).slice(0, 100), value: p.id }));
+}
+
 function formatarReais(centavos) {
   return (Number(centavos) / 100).toLocaleString("pt-BR", {
     style: "currency",
@@ -346,15 +352,6 @@ function emojiValido(entrada) {
   if (/^<?(a?):?([a-zA-Z0-9_]{2,32}):(\d{15,25})>?$/.test(texto)) return true;
   if (/^\d{15,25}$/.test(texto)) return true;
   return [...texto].length <= 8;
-}
-
-// Normaliza o emoji digitado pela staff para guardar no store. Aceita unicode,
-// custom/animated (<:nome:id> / <a:nome:id>) e "nome:id"/apenas id. Retorna o
-// fallback quando a entrada e vazia ou invalida. Nao corta emojis custom longos.
-function normalizarEmoji(entrada, fallback = null) {
-  const texto = String(entrada ?? "").trim();
-  if (!texto || !emojiValido(texto)) return fallback;
-  return texto.slice(0, 64);
 }
 
 function proximoPedidoId() {
@@ -919,12 +916,51 @@ async function atualizarLojaFixaGuild(gid) {
   await publicarLojaFixa(gid, false);
 }
 
+async function buscarCanal(candidatos) {
+  const erros = [];
+  for (const id of [...new Set((candidatos || []).filter(Boolean))]) {
+    try {
+      const canal = await client.channels.fetch(id);
+      if (canal) return { canal, erros };
+      erros.push(`${id}: canal inexistente`);
+    } catch (error) {
+      erros.push(`${id}: ${error.message}`);
+    }
+  }
+  return { canal: null, erros };
+}
+
+async function buscarCanalPorNome(gid, palavras) {
+  const guild = client.guilds.cache.get(gid) || await client.guilds.fetch(gid).catch(() => null);
+  if (!guild) return null;
+  const canais = await guild.channels.fetch().catch(() => null);
+  if (!canais) return null;
+  const normalizar = texto => String(texto || "").toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "");
+  const candidatos = [...canais.values()].filter(c =>
+    c &&
+    (c.type === ChannelType.GuildText || c.type === ChannelType.GuildAnnouncement) &&
+    c.name &&
+    !/^(fechado-)?ticket-/.test(normalizar(c.name)) &&
+    !/^(seu-)?carrinho-/.test(normalizar(c.name))
+  );
+  return candidatos.find(c => palavras.some(p => normalizar(c.name).includes(p))) || null;
+}
+
+async function apagarMensagemAntiga(canalAtual, canalIdAntigo, messageId, novaId) {
+  if (!messageId || messageId === novaId) return;
+  const canal = canalAtual && canalAtual.id === canalIdAntigo
+    ? canalAtual
+    : await client.channels.fetch(canalIdAntigo).catch(() => null);
+  if (!canal) return;
+  const msg = await canal.messages.fetch(messageId).catch(() => null);
+  if (msg) await msg.delete().catch(() => {});
+}
+
 async function publicarLojaFixa(gid = GUILD_ID, forcar = false) {
   const st = store.guilds[gid] || store.guilds[GUILD_ID];
-  const lojaId = guildCfg(gid).canais.loja;
-  const destino = lojaId ? await client.channels.fetch(lojaId).catch(() => null) : null;
+  const { canal: destino, erros } = await buscarCanal([guildCfg(gid).canais.loja, st.lojaFixa && st.lojaFixa.channelId]);
   if (!destino) {
-    console.error(`Canal da lojinha nao encontrado (servidor ${gid}).`);
+    console.error(`Canal da lojinha nao encontrado (servidor ${gid}): ${erros.join("; ") || "nao configurado"}.`);
     return null;
   }
   const msg = await acharMensagemPainel(destino, st.lojaFixa && st.lojaFixa.messageId);
@@ -1033,22 +1069,25 @@ function payloadPainelCupons() {
 }
 
 async function publicarOuAtualizarPainel(gid, chave, canalId, payload, forcar = false) {
-  const canal = canalId ? await client.channels.fetch(canalId).catch(() => null) : null;
+  const st = store.guilds[gid] || (store.guilds[gid] = {});
+  const pf = st.paineisFixos || (st.paineisFixos = { ticket: null, cupons: null, feedbacks: null });
+  const { canal, erros } = await buscarCanal([canalId, pf[`${chave}Canal`]]);
   if (!canal) {
-    console.error(`Canal ${chave} (${canalId}) nao encontrado no servidor ${gid}.`);
+    console.error(`Canal ${chave} (${canalId}) nao encontrado no servidor ${gid}: ${erros.join("; ") || "nao configurado"}.`);
     return;
   }
-  const pf = store.guilds[gid].paineisFixos;
   const msg = await acharMensagemPainel(canal, pf[chave]);
   if (msg) {
     if (hidratarVisualDaMensagem(msg, chave)) salvarStore();
     pf[chave] = msg.id;
+    pf[`${chave}Canal`] = canal.id;
     salvarStore();
     if (forcar) await msg.edit(payload).catch(() => {});
     return msg;
   }
   const enviada = await canal.send(payload);
   pf[chave] = enviada.id;
+  pf[`${chave}Canal`] = canal.id;
   salvarStore();
   return enviada;
 }
@@ -1081,6 +1120,22 @@ async function removerPainelFeedbacks() {
     pf.feedbacks = null;
     salvarStore();
   }
+}
+
+async function responderMesmaMensagem(interaction, payload) {
+  const data = { ...payload };
+  if (interaction.isModalSubmit()) {
+    if (interaction.replied || interaction.deferred) return interaction.editReply({ ...data, ephemeral: true });
+    return interaction.reply({ ...data, ephemeral: true });
+  }
+  if (interaction.isMessageComponent()) {
+    if (interaction.replied || interaction.deferred) {
+      return interaction.editReply({ embeds: data.embeds, components: data.components, content: data.content ?? null });
+    }
+    return interaction.update({ embeds: data.embeds, components: data.components, content: data.content ?? null });
+  }
+  if (interaction.replied || interaction.deferred) return interaction.editReply({ ...data, ephemeral: true });
+  return interaction.reply({ ...data, ephemeral: true });
 }
 
 function mensagemEfmera(interaction) {
@@ -1198,12 +1253,118 @@ async function publicarCanaisFixos() {
   await removerPainelFeedbacks().catch(() => {});
 }
 
-async function republicarEmbeds() {
-  for (const gid of GUILD_IDS) {
-    await publicarLojaFixa(gid, true).catch(err => console.error(`Loja (${gid}):`, err.message));
+async function repostarPainelLoja(gid) {
+  const st = store.guilds[gid];
+  if (!st) return { ok: false, erro: "servidor nao configurado" };
+  let { canal, erros } = await buscarCanal([guildCfg(gid).canais.loja, st.lojaFixa && st.lojaFixa.channelId]);
+  if (!canal) {
+    canal = await buscarCanalPorNome(gid, ["loja", "lojinha"]).catch(() => null);
+    if (canal) erros.push(`usando canal por nome (#${canal.name})`);
   }
-  await atualizarPaineisTicket(true);
-  await atualizarPainelCupons(true);
+  if (!canal) {
+    return { ok: false, erro: `canal da loja inacessivel (${erros.join("; ") || "nao configurado"})` };
+  }
+  const antigoCanalId = st.lojaFixa && st.lojaFixa.channelId;
+  const antigoMsgId = st.lojaFixa && st.lojaFixa.messageId;
+  const antigaNoCanal = await acharMensagemPainel(canal, antigoMsgId).catch(() => null);
+  let enviada;
+  try {
+    enviada = await canal.send(payloadLoja());
+  } catch (error) {
+    return { ok: false, erro: `falha ao enviar (${error.message})` };
+  }
+  st.lojaFixa = { channelId: canal.id, messageId: enviada.id };
+  salvarStore();
+  if (antigaNoCanal && antigaNoCanal.id !== enviada.id) {
+    await antigaNoCanal.delete().catch(() => {});
+  }
+  await apagarMensagemAntiga(canal, antigoCanalId, antigoMsgId, enviada.id).catch(() => {});
+  return { ok: true, canalId: canal.id };
+}
+
+async function repostarPainelFixo(gid, chave, canalId) {
+  const st = store.guilds[gid];
+  if (!st) return { ok: false, erro: "servidor nao configurado" };
+  const pf = st.paineisFixos || (st.paineisFixos = { ticket: null, cupons: null, feedbacks: null });
+  const palavras = chave === "ticket" ? ["atendimento", "ticket"] : ["cupom", "cupons"];
+  let { canal, erros } = await buscarCanal([canalId, pf[`${chave}Canal`]]);
+  if (!canal) {
+    canal = await buscarCanalPorNome(gid, palavras).catch(() => null);
+    if (canal) erros.push(`usando canal por nome (#${canal.name})`);
+  }
+  if (!canal) {
+    return { ok: false, erro: `canal inacessivel (${erros.join("; ") || "nao configurado"})` };
+  }
+  const antigoCanalId = pf[`${chave}Canal`];
+  const antigoMsgId = pf[chave];
+  const antigaNoCanal = await acharMensagemPainel(canal, antigoMsgId).catch(() => null);
+  let enviada;
+  try {
+    const payload = chave === "ticket" ? payloadPainelTicket() : payloadPainelCupons();
+    enviada = await canal.send(payload);
+  } catch (error) {
+    return { ok: false, erro: `falha ao enviar (${error.message})` };
+  }
+  pf[chave] = enviada.id;
+  pf[`${chave}Canal`] = canal.id;
+  salvarStore();
+  if (antigaNoCanal && antigaNoCanal.id !== enviada.id) {
+    await antigaNoCanal.delete().catch(() => {});
+  }
+  await apagarMensagemAntiga(canal, antigoCanalId, antigoMsgId, enviada.id).catch(() => {});
+  return { ok: true, canalId: canal.id };
+}
+
+async function republicarEmbeds(escolhas = ["loja", "ticket", "cupons"]) {
+  const alvos = new Set(escolhas);
+  const relatorio = [];
+  const tentar = async (nome, gid, fn) => {
+    const guildNome = (client.guilds.cache.get(gid) || {}).name || gid;
+    try {
+      const resultado = await fn();
+      if (!resultado.ok) console.error(`Falha ao republicar ${nome} (${gid}):`, resultado.erro);
+      relatorio.push({ nome, guildNome, ...resultado });
+    } catch (error) {
+      console.error(`Falha ao republicar ${nome} (${gid}):`, error.message);
+      relatorio.push({ nome, guildNome, ok: false, erro: error.message });
+    }
+  };
+  for (const gid of GUILD_IDS) {
+    if (alvos.has("loja")) await tentar("Loja", gid, () => repostarPainelLoja(gid));
+    if (alvos.has("ticket")) await tentar("Tickets", gid, () => repostarPainelFixo(gid, "ticket", guildCfg(gid).canais.ticket));
+    if (alvos.has("cupons")) await tentar("Cupons", gid, () => repostarPainelFixo(gid, "cupons", guildCfg(gid).canais.cupons));
+  }
+  return relatorio;
+}
+
+const EMBEDS_REPUBLICAVEIS = [
+  { id: "loja", label: "Loja (vitrine)", emoji: "🛒", descricao: "Embed da lojinha com os produtos" },
+  { id: "ticket", label: "Painel de tickets", emoji: "🎫", descricao: "Painel de abertura de tickets" },
+  { id: "cupons", label: "Painel de cupons", emoji: "🎟️", descricao: "Lista de cupons ativos" }
+];
+
+function payloadEscolherEmbeds() {
+  return {
+    content: "Escolha o que deseja republicar (pode marcar mais de um):",
+    components: [
+      new ActionRowBuilder().addComponents(
+        new StringSelectMenuBuilder()
+          .setCustomId("cfg_publicar_sel")
+          .setPlaceholder("Selecione os embeds")
+          .setMinValues(1)
+          .setMaxValues(EMBEDS_REPUBLICAVEIS.length)
+          .addOptions(
+            EMBEDS_REPUBLICAVEIS.map(item => ({
+              label: item.label,
+              value: item.id,
+              description: item.descricao,
+              emoji: item.emoji
+            }))
+          )
+      )
+    ],
+    ephemeral: true
+  };
 }
 
 function embedPedidoCliente(pedido, extra, opcoes = {}) {
@@ -1297,6 +1458,20 @@ function botoesAdmin(pedidoId) {
   );
   if (row.components.length) rows.push(row);
   return rows;
+}
+
+function embedFeedback(pedido, nota, comentario) {
+  const produto = getProduto(pedido.produtoId);
+  return new EmbedBuilder()
+    .setTitle(`⭐ Avaliacao — ${nota}/5`)
+    .setDescription(`${estrelas(nota)}\n\n${comentario ? `"${comentario}"` : "Sem comentario."}`)
+    .addFields(
+      { name: "Produto", value: produto ? produto.nome : pedido.produtoNome, inline: true },
+      { name: "Cliente", value: `<@${pedido.userId}>`, inline: true },
+      { name: "Pedido", value: `#${pedido.id}`, inline: true }
+    )
+    .setColor(0xf1c40f)
+    .setTimestamp(pedido.feedback.em);
 }
 
 async function mpRequest(metodo, caminho, corpo) {
@@ -2246,6 +2421,285 @@ async function fecharTicket(interaction, canalId) {
   }, 2500);
 }
 
+async function handleEstoque(interaction) {
+  const sub = interaction.options.getSubcommand();
+
+  if (sub === "adicionar") {
+    const produtoId = interaction.options.getString("produto");
+    const produto = getProduto(produtoId);
+    if (!produto) {
+      await interaction.reply({ content: "Produto invalido.", ephemeral: true });
+      return;
+    }
+    const itens = interaction.options
+      .getString("conteudo")
+      .split(/\r?\n/)
+      .map(l => l.trim())
+      .filter(Boolean);
+    if (!itens.length) {
+      await interaction.reply({ content: "Envie ao menos um item (um por linha).", ephemeral: true });
+      return;
+    }
+    const fila = estoqueDe(produtoId);
+    for (const texto of itens) {
+      fila.push({ id: store.nextEstoqueItemId++, conteudo: texto, criadoEm: Date.now() });
+    }
+    salvarStore();
+    await atualizarLojaFixa();
+    await interaction.reply({
+      content: `✅ ${itens.length} item(ns) adicionado(s) ao estoque de **${produto.nome}**. Total agora: **${fila.length}**.`,
+      ephemeral: true
+    });
+    return;
+  }
+
+  if (sub === "listar") {
+    const linhas = todosProdutos().map(p => {
+      const fila = estoqueDe(p.id);
+      const modo = p.modo === "auto" ? "automatica" : "staff";
+      return `${p.emoji} **${p.nome}** — ${fila.length} em estoque (entrega ${modo})`;
+    });
+    await interaction.reply({
+      embeds: [new EmbedBuilder().setTitle("📦 Estoque").setDescription(linhas.join("\n")).setColor(0x3498db)],
+      ephemeral: true
+    });
+    return;
+  }
+
+  if (sub === "remover") {
+    const produtoId = interaction.options.getString("produto");
+    const itemId = interaction.options.getInteger("id");
+    const fila = estoqueDe(produtoId);
+    const idx = fila.findIndex(i => i.id === itemId);
+    if (idx < 0) {
+      await interaction.reply({ content: "Item nao encontrado nesse estoque.", ephemeral: true });
+      return;
+    }
+    fila.splice(idx, 1);
+    salvarStore();
+    await atualizarLojaFixa();
+    await interaction.reply({ content: `🗑️ Item ${itemId} removido do estoque. Total: **${fila.length}**.`, ephemeral: true });
+  }
+}
+
+async function handleCupom(interaction) {
+  const sub = interaction.options.getSubcommand();
+
+  if (sub === "criar") {
+    const codigo = interaction.options.getString("codigo").trim().toUpperCase();
+    const tipo = interaction.options.getString("tipo");
+    const valor = interaction.options.getNumber("valor");
+    const usos = interaction.options.getInteger("usos") || 0;
+    const dias = interaction.options.getInteger("dias") || 0;
+    const minimo = interaction.options.getNumber("minimo") || 0;
+    const publicar = interaction.options.getBoolean("publicar");
+
+    if (tipo === "percent" && (valor <= 0 || valor > 100)) {
+      await interaction.reply({ content: "Desconto percentual precisa estar entre 0 e 100.", ephemeral: true });
+      return;
+    }
+    if (valor <= 0) {
+      await interaction.reply({ content: "O valor do desconto precisa ser maior que zero.", ephemeral: true });
+      return;
+    }
+
+    store.cupons[codigo] = {
+      codigo,
+      tipo,
+      valor: tipo === "percent" ? valor : Math.round(valor * 100),
+      usosMax: Math.max(0, usos),
+      usos: 0,
+      minCentavos: Math.round(minimo * 100),
+      expiraEm: dias > 0 ? Date.now() + dias * DIA_MS : null,
+      ativo: true,
+      criadoEm: Date.now()
+    };
+    salvarStore();
+    const devePublicar = publicar !== false;
+    if (devePublicar) await atualizarPainelCupons().catch(() => {});
+    await interaction.reply({
+      content:
+        `Cupom **${codigo}** criado.\n` +
+        `Desconto: **${tipo === "percent" ? `${valor}%` : formatarReais(Math.round(valor * 100))}**\n` +
+        `Usos maximos: **${usos > 0 ? usos : "ilimitado"}**\n` +
+        `Validade: **${dias > 0 ? `${dias} dia(s)` : "sem expiracao"}**` +
+        (minimo > 0 ? `\nCompra minima: **${formatarReais(Math.round(minimo * 100))}**` : "") +
+        `\nCanal de cupons: **${devePublicar ? "atualizado" : "nao publicado"}**.`,
+      ephemeral: true
+    });
+    return;
+  }
+
+  if (sub === "listar") {
+    const cupons = Object.values(store.cupons);
+    if (!cupons.length) {
+      await interaction.reply({ content: "Nenhum cupom cadastrado.", ephemeral: true });
+      return;
+    }
+    const linhas = cupons.map(c => {
+      const desconto = c.tipo === "percent" ? `${c.valor}%` : formatarReais(c.valor);
+      const uso = `${c.usos}/${c.usosMax > 0 ? c.usosMax : "∞"}`;
+      const exp = c.expiraEm ? `<t:${Math.floor(c.expiraEm / 1000)}:R>` : "sem expiracao";
+      return `\`${c.codigo}\` — ${desconto} — usos ${uso} — ${exp}`;
+    });
+    await interaction.reply({
+      embeds: [new EmbedBuilder().setTitle("🎟️ Cupons").setDescription(linhas.join("\n")).setColor(0xe67e22)],
+      ephemeral: true
+    });
+    return;
+  }
+
+  if (sub === "remover") {
+    const codigo = interaction.options.getString("codigo").trim().toUpperCase();
+    if (!store.cupons[codigo]) {
+      await interaction.reply({ content: "Cupom nao encontrado.", ephemeral: true });
+      return;
+    }
+    store.cupons[codigo].ativo = false;
+    salvarStore();
+    await atualizarPainelCupons().catch(() => {});
+    await interaction.reply({ content: `Cupom **${codigo}** desativado.`, ephemeral: true });
+    return;
+  }
+
+  if (sub === "publicar") {
+    await atualizarPainelCupons().catch(() => {});
+
+    await interaction.reply({ content: `Painel de cupons publicado em <#${guildCfg(interaction.guildId).canais.cupons}>.`, ephemeral: true });  }
+}
+
+async function handleProduto(interaction) {
+  const sub = interaction.options.getSubcommand();
+
+  if (sub === "listar") {
+    const linhas = todosProdutos().map(p => {
+      const cargo = p.cargoId ? `<@&${p.cargoId}> por ${p.cargoDias} dia(s)` : "nenhum";
+      return `${p.emoji} **${p.nome}** (\`${p.id}\`)\n` +
+        `Preco: ${formatarReais(p.precoCentavos)} • Modo: ${p.modo === "auto" ? "automatico" : "staff"} • ` +
+        `${p.disponivel ? "disponivel" : "indisponivel"}\nCargo temporario: ${cargo}`;
+    });
+    await interaction.reply({
+      embeds: [new EmbedBuilder().setTitle("🛍️ Produtos").setDescription(linhas.join("\n\n")).setColor(0x9b59b6)],
+      ephemeral: true
+    });
+    return;
+  }
+
+  if (sub === "editar") {
+    const produtoId = interaction.options.getString("produto");
+    const produto = getProduto(produtoId);
+    if (!produto) {
+      await interaction.reply({ content: "Produto invalido.", ephemeral: true });
+      return;
+    }
+    const patch = store.produtoOverrides[produtoId] || {};
+    const modo = interaction.options.getString("modo");
+    const cargo = interaction.options.getRole("cargo");
+    const cargoDias = interaction.options.getInteger("cargo-dias");
+    const preco = interaction.options.getNumber("preco");
+    const precoOriginal = interaction.options.getNumber("preco-original");
+    const disponivel = interaction.options.getBoolean("disponivel");
+    const imagem = interaction.options.getString("imagem");
+    const banner = interaction.options.getString("banner");
+    const bannerPosicao = interaction.options.getString("banner-posicao");
+    const instrucoes = interaction.options.getString("instrucoes");
+    const categoriaId = interaction.options.getString("categoria");
+
+    if (modo) patch.modo = modo;
+    if (cargo) patch.cargoId = cargo.id;
+    if (cargoDias !== null && cargoDias !== undefined) patch.cargoDias = cargoDias;
+    if (preco !== null && preco !== undefined) patch.precoCentavos = Math.round(preco * 100);
+    if (precoOriginal !== null && precoOriginal !== undefined) patch.precoOriginalCentavos = Math.round(precoOriginal * 100);
+    if (disponivel !== null && disponivel !== undefined) patch.disponivel = disponivel;
+    if (imagem !== null && imagem !== undefined) {
+      if (imagem && !urlMidiaValida(imagem)) {
+        await interaction.reply({ content: "URL da imagem invalida.", ephemeral: true });
+        return;
+      }
+      patch.imagem = imagem || null;
+    }
+    if (banner !== null && banner !== undefined) {
+      if (banner && !urlMidiaValida(banner)) {
+        await interaction.reply({ content: "URL do banner invalida.", ephemeral: true });
+        return;
+      }
+      patch.banner = banner || null;
+    }
+    if (bannerPosicao) patch.bannerPosicao = bannerPosicao;
+    if (instrucoes !== null && instrucoes !== undefined) patch.instrucoes = instrucoes;
+    if (categoriaId) patch.categoriaId = categoriaId;
+
+    store.produtoOverrides[produtoId] = patch;
+    salvarStore();
+    await atualizarLojaFixa();
+
+    const atual = getProduto(produtoId);
+    await interaction.reply({
+      content:
+        `Produto **${atual.nome}** atualizado.\n` +
+        `Preco: ${formatarReais(atual.precoCentavos)}\n` +
+        `Modo: ${atual.modo === "auto" ? "automatico" : "staff"}\n` +
+        `Disponivel: ${atual.disponivel ? "sim" : "nao"}\n` +
+        `Cargo temporario: ${atual.cargoId ? `<@&${atual.cargoId}> por ${atual.cargoDias} dia(s)` : "nenhum"}`,
+      ephemeral: true
+    });
+    return;
+  }
+
+  if (sub === "criar") {
+    const id = interaction.options.getString("id", true).trim().toLowerCase().replace(/[^a-z0-9_-]/g, "").slice(0, 32);
+    const nome = interaction.options.getString("nome", true).trim();
+    const preco = interaction.options.getNumber("preco", true);
+    const categoriaId = (interaction.options.getString("categoria") || "geral").trim().toLowerCase();
+    const modo = interaction.options.getString("modo") || "semi";
+    const descricao = (interaction.options.getString("descricao") || "Produto da Baguncinha.").trim();
+    const emoji = (interaction.options.getString("emoji") || "📦").trim().slice(0, 64);
+    if (!id || !nome || !Number.isFinite(preco) || preco < 0) {
+      await interaction.reply({ content: "ID, nome e preco validos sao obrigatorios.", ephemeral: true });
+      return;
+    }
+    if (getProduto(id) || PRODUTOS[id] || (store.produtos || {})[id]) {
+      await interaction.reply({ content: `Ja existe um produto com o ID \`${id}\`.`, ephemeral: true });
+      return;
+    }
+    if (!store.categorias[categoriaId]) {
+      store.categorias[categoriaId] = {
+        id: categoriaId,
+        nome: categoriaId,
+        emoji: "📁",
+        descricao: "",
+        posicao: Object.keys(store.categorias).length,
+        ativo: true
+      };
+    }
+    store.produtos[id] = {
+      id,
+      nome,
+      descricao,
+      precoCentavos: Math.round(preco * 100),
+      emoji,
+      disponivel: true,
+      modo,
+      cargoId: null,
+      cargoDias: 0,
+      imagem: null,
+      banner: null,
+      bannerPosicao: "bottom",
+      categoriaId,
+      instrucoes: "",
+      precoOriginalCentavos: 0
+    };
+    salvarStore();
+    await atualizarLojaFixa();
+    await interaction.reply({
+      content:
+        `Produto **${nome}** (\`${id}\`) criado.\n` +
+        `Preco: **${formatarReais(Math.round(preco * 100))}** • Categoria: \`${categoriaId}\` • Modo: **${modo === "auto" ? "automatico" : "staff"}**.\n` +
+        `Use \`/gerenciar produto produto:${id}\` para estoque, banner e cupom.`,
+      ephemeral: true
+    });
+  }
+}
 
 function campoTexto(customId, label, style, valor, extra = {}) {
   const input = new TextInputBuilder()
@@ -2301,8 +2755,7 @@ function payloadPainelProduto(produto, pagina = 1) {
       new ActionRowBuilder().addComponents(
         new ButtonBuilder().setCustomId(`gp_nome:${produto.id}`).setLabel("Alterar Nome").setStyle(ButtonStyle.Secondary),
         new ButtonBuilder().setCustomId(`gp_desc:${produto.id}`).setLabel("Alterar Descricao").setStyle(ButtonStyle.Secondary),
-        new ButtonBuilder().setCustomId(`gp_preco:${produto.id}`).setLabel("Alterar Preco").setStyle(ButtonStyle.Secondary),
-        new ButtonBuilder().setCustomId(`gp_emoji:${produto.id}`).setLabel("Alterar Emoji").setStyle(ButtonStyle.Secondary)
+        new ButtonBuilder().setCustomId(`gp_preco:${produto.id}`).setLabel("Alterar Preco").setStyle(ButtonStyle.Secondary)
       ),
       new ActionRowBuilder().addComponents(
         new ButtonBuilder().setCustomId(`gp_miniatura:${produto.id}`).setLabel("Alterar Miniatura").setStyle(ButtonStyle.Secondary),
@@ -2329,7 +2782,20 @@ function payloadPainelProduto(produto, pagina = 1) {
 }
 
 async function enviarPainelProduto(interaction, produto, pagina = 1) {
-  await renderPainel(interaction, payloadPainelProduto(produto, pagina));
+  const payload = { ...payloadPainelProduto(produto, pagina), ephemeral: true };
+  if (interaction.replied || interaction.deferred) {
+    await interaction.followUp(payload);
+    return;
+  }
+  if (interaction.isMessageComponent() && (interaction.customId.startsWith("gp_") || interaction.customId === "hub_prod_sel")) {
+    await interaction.update({ embeds: payload.embeds, components: payload.components });
+    return;
+  }
+  if (interaction.isModalSubmit()) {
+    await interaction.reply(payload);
+    return;
+  }
+  await interaction.reply(payload);
 }
 
 function modalCampoProduto(customId, titulo, campoId, label, valor, style = TextInputStyle.Short, extra = {}) {
@@ -2340,6 +2806,20 @@ function modalCampoProduto(customId, titulo, campoId, label, valor, style = Text
     )
   );
   return modal;
+}
+
+async function handleGerenciar(interaction) {
+  const sub = interaction.options.getSubcommand();
+  if (sub !== "produto") {
+    await interaction.reply({ content: "Use `/gerenciar produto`.", ephemeral: true });
+    return;
+  }
+  const produto = getProduto(interaction.options.getString("produto", true));
+  if (!produto) {
+    await interaction.reply({ content: "Produto nao encontrado.", ephemeral: true });
+    return;
+  }
+  await enviarPainelProduto(interaction, produto);
 }
 
 function resumoConfig(gid = GUILD_ID) {
@@ -2402,8 +2882,6 @@ function payloadPainelConfig(gid = GUILD_ID) {
       new ActionRowBuilder().addComponents(
         new ButtonBuilder().setCustomId("cfg_publicar_tudo").setLabel("Republicar embeds").setStyle(ButtonStyle.Primary),
         new ButtonBuilder().setCustomId("cfg_backup").setLabel("Backup completo (TUDO)").setStyle(ButtonStyle.Success),
-        new ButtonBuilder().setCustomId("cfg_backup_importar").setLabel("Importar backup").setStyle(ButtonStyle.Secondary),
-        new ButtonBuilder().setCustomId("cfg_smtp_teste").setLabel("Testar SMTP").setStyle(ButtonStyle.Secondary),
         new ButtonBuilder().setCustomId("hub_home").setLabel("Voltar ao painel").setStyle(ButtonStyle.Secondary)
       )
     ]
@@ -2417,10 +2895,9 @@ function payloadPainelStaff() {
       "Um comando so. Escolha o que gerenciar:\n" +
       "**Loja** — banner, SMTP, PIX, publicar\n" +
       "**Tickets** — texto, midia, publicar painel\n" +
-      "**Produto** — criar, preco, estoque, cargo, cupons, emoji\n" +
-      "**Categoria** — criar, embed (titulo, banner, cor), canal\n" +
-      "**Estoque / Cupons / Relatorio / Logs / Fila**\n" +
-      "**Canais / Backup**"
+      "**Produto** — preco, estoque, cargo, cupons\n" +
+      "**Categoria** — embed da categoria (titulo, banner, cor)\n" +
+      "**Estoque / Cupons / Relatorio**"
     )
     .setColor(0x9b59b6);
   return {
@@ -2435,13 +2912,9 @@ function payloadPainelStaff() {
       new ActionRowBuilder().addComponents(
         new ButtonBuilder().setCustomId("hub_estoque").setLabel("Estoque").setStyle(ButtonStyle.Secondary),
         new ButtonBuilder().setCustomId("hub_cupons").setLabel("Cupons").setStyle(ButtonStyle.Secondary),
-        new ButtonBuilder().setCustomId("hub_relatorio").setLabel("Relatorio").setStyle(ButtonStyle.Secondary),
-        new ButtonBuilder().setCustomId("hub_logs").setLabel("Logs").setStyle(ButtonStyle.Secondary),
-        new ButtonBuilder().setCustomId("hub_fila").setLabel("Fila").setStyle(ButtonStyle.Secondary)
+        new ButtonBuilder().setCustomId("hub_relatorio").setLabel("Relatorio").setStyle(ButtonStyle.Secondary)
       ),
       new ActionRowBuilder().addComponents(
-        new ButtonBuilder().setCustomId("hub_canais").setLabel("Canais").setStyle(ButtonStyle.Secondary),
-        new ButtonBuilder().setCustomId("hub_backup").setLabel("Backup").setStyle(ButtonStyle.Secondary),
         new ButtonBuilder().setCustomId("cfg_publicar_tudo").setLabel("Republicar embeds").setStyle(ButtonStyle.Primary)
       )
     ]
@@ -2516,16 +2989,20 @@ function payloadHubCategorias() {
       (linhas.join("\n") || "Nenhuma categoria.")
     )
     .setColor(0x9b59b6);
-  const rowAcoes = new ActionRowBuilder().addComponents(
-    new ButtonBuilder().setCustomId("hub_categoria_criar").setLabel("Criar categoria").setStyle(ButtonStyle.Success),
-    new ButtonBuilder().setCustomId("hub_categoria_remover").setLabel("Desativar categoria").setStyle(ButtonStyle.Danger),
-    new ButtonBuilder().setCustomId("hub_categoria_canal").setLabel("Criar canal").setStyle(ButtonStyle.Secondary)
-  );
-  return { embeds: [embed], components: sel ? [sel, rowAcoes, rowVoltarHub()] : [rowAcoes, rowVoltarHub()] };
+  return { embeds: [embed], components: sel ? [sel, rowVoltarHub()] : [rowVoltarHub()] };
 }
 
 async function enviarPainelCategoria(interaction, cat) {
-  await renderPainel(interaction, payloadPainelCategoria(cat));
+  const payload = { ...payloadPainelCategoria(cat), ephemeral: true };
+  if (interaction.isMessageComponent() && !interaction.replied && !interaction.deferred) {
+    await interaction.update({ embeds: payload.embeds, components: payload.components });
+    return;
+  }
+  if (interaction.replied || interaction.deferred) {
+    await interaction.editReply(payload);
+    return;
+  }
+  await interaction.reply(payload);
 }
 
 function patchCategoria(id, fields) {
@@ -2550,12 +3027,9 @@ function payloadHubProdutos() {
   const sel = selectHubProdutos("hub_prod_sel", "Escolha o produto");
   const embed = new EmbedBuilder()
     .setTitle("Gerenciar produto")
-    .setDescription("Selecione um produto para abrir o painel completo, ou crie um novo.")
+    .setDescription("Selecione um produto para abrir o painel completo.")
     .setColor(0x9b59b6);
-  const rowCriar = new ActionRowBuilder().addComponents(
-    new ButtonBuilder().setCustomId("hub_produto_criar").setLabel("Criar produto").setStyle(ButtonStyle.Success)
-  );
-  return { embeds: [embed], components: sel ? [sel, rowCriar, rowVoltarHub()] : [rowCriar, rowVoltarHub()] };
+  return { embeds: [embed], components: sel ? [sel, rowVoltarHub()] : [rowVoltarHub()] };
 }
 
 function payloadHubEstoque() {
@@ -2565,16 +3039,11 @@ function payloadHubEstoque() {
     return `${p.emoji || "•"} **${p.nome}** — ${fila.length} em estoque (entrega ${modo})`;
   });
   const sel = selectHubProdutos("hub_stock_sel", "Adicionar estoque neste produto");
-  const selRemover = selectHubProdutos("hub_estoque_remover_sel", "Remover item de um produto");
   const embed = new EmbedBuilder()
     .setTitle("Estoque")
     .setDescription((linhas.join("\n") || "Nenhum produto.").slice(0, 4000))
     .setColor(0x3498db);
-  const rows = [];
-  if (sel) rows.push(sel);
-  if (selRemover) rows.push(selRemover);
-  rows.push(rowVoltarHub());
-  return { embeds: [embed], components: rows };
+  return { embeds: [embed], components: sel ? [sel, rowVoltarHub()] : [rowVoltarHub()] };
 }
 
 function payloadHubCupons() {
@@ -2630,160 +3099,174 @@ function modalCupomRemover() {
   return modal;
 }
 
-function payloadHubCanais() {
-  const embed = new EmbedBuilder()
-    .setTitle("Canais")
-    .setDescription(
-      "**Exportar** — gera um JSON com categorias e canais deste servidor.\n" +
-      "**Colar** — cole o JSON exportado para recriar a estrutura (nomes iguais nao duplicam)."
-    )
-    .setColor(0x3498db);
-  return {
-    embeds: [embed],
-    components: [
-      new ActionRowBuilder().addComponents(
-        new ButtonBuilder().setCustomId("hub_canais_exportar").setLabel("Exportar estrutura").setStyle(ButtonStyle.Primary),
-        new ButtonBuilder().setCustomId("hub_canais_colar").setLabel("Colar estrutura").setStyle(ButtonStyle.Secondary)
-      ),
-      rowVoltarHub()
-    ]
-  };
-}
-
-function payloadHubBackup() {
-  const embed = new EmbedBuilder()
-    .setTitle("Backup")
-    .setDescription(
-      "**Exportar** — baixa um JSON completo (config, banner, categorias, produtos, estoque, cupons, pedidos, tickets, cargos e logs).\n" +
-      "**Importar** — restaura a loja a partir do JSON (cole o conteudo no formulario)."
-    )
-    .setColor(0x2ecc71);
-  return {
-    embeds: [embed],
-    components: [
-      new ActionRowBuilder().addComponents(
-        new ButtonBuilder().setCustomId("cfg_backup_exportar").setLabel("Exportar backup").setStyle(ButtonStyle.Success),
-        new ButtonBuilder().setCustomId("cfg_backup_importar").setLabel("Importar backup").setStyle(ButtonStyle.Secondary),
-        new ButtonBuilder().setCustomId("hub_home").setLabel("Voltar ao painel").setStyle(ButtonStyle.Secondary)
-      )
-    ]
-  };
-}
-
-function modalProdutoCriar() {
-  const modal = new ModalBuilder().setCustomId("hub_produto_criar_modal").setTitle("Criar produto");
-  modal.addComponents(
-    new ActionRowBuilder().addComponents(campoTexto("id", "ID interno (ex: nitro_1m_promo)", TextInputStyle.Short, "", { required: true, maxLength: 32 })),
-    new ActionRowBuilder().addComponents(campoTexto("nome", "Nome visivel", TextInputStyle.Short, "", { required: true, maxLength: 80 })),
-    new ActionRowBuilder().addComponents(campoTexto("preco", "Preco em reais", TextInputStyle.Short, "", { required: true, maxLength: 12 })),
-    new ActionRowBuilder().addComponents(campoTexto("categoria", "ID da categoria (cria se nao existir)", TextInputStyle.Short, "", { required: false, maxLength: 32 })),
-    new ActionRowBuilder().addComponents(campoTexto("emoji", "Emoji (unicode ou custom <a:nome:id>)", TextInputStyle.Short, "📦", { required: false, maxLength: 64 }))
-  );
-  return modal;
-}
-
-function modalCategoriaCriar() {
-  const modal = new ModalBuilder().setCustomId("hub_categoria_criar_modal").setTitle("Criar categoria");
-  modal.addComponents(
-    new ActionRowBuilder().addComponents(campoTexto("id", "ID interno (ex: nitro)", TextInputStyle.Short, "", { required: true, maxLength: 32 })),
-    new ActionRowBuilder().addComponents(campoTexto("nome", "Nome visivel", TextInputStyle.Short, "", { required: true, maxLength: 80 })),
-    new ActionRowBuilder().addComponents(campoTexto("emoji", "Emoji (unicode ou custom <a:nome:id>)", TextInputStyle.Short, "📁", { required: false, maxLength: 64 })),
-    new ActionRowBuilder().addComponents(campoTexto("descricao", "Descricao", TextInputStyle.Paragraph, "", { required: false, maxLength: 200 }))
-  );
-  return modal;
-}
-
-function modalCategoriaRemover() {
-  const modal = new ModalBuilder().setCustomId("hub_categoria_remover_modal").setTitle("Desativar categoria");
-  modal.addComponents(
-    new ActionRowBuilder().addComponents(campoTexto("id", "ID da categoria", TextInputStyle.Short, "", { required: true, maxLength: 32 }))
-  );
-  return modal;
-}
-
-function modalCategoriaCanal() {
-  const modal = new ModalBuilder().setCustomId("hub_categoria_canal_modal").setTitle("Criar canal");
-  modal.addComponents(
-    new ActionRowBuilder().addComponents(campoTexto("nome", "Nome do canal", TextInputStyle.Short, "", { required: true, maxLength: 100 })),
-    new ActionRowBuilder().addComponents(campoTexto("nova_categoria", "Nome da categoria nova (vazio = sem categoria)", TextInputStyle.Short, "", { required: false, maxLength: 100 })),
-    new ActionRowBuilder().addComponents(campoTexto("topico", "Topico do canal (opcional)", TextInputStyle.Paragraph, "", { required: false, maxLength: 1024 }))
-  );
-  return modal;
-}
-
-function modalCanaisColar() {
-  const modal = new ModalBuilder().setCustomId("hub_canais_colar_modal").setTitle("Colar estrutura");
-  modal.addComponents(
-    new ActionRowBuilder().addComponents(campoTexto("json", "JSON gerado por Exportar estrutura", TextInputStyle.Paragraph, "", { required: true, maxLength: 4000 }))
-  );
-  return modal;
-}
-
-function modalImportarBackup() {
-  const modal = new ModalBuilder().setCustomId("cfg_backup_importar_modal").setTitle("Importar backup");
-  modal.addComponents(
-    new ActionRowBuilder().addComponents(campoTexto("json", "JSON do backup exportado", TextInputStyle.Paragraph, "", { required: true, maxLength: 4000 }))
-  );
-  return modal;
-}
-
-function modalTestarSmtp() {
-  const modal = new ModalBuilder().setCustomId("cfg_smtp_teste_modal").setTitle("Testar SMTP");
-  modal.addComponents(
-    new ActionRowBuilder().addComponents(campoTexto("email", "Destino do teste", TextInputStyle.Short, "", { required: true, maxLength: 120, placeholder: "voce@email.com" }))
-  );
-  return modal;
-}
-
-// Renderiza um painel reaproveitando a MESMA mensagem sempre que possivel.
-// Isso evita o bug de criar uma mensagem nova a cada clique/volta nos botoes:
-// - componente de mensagem -> update (edita a mensagem do botao);
-// - modal aberto a partir de um painel -> update (edita a mesma mensagem);
-// - modal solto/comando -> reply efemero.
-async function renderPainel(interaction, payload = {}) {
-  const body = {
-    content: payload.content ?? null,
-    embeds: payload.embeds ?? [],
-    components: payload.components ?? []
-  };
-  const extra = payload.files ? { files: payload.files } : {};
-
-  if (interaction.isModalSubmit && interaction.isModalSubmit()) {
-    if (interaction.isFromMessage && interaction.isFromMessage()) {
-      try {
-        await interaction.update(body);
-      } catch {
-        await interaction.reply({ ...body, ...extra, ephemeral: true });
-      }
-    } else {
-      await interaction.reply({ ...body, ...extra, ephemeral: true });
-    }
-    return;
-  }
-
-  if (interaction.isMessageComponent && interaction.isMessageComponent() && !interaction.replied && !interaction.deferred) {
-    try {
-      await interaction.update(body);
-      return;
-    } catch {
-      // Cai no fluxo de reply abaixo (ex: mensagem muito antiga).
-    }
-  }
-
-  if (interaction.replied || interaction.deferred) {
-    await interaction.editReply({ ...body, ...extra });
-    return;
-  }
-
-  await interaction.reply({ ...body, ...extra, ephemeral: true });
-}
-
 async function enviarPainelEphemeral(interaction, payload) {
-  await renderPainel(interaction, payload);
+  const body = { ...payload, ephemeral: true };
+  if (interaction.isMessageComponent() && !interaction.replied && !interaction.deferred) {
+    await interaction.update({ embeds: body.embeds, components: body.components });
+    return;
+  }
+  if (interaction.replied || interaction.deferred) {
+    await interaction.editReply(body);
+    return;
+  }
+  await interaction.reply(body);
 }
 
 async function enviarPainelConfig(interaction) {
-  await renderPainel(interaction, payloadPainelConfig(interaction.guildId));
+  const payload = { ...payloadPainelConfig(interaction.guildId), ephemeral: true };
+  if (interaction.replied || interaction.deferred) {
+    await interaction.editReply(payload);
+    return;
+  }
+  if (interaction.isMessageComponent()) {
+    await interaction.update({ embeds: payload.embeds, components: payload.components });
+    return;
+  }
+  await interaction.reply(payload);
+}
+
+async function handleConfiguracao(interaction) {
+  const sub = interaction.options.getSubcommand();
+  if (sub !== "loja") {
+    await interaction.reply({ content: "Use `/configuracao loja`.", ephemeral: true });
+    return;
+  }
+  await enviarPainelConfig(interaction);
+}
+
+async function handleConfig(interaction) {
+  const sub = interaction.options.getSubcommand();
+
+  if (sub === "ver") {
+    const stv = store.guilds[interaction.guildId] || store.guilds[GUILD_ID];
+    const cv = guildCfg(interaction.guildId).canais;
+    const desc =
+
+      `Canal de logs: ${cv.logs ? `<#${cv.logs}>` : "nao definido"}\n` +
+      `Canal de feedbacks: ${cv.feedbacks ? `<#${cv.feedbacks}>` : "nao definido"}\n` +
+      `Categoria de tickets: ${stv.ticketCategoryId ? `<#${stv.ticketCategoryId}>` : "nao definida"}\n` +
+      `Loja fixa: ${stv.lojaFixa.channelId ? `<#${stv.lojaFixa.channelId}>` : "nao publicada"}\n` +
+      `Banner da loja: ${urlMidiaValida(store.config.banner) ? `definido (${store.config.bannerPosicao || "top"})` : "nao definido"}\n` +
+      `Nome PIX publico: **${pixNomePublico()}** (ocultar nome completo: ${store.config.ocultarNomePix !== false ? "sim" : "nao"})\n` +
+      `SMTP: ${store.config.smtpHost ? store.config.smtpHost : "nao configurado"}\n` +
+      `Loja: **${store.config.lojaPausada ? "PAUSADA" : "aberta"}**${store.config.lojaPausaMotivo ? ` (${store.config.lojaPausaMotivo})` : ""}\n` +
+      `Cargos temporarios ativos: ${store.cargosTemporarios.length}\n` +
+      `Pedidos registrados: ${Object.keys(store.pedidos).length}`;
+    await interaction.reply({
+      embeds: [new EmbedBuilder().setTitle("⚙️ Configuracao").setDescription(desc).setColor(0x2ecc71)],
+      ephemeral: true
+    });
+    return;
+  }
+
+  if (sub === "canal-logs") {
+    await interaction.reply({ content: `Logs ficam em <#${guildCfg(interaction.guildId).canais.logs}>.`, ephemeral: true });
+    return;
+  }
+
+  if (sub === "canal-feedback") {
+    await interaction.reply({ content: `Feedbacks ficam em <#${guildCfg(interaction.guildId).canais.feedbacks}>.`, ephemeral: true });
+    return;
+  }
+
+  if (sub === "categoria-ticket") {
+    const categoria = interaction.options.getChannel("categoria", true);
+
+    store.guilds[interaction.guildId].ticketCategoryId = categoria.id;
+    salvarStore();
+    await interaction.reply({ content: `Categoria de tickets definida em <#${categoria.id}>.`, ephemeral: true });
+    return;
+  }
+
+  if (sub === "canal-loja") {
+    await publicarLojaFixa(interaction.guildId, true);
+    await interaction.reply({ content: `✅ Loja fixa publicada em <#${guildCfg(interaction.guildId).canais.loja}>.`, ephemeral: true });
+    return;
+  }
+
+  if (sub === "banner-loja") {
+    const url = limparUrl(interaction.options.getString("url") || "");
+    if (url && !urlMidiaValida(url)) {
+      await interaction.reply({ content: "URL invalida. Use um link http/https (gif funciona).", ephemeral: true });
+      return;
+    }
+    store.config.banner = url || null;
+    salvarStore();
+    await atualizarLojaFixa().catch(error => console.error("Falha ao atualizar loja fixa:", error.message));
+    await interaction.reply({ content: url ? "Banner da loja salvo." : "Banner da loja removido.", ephemeral: true });
+    return;
+  }
+
+  if (sub === "banner-posicao") {
+    const pos = (interaction.options.getString("posicao") || "top").toLowerCase();
+    store.config.bannerPosicao = pos;
+    salvarStore();
+    await atualizarLojaFixa();
+    await interaction.reply({ content: `Posicao do banner da loja: **${pos}**.`, ephemeral: true });
+    return;
+  }
+
+  if (sub === "pix-nome") {
+    const nome = (interaction.options.getString("nome") || QR_NOME_PUBLICO).trim();
+    const ocultar = interaction.options.getBoolean("ocultar");
+    store.config.pixNomePublico = nome;
+    if (ocultar !== null && ocultar !== undefined) store.config.ocultarNomePix = ocultar;
+    salvarStore();
+    await interaction.reply({
+      content: `Nome no PIX: **${pixNomePublico()}**. Ocultar nome completo: **${store.config.ocultarNomePix !== false ? "sim" : "nao"}**.`,
+      ephemeral: true
+    });
+    return;
+  }
+
+  if (sub === "smtp") {
+    store.config.smtpHost = (interaction.options.getString("host", true) || "").trim();
+    store.config.smtpPort = interaction.options.getInteger("porta") || 587;
+    store.config.smtpUser = (interaction.options.getString("usuario", true) || "").trim();
+    store.config.smtpPass = interaction.options.getString("senha", true) || "";
+    store.config.smtpFrom = (interaction.options.getString("from", true) || "").trim();
+    salvarStore();
+    await interaction.reply({
+      content: `SMTP salvo: **${store.config.smtpHost}** (porta ${store.config.smtpPort}). From: ${store.config.smtpFrom}.`,
+      ephemeral: true
+    });
+    return;
+  }
+
+  if (sub === "smtp-teste") {
+    const destino = (interaction.options.getString("email") || "").trim();
+    if (!destino || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(destino)) {
+      await interaction.reply({ content: "Informe um e-mail valido.", ephemeral: true });
+      return;
+    }
+    await interaction.deferReply({ ephemeral: true });
+    try {
+      await testarSmtp(store.config, destino);
+      await interaction.editReply({ content: `E-mail de teste enviado para **${destino}**.` });
+    } catch (error) {
+      await interaction.editReply({ content: `Falha no SMTP: ${error.message}` });
+    }
+    return;
+  }
+
+  if (sub === "pausar") {
+    const pausar = interaction.options.getBoolean("pausar", true);
+    const motivo = (interaction.options.getString("motivo") || "").trim();
+    store.config.lojaPausada = pausar;
+    store.config.lojaPausaMotivo = pausar ? motivo : "";
+    salvarStore();
+    await atualizarLojaFixa();
+    registrarLog(pausar ? "loja_pausada" : "loja_reativada", pausar ? `Loja pausada. ${motivo}` : "Loja reaberta.", {
+      staffId: interaction.user.id
+    });
+    await interaction.reply({
+      content: pausar ? `Loja **pausada**.${motivo ? ` Motivo: ${motivo}` : ""}` : "Loja **reaberta**.",
+      ephemeral: true
+    });
+    return;
+  }
+
+  await interaction.reply({ content: "Subcomando de config desconhecido. Use /config ver.", ephemeral: true }).catch(() => {});
 }
 
 async function handleFila(interaction) {
@@ -2791,19 +3274,16 @@ async function handleFila(interaction) {
     .filter(p => p.status === STATUS.AGUARDANDO_PAGAMENTO || p.status === STATUS.AGUARDANDO_ENTREGA)
     .sort((a, b) => a.id - b.id);
   if (!pedidos.length) {
-    await renderPainel(interaction, {
-      embeds: [new EmbedBuilder().setTitle("Fila de pedidos").setDescription("Nenhum pedido aberto.").setColor(0xfee75c)],
-      components: [rowVoltarHub()]
-    });
+    await interaction.reply({ content: "Nenhum pedido aberto.", ephemeral: true });
     return;
   }
   const linhas = pedidos.slice(0, 20).map(p => {
     const atraso = p.prazoEntregaAte && Date.now() > p.prazoEntregaAte ? " ATRASADO" : "";
     return `#${p.id} — ${p.produtoNome} — ${formatarReais(p.valorCentavos)} — ${STATUS_LABEL[p.status]}${atraso} — <@${p.userId}>`;
   });
-  await renderPainel(interaction, {
+  await interaction.reply({
     embeds: [new EmbedBuilder().setTitle("Fila de pedidos").setDescription(linhas.join("\n")).setColor(0xfee75c)],
-    components: [rowVoltarHub()]
+    ephemeral: true
   });
 }
 
@@ -2827,6 +3307,174 @@ function restaurarStore(dump) {
   if (!store.config.feedbackTitulo) store.config.feedbackTitulo = FEEDBACK_TITULO_PADRAO;
   if (!store.config.feedbackMensagem) store.config.feedbackMensagem = FEEDBACK_MSG_PADRAO;
   salvarStore();
+}
+
+async function handleBackup(interaction) {
+  const sub = interaction.options.getSubcommand();
+  if (sub === "exportar") {
+    await interaction.deferReply({ ephemeral: true });
+    const dump = snapshotStoreCompleto();
+    await interaction.editReply({
+      content: "Backup completo da loja (pedidos, estoque, config, cupons, tickets). Restaure com `/backup importar`.",
+      files: [new AttachmentBuilder(Buffer.from(JSON.stringify(dump, null, 2), "utf8"), { name: `backup-loja-${Date.now()}.json` })]
+    });
+    return;
+  }
+  if (sub === "importar") {
+    const arquivo = interaction.options.getAttachment("arquivo", true);
+    await interaction.deferReply({ ephemeral: true });
+    let dump;
+    try {
+      const res = await fetch(arquivo.url);
+      dump = JSON.parse(await res.text());
+    } catch {
+      await interaction.editReply({ content: "Nao consegui ler o JSON." });
+      return;
+    }
+    try {
+      restaurarStore(dump);
+    } catch (error) {
+      await interaction.editReply({ content: `Backup invalido: ${error.message}` });
+      return;
+    }
+    await publicarCanaisFixos().catch(() => {});
+    await interaction.editReply({ content: "Backup restaurado. Pedidos, produtos, estoque e config foram recarregados." });
+  }
+}
+
+async function handleCategoria(interaction) {
+  const sub = interaction.options.getSubcommand();
+  if (sub === "criar") {
+    const id = interaction.options.getString("id").trim().toLowerCase().replace(/[^a-z0-9_-]/g, "").slice(0, 32);
+    const nome = interaction.options.getString("nome").trim();
+    if (!id || !nome) {
+      await interaction.reply({ content: "ID e nome sao obrigatorios.", ephemeral: true });
+      return;
+    }
+    store.categorias[id] = {
+      id,
+      nome,
+      emoji: interaction.options.getString("emoji") || "📁",
+      descricao: interaction.options.getString("descricao") || "",
+      posicao: Object.keys(store.categorias).length,
+      ativo: true,
+      banner: null,
+      bannerPosicao: "top",
+      imagem: null,
+      cor: null,
+      rodape: null
+    };
+    salvarStore();
+    await atualizarLojaFixa();
+    await interaction.reply({ content: `Categoria **${nome}** (\`${id}\`) criada.`, ephemeral: true });
+    return;
+  }
+  if (sub === "listar") {
+    const linhas = Object.values(store.categorias).map(c =>
+      `${c.emoji || "📁"} **${c.nome}** (\`${c.id}\`) — ${c.ativo === false ? "inativa" : "ativa"} — ${produtosDaCategoria(c.id).length} produto(s)`
+    );
+    await interaction.reply({
+      embeds: [new EmbedBuilder().setTitle("Categorias").setDescription(linhas.join("\n") || "Nenhuma.").setColor(0x9b59b6)],
+      ephemeral: true
+    });
+    return;
+  }
+  if (sub === "editar") {
+    const id = interaction.options.getString("id").trim();
+    const cat = store.categorias[id];
+    if (!cat) {
+      await interaction.reply({ content: "Categoria nao encontrada.", ephemeral: true });
+      return;
+    }
+    await enviarPainelCategoria(interaction, cat);
+    return;
+  }
+  if (sub === "remover") {
+    const id = interaction.options.getString("id").trim();
+    if (!store.categorias[id]) {
+      await interaction.reply({ content: "Categoria nao encontrada.", ephemeral: true });
+      return;
+    }
+    store.categorias[id].ativo = false;
+    salvarStore();
+    await atualizarLojaFixa();
+    await interaction.reply({ content: `Categoria \`${id}\` desativada.`, ephemeral: true });
+    return;
+  }
+  if (sub === "canal") {
+    const nome = slugCanal(interaction.options.getString("nome", true));
+    const existente = interaction.options.getChannel("categoria-existente");
+    const novaCategoria = (interaction.options.getString("nova-categoria") || "").trim();
+    const topico = (interaction.options.getString("topico") || "").trim();
+    let parent = existente;
+    const criados = [];
+    if (!parent && novaCategoria) {
+      parent = await interaction.guild.channels.create({
+        name: novaCategoria,
+        type: ChannelType.GuildCategory
+      });
+      criados.push(`categoria ${parent.name}`);
+    }
+    if (!parent && !novaCategoria) {
+      await interaction.reply({ content: "Informe uma categoria existente ou o nome de uma categoria nova.", ephemeral: true });
+      return;
+    }
+    const canal = await interaction.guild.channels.create({
+      name,
+      type: ChannelType.GuildText,
+      parent: parent ? parent.id : undefined,
+      topic: topico || undefined
+    });
+    criados.push(`#${canal.name}`);
+    await interaction.reply({
+      content: `Canal criado: <#${canal.id}>${parent ? ` em **${parent.name}**` : ""}.\n${criados.join(", ")}`,
+      ephemeral: true
+    });
+  }
+}
+
+async function handleCanais(interaction) {
+  const sub = interaction.options.getSubcommand();
+  if (sub === "exportar") {
+    await interaction.deferReply({ ephemeral: true });
+    const snapshot = snapshotCanais(interaction.guild);
+    const json = JSON.stringify(snapshot, null, 2);
+    await interaction.editReply({
+      content:
+        `Estrutura de **${snapshot.guild}** exportada.\n` +
+        `${snapshot.categorias.length} categoria(s), ${snapshot.semCategoria.length} canal(is) sem categoria.\n` +
+        `No outro servidor use \`/canais colar\` com este arquivo.`,
+      files: [new AttachmentBuilder(Buffer.from(json, "utf8"), { name: `canais-${slugCanal(snapshot.guild)}.json` })]
+    });
+    return;
+  }
+  if (sub === "colar") {
+    const arquivo = interaction.options.getAttachment("arquivo", true);
+    if (!arquivo.name?.toLowerCase().endsWith(".json") && arquivo.contentType && !String(arquivo.contentType).includes("json")) {
+      await interaction.reply({ content: "Envie o JSON gerado por `/canais exportar`.", ephemeral: true });
+      return;
+    }
+    await interaction.deferReply({ ephemeral: true });
+    let snapshot;
+    try {
+      const res = await fetch(arquivo.url);
+      snapshot = JSON.parse(await res.text());
+    } catch {
+      await interaction.editReply({ content: "Nao consegui ler o JSON." });
+      return;
+    }
+    if (!snapshot || (!Array.isArray(snapshot.categorias) && !Array.isArray(snapshot.semCategoria))) {
+      await interaction.editReply({ content: "JSON invalido. Use o arquivo de `/canais exportar`." });
+      return;
+    }
+    const { criados, pulados } = await aplicarSnapshotCanais(interaction.guild, snapshot);
+    await interaction.editReply({
+      content:
+        `Colagem concluida.\n` +
+        `Criados (${criados.length}): ${criados.slice(0, 20).join(", ") || "nenhum"}${criados.length > 20 ? "..." : ""}\n` +
+        `Ja existiam (${pulados.length}): ${pulados.slice(0, 15).join(", ") || "nenhum"}${pulados.length > 15 ? "..." : ""}`
+    });
+  }
 }
 
 async function mostrarMeusPedidos(interaction) {
@@ -2929,6 +3577,12 @@ async function handleAvaliacoes(interaction) {
   });
 }
 
+async function handlePainelTicket(interaction) {
+  await interaction.deferReply({ ephemeral: true });
+  await atualizarPaineisTicket();
+  await interaction.editReply({ content: `Painel de tickets publicado em <#${guildCfg(interaction.guildId).canais.ticket}>.` });
+}
+
 async function handleTicket(interaction) {
   await interaction.deferReply({ ephemeral: true });
   const assunto = interaction.options.getString("assunto") || "Suporte";
@@ -2936,11 +3590,11 @@ async function handleTicket(interaction) {
   await interaction.editReply(`✅ Ticket aberto em <#${canal.id}>.`);
 }
 
-async function handleLogs(interaction, quantidade = 15) {
-  const qtd = Number(quantidade) > 0 ? Math.min(50, Number(quantidade)) : 15;
-  const concluidas = store.logs.filter(e => e.tipo === "entregue").slice(-qtd).reverse();
+async function handleLogs(interaction) {
+  const quantidade = interaction.options.getInteger("quantidade") || 15;
+  const concluidas = store.logs.filter(e => e.tipo === "entregue").slice(-quantidade).reverse();
   if (!concluidas.length) {
-    await renderPainel(interaction, { embeds: [new EmbedBuilder().setTitle("Logs").setDescription("Nenhuma compra concluida ainda.").setColor(0x57f287)], components: [rowVoltarHub()] });
+    await interaction.reply({ content: "Nenhuma compra concluida ainda.", ephemeral: true });
     return;
   }
   const linhas = concluidas.map(e => {
@@ -2948,9 +3602,9 @@ async function handleLogs(interaction, quantidade = 15) {
     const alvo = e.pedidoId ? ` · pedido #${e.pedidoId}` : e.userId ? ` · <@${e.userId}>` : "";
     return `${hora} — Compra concluida${alvo}\n${e.detalhe}`;
   });
-  await renderPainel(interaction, {
+  await interaction.reply({
     embeds: [new EmbedBuilder().setTitle("Compras concluidas").setDescription(linhas.join("\n\n").slice(0, 4000)).setColor(0x57f287)],
-    components: [rowVoltarHub()]
+    ephemeral: true
   });
 }
 
@@ -2988,7 +3642,7 @@ async function handleRelatorio(interaction) {
     .setColor(0x2ecc71);
   if (linhasProdutos.length) embed.addFields({ name: "Por produto", value: linhasProdutos.join("\n").slice(0, 1024) });
 
-  await renderPainel(interaction, { embeds: [embed], components: [rowVoltarHub()] });
+  await interaction.reply({ embeds: [embed], ephemeral: true });
 }
 
 const commands = [
@@ -3005,6 +3659,205 @@ const commands = [
       option.setName("id").setDescription("Numero do pedido").setRequired(true).setMinValue(1)
     ),
   new SlashCommandBuilder()
+    .setName("catalogo")
+    .setDescription("Publica o catalogo com botoes de compra neste canal (staff).")
+    .setDefaultMemberPermissions(PermissionFlagsBits.ManageMessages),
+  new SlashCommandBuilder()
+    .setName("estoque")
+    .setDescription("Gerencia o estoque das entregas automaticas (staff).")
+    .setDefaultMemberPermissions(PermissionFlagsBits.ManageGuild)
+    .addSubcommand(sub =>
+      sub.setName("adicionar").setDescription("Adiciona itens ao estoque (um por linha).")
+        .addStringOption(o => o.setName("produto").setDescription("Produto").setRequired(true).setAutocomplete(true))
+        .addStringOption(o => o.setName("conteudo").setDescription("Segredo/codigo. Um item por linha.").setRequired(true))
+    )
+    .addSubcommand(sub => sub.setName("listar").setDescription("Mostra o estoque."))
+    .addSubcommand(sub =>
+      sub.setName("remover").setDescription("Remove um item pelo id.")
+        .addStringOption(o => o.setName("produto").setDescription("Produto").setRequired(true).setAutocomplete(true))
+        .addIntegerOption(o => o.setName("id").setDescription("Id do item").setRequired(true).setMinValue(1))
+    ),
+  new SlashCommandBuilder()
+    .setName("cupom")
+    .setDescription("Gerencia cupons de desconto (staff).")
+    .setDefaultMemberPermissions(PermissionFlagsBits.ManageGuild)
+    .addSubcommand(sub =>
+      sub.setName("criar").setDescription("Cria um cupom de desconto.")
+        .addStringOption(o => o.setName("codigo").setDescription("Codigo do cupom").setRequired(true).setMaxLength(32))
+        .addStringOption(o =>
+          o.setName("tipo").setDescription("Tipo de desconto").setRequired(true)
+            .addChoices({ name: "Percentual (%)", value: "percent" }, { name: "Valor fixo (R$)", value: "fixo" })
+        )
+        .addNumberOption(o => o.setName("valor").setDescription("Percentual ou valor em reais").setRequired(true))
+        .addIntegerOption(o => o.setName("usos").setDescription("Limite de usos (0 = ilimitado)").setMinValue(0))
+        .addIntegerOption(o => o.setName("dias").setDescription("Validade em dias (0 = sem expiracao)").setMinValue(0))
+        .addNumberOption(o => o.setName("minimo").setDescription("Compra minima em reais").setMinValue(0))
+        .addBooleanOption(o => o.setName("publicar").setDescription("Publicar no canal de cupons (padrao: sim)"))
+    )
+    .addSubcommand(sub => sub.setName("listar").setDescription("Lista os cupons."))
+    .addSubcommand(sub =>
+      sub.setName("remover").setDescription("Desativa um cupom.")
+        .addStringOption(o => o.setName("codigo").setDescription("Codigo do cupom").setRequired(true))
+    )
+    .addSubcommand(sub => sub.setName("publicar").setDescription("Publica o painel de cupons no canal de cupons.")),
+  new SlashCommandBuilder()
+    .setName("produto")
+    .setDescription("Gerencia os produtos (staff).")
+    .setDefaultMemberPermissions(PermissionFlagsBits.ManageGuild)
+    .addSubcommand(sub => sub.setName("listar").setDescription("Lista os produtos."))
+    .addSubcommand(sub =>
+      sub.setName("criar").setDescription("Cria um produto novo na vitrine.")
+        .addStringOption(o => o.setName("id").setDescription("ID interno (ex: nitro_1m_promo)").setRequired(true).setMaxLength(32))
+        .addStringOption(o => o.setName("nome").setDescription("Nome visivel").setRequired(true).setMaxLength(80))
+        .addNumberOption(o => o.setName("preco").setDescription("Preco em reais").setRequired(true).setMinValue(0))
+        .addStringOption(o => o.setName("categoria").setDescription("ID da categoria (cria se nao existir)").setMaxLength(32))
+        .addStringOption(o =>
+          o.setName("modo").setDescription("Entrega automatica ou pela staff")
+            .addChoices({ name: "Automatico", value: "auto" }, { name: "Staff", value: "semi" })
+        )
+        .addStringOption(o => o.setName("descricao").setDescription("Descricao").setMaxLength(1000))
+        .addStringOption(o => o.setName("emoji").setDescription("Emoji unicode ou custom <a:nome:id>").setMaxLength(64))
+    )
+    .addSubcommand(sub =>
+      sub.setName("editar").setDescription("Edita um produto.")
+        .addStringOption(o => o.setName("produto").setDescription("Produto").setRequired(true).setAutocomplete(true))        .addStringOption(o =>
+          o.setName("modo").setDescription("Entrega automatica (se houver estoque) ou pela staff")
+            .addChoices({ name: "Automatico", value: "auto" }, { name: "Staff", value: "semi" })
+        )
+        .addRoleOption(o => o.setName("cargo").setDescription("Cargo temporario entregue na compra"))
+        .addIntegerOption(o => o.setName("cargo-dias").setDescription("Duracao do cargo em dias").setMinValue(0))
+        .addNumberOption(o => o.setName("preco").setDescription("Preco em reais").setMinValue(0))
+        .addNumberOption(o => o.setName("preco-original").setDescription("Preco riscado (de) em reais").setMinValue(0))
+        .addBooleanOption(o => o.setName("disponivel").setDescription("Produto a venda?"))
+        .addStringOption(o => o.setName("imagem").setDescription("URL da foto do item (gif ok)"))
+        .addStringOption(o => o.setName("banner").setDescription("URL do banner/gif do produto"))
+        .addStringOption(o =>
+          o.setName("banner-posicao").setDescription("Posicao do banner")
+            .addChoices(
+              { name: "Em cima", value: "top" },
+              { name: "Em baixo", value: "bottom" },
+              { name: "Miniatura", value: "thumbnail" },
+              { name: "Flutuante", value: "float" }
+            )
+        )
+        .addStringOption(o => o.setName("instrucoes").setDescription("Instrucoes de uso do produto").setMaxLength(1000))
+        .addStringOption(o => o.setName("categoria").setDescription("ID da categoria (ex: nitro)").setMaxLength(32))
+    ),
+  new SlashCommandBuilder()
+    .setName("config")
+    .setDescription("Configura canais e categoria de tickets (staff).")
+    .setDefaultMemberPermissions(PermissionFlagsBits.ManageGuild)
+    .addSubcommand(sub => sub.setName("ver").setDescription("Mostra a configuracao atual."))
+    .addSubcommand(sub =>
+      sub.setName("canal-logs").setDescription("Define o canal de logs.")
+        .addChannelOption(o => o.setName("canal").setDescription("Canal de texto").setRequired(true).addChannelTypes(ChannelType.GuildText))
+    )
+    .addSubcommand(sub =>
+      sub.setName("canal-feedback").setDescription("Define o canal de avaliacoes.")
+        .addChannelOption(o => o.setName("canal").setDescription("Canal de texto").setRequired(true).addChannelTypes(ChannelType.GuildText))
+    )
+    .addSubcommand(sub =>
+      sub.setName("categoria-ticket").setDescription("Define a categoria dos tickets.")
+        .addChannelOption(o => o.setName("categoria").setDescription("Categoria").setRequired(true).addChannelTypes(ChannelType.GuildCategory))
+    )
+    .addSubcommand(sub =>
+      sub.setName("canal-loja").setDescription("Publica a loja fixa neste canal (sem precisar de /loja).")
+        .addChannelOption(o => o.setName("canal").setDescription("Canal da loja").setRequired(true).addChannelTypes(ChannelType.GuildText))
+    )
+    .addSubcommand(sub =>
+      sub.setName("banner-loja").setDescription("Define o banner/gif da loja inicial.")
+        .addStringOption(o => o.setName("url").setDescription("URL da imagem ou gif (vazio remove)").setRequired(false))
+    )
+    .addSubcommand(sub =>
+      sub.setName("banner-posicao").setDescription("Posicao do banner da loja (top, bottom, thumbnail, float).")
+        .addStringOption(o =>
+          o.setName("posicao").setDescription("Posicao").setRequired(true)
+            .addChoices(
+              { name: "Em cima (imagem)", value: "top" },
+              { name: "Em baixo (imagem)", value: "bottom" },
+              { name: "Miniatura", value: "thumbnail" },
+              { name: "Flutuante", value: "float" },
+              { name: "Autor", value: "author" }
+            )
+        )
+    )
+    .addSubcommand(sub =>
+      sub.setName("pix-nome").setDescription("Nome que aparece no PIX (nao use seu nome completo).")
+        .addStringOption(o => o.setName("nome").setDescription("Nome da loja no QR").setRequired(true).setMaxLength(25))
+        .addBooleanOption(o => o.setName("ocultar").setDescription("Ocultar nome pessoal no PIX").setRequired(false))
+    )
+    .addSubcommand(sub =>
+      sub.setName("smtp").setDescription("Configura e-mail para entrega de produtos.")
+        .addStringOption(o => o.setName("host").setDescription("Host SMTP").setRequired(true))
+        .addStringOption(o => o.setName("usuario").setDescription("Usuario SMTP").setRequired(true))
+        .addStringOption(o => o.setName("senha").setDescription("Senha / app password").setRequired(true))
+        .addStringOption(o => o.setName("from").setDescription("From (ex: Loja <loja@email.com>)").setRequired(true))
+        .addIntegerOption(o => o.setName("porta").setDescription("Porta (587 ou 465)").setMinValue(1))
+    )
+    .addSubcommand(sub =>
+      sub.setName("smtp-teste").setDescription("Envia um e-mail de teste com o SMTP salvo.")
+        .addStringOption(o => o.setName("email").setDescription("Destino do teste").setRequired(true))
+    )
+    .addSubcommand(sub =>
+      sub.setName("pausar").setDescription("Pausa ou reabre a loja (bloqueia compras).")
+        .addBooleanOption(o => o.setName("pausar").setDescription("true = pausar, false = reabrir").setRequired(true))
+        .addStringOption(o => o.setName("motivo").setDescription("Motivo (aparece na vitrine)").setMaxLength(200))
+    ),
+  new SlashCommandBuilder()
+    .setName("configuracao")
+    .setDescription("Painel unico para configurar a loja (staff).")
+    .setDefaultMemberPermissions(PermissionFlagsBits.ManageGuild)
+    .addSubcommand(sub =>
+      sub.setName("loja").setDescription("Abre o painel: banner, SMTP, PIX, categoria de tickets e publicar loja.")
+    ),
+  new SlashCommandBuilder()
+    .setName("gerenciar")
+    .setDescription("Painel completo de produto (staff).")
+    .setDefaultMemberPermissions(PermissionFlagsBits.ManageGuild)
+    .addSubcommand(sub =>
+      sub.setName("produto").setDescription("Abre o painel: nome, preco, estoque, cargo, cupons, variante e mais.")
+        .addStringOption(o => o.setName("produto").setDescription("Produto").setRequired(true).setAutocomplete(true))
+    ),
+  new SlashCommandBuilder()
+    .setName("categoria")
+    .setDescription("Gerencia categorias da loja (staff).")
+    .setDefaultMemberPermissions(PermissionFlagsBits.ManageGuild)
+    .addSubcommand(sub =>
+      sub.setName("criar").setDescription("Cria uma categoria.")
+        .addStringOption(o => o.setName("id").setDescription("ID interno (ex: nitro)").setRequired(true).setMaxLength(32))
+        .addStringOption(o => o.setName("nome").setDescription("Nome visivel").setRequired(true).setMaxLength(80))
+        .addStringOption(o => o.setName("emoji").setDescription("Emoji unicode ou custom <a:nome:id>").setMaxLength(64))
+        .addStringOption(o => o.setName("descricao").setDescription("Descricao").setMaxLength(200))
+    )
+    .addSubcommand(sub => sub.setName("listar").setDescription("Lista as categorias."))
+    .addSubcommand(sub =>
+      sub.setName("editar").setDescription("Abre o painel para editar o embed da categoria (banner, cor, titulo).")
+        .addStringOption(o => o.setName("id").setDescription("ID da categoria").setRequired(true))
+    )
+    .addSubcommand(sub =>
+      sub.setName("remover").setDescription("Desativa uma categoria.")
+        .addStringOption(o => o.setName("id").setDescription("ID da categoria").setRequired(true))
+    )
+    .addSubcommand(sub =>
+      sub.setName("canal").setDescription("Cria um canal de texto em categoria nova ou existente.")
+        .addStringOption(o => o.setName("nome").setDescription("Nome do canal").setRequired(true).setMaxLength(100))
+        .addChannelOption(o =>
+          o.setName("categoria-existente").setDescription("Categoria Discord ja existente")
+            .addChannelTypes(ChannelType.GuildCategory)
+        )
+        .addStringOption(o => o.setName("nova-categoria").setDescription("Nome da categoria nova (se nao usar existente)").setMaxLength(100))
+        .addStringOption(o => o.setName("topico").setDescription("Topico do canal").setMaxLength(1024))
+    ),
+  new SlashCommandBuilder()
+    .setName("canais")
+    .setDescription("Exporta ou cola a estrutura de canais entre servidores (staff).")
+    .setDefaultMemberPermissions(PermissionFlagsBits.ManageGuild)
+    .addSubcommand(sub => sub.setName("exportar").setDescription("Gera um JSON com categorias e canais deste servidor."))
+    .addSubcommand(sub =>
+      sub.setName("colar").setDescription("Cria categorias e canais a partir de um JSON exportado.")
+        .addAttachmentOption(o => o.setName("arquivo").setDescription("Arquivo JSON gerado por /canais exportar").setRequired(true))
+    ),
+  new SlashCommandBuilder()
     .setName("feedback")
     .setDescription("Avalia um pedido entregue.")
     .addIntegerOption(o => o.setName("id").setDescription("Numero do pedido").setRequired(true).setMinValue(1))
@@ -3016,12 +3869,38 @@ const commands = [
     .addStringOption(o => o.setName("produto").setDescription("Produto").setRequired(true).setAutocomplete(true)),
   new SlashCommandBuilder()
     .setName("painel")
-    .setDescription("Painel unico da staff: loja, tickets, produto, categoria, estoque, cupons, logs, fila, canais e backup.")
+    .setDescription("Painel unico da staff: loja, tickets, produto, estoque e cupons.")
+    .setDefaultMemberPermissions(PermissionFlagsBits.ManageGuild),
+  new SlashCommandBuilder()
+    .setName("painel-ticket")
+    .setDescription("Publica o painel de abertura de tickets (staff).")
     .setDefaultMemberPermissions(PermissionFlagsBits.ManageGuild),
   new SlashCommandBuilder()
     .setName("ticket")
     .setDescription("Abre um ticket de atendimento.")
     .addStringOption(o => o.setName("assunto").setDescription("Assunto do ticket").setMaxLength(100)),
+  new SlashCommandBuilder()
+    .setName("logs")
+    .setDescription("Mostra os logs de vendas recentes (staff).")
+    .setDefaultMemberPermissions(PermissionFlagsBits.ManageGuild)
+    .addIntegerOption(o => o.setName("quantidade").setDescription("Quantidade de logs").setMinValue(1).setMaxValue(50)),
+  new SlashCommandBuilder()
+    .setName("relatorio")
+    .setDescription("Resumo de vendas (staff).")
+    .setDefaultMemberPermissions(PermissionFlagsBits.ManageGuild),
+  new SlashCommandBuilder()
+    .setName("fila")
+    .setDescription("Pedidos abertos aguardando Pix ou entrega (staff).")
+    .setDefaultMemberPermissions(PermissionFlagsBits.ManageGuild),
+  new SlashCommandBuilder()
+    .setName("backup")
+    .setDescription("Backup da loja (staff).")
+    .setDefaultMemberPermissions(PermissionFlagsBits.ManageGuild)
+    .addSubcommand(sub => sub.setName("exportar").setDescription("Baixa JSON completo da loja (pedidos, estoque, config)."))
+    .addSubcommand(sub =>
+      sub.setName("importar").setDescription("Restaura o JSON completo exportado antes.")
+        .addAttachmentOption(o => o.setName("arquivo").setDescription("JSON do /backup exportar").setRequired(true))
+    ),
   new ContextMenuCommandBuilder()
     .setName("Editar embed")
     .setType(ApplicationCommandType.Message)
@@ -3468,6 +4347,10 @@ async function handleCommand(interaction) {
         await interaction.reply({ content: `A loja fica em <#${guildCfg(interaction.guildId).canais.loja}>.`, ephemeral: true });
       }
       return;
+    case "catalogo":
+      await publicarLojaFixa(interaction.guildId, true);
+      await interaction.reply({ content: `Loja fixa publicada em <#${guildCfg(interaction.guildId).canais.loja}>.`, ephemeral: true });
+      return;
     case "meuspedidos": {
       await interaction.reply({ ...payloadMeusPedidos(interaction.user.id), ephemeral: true });
       return;
@@ -3490,12 +4373,22 @@ async function handleCommand(interaction) {
       });
       return;
     }
-    case "feedback":
-      await handleFeedback(interaction);
+    case "estoque":
+      await handleEstoque(interaction);
       return;
-    case "avaliacoes":
-      await handleAvaliacoes(interaction);
+    case "cupom":
+      await handleCupom(interaction);
       return;
+    case "produto":
+      await handleProduto(interaction);
+      return;
+    case "config":
+      await handleConfig(interaction);
+      return;
+    case "configuracao":
+      await handleConfiguracao(interaction);
+      return;
+
     case "painel":
       if (!isStaff(interaction.member)) {
         await interaction.reply({ content: "So a staff pode usar o painel.", ephemeral: true });
@@ -3503,8 +4396,38 @@ async function handleCommand(interaction) {
       }
       await interaction.reply({ ...payloadPainelStaff(), ephemeral: true });
       return;
+    case "gerenciar":
+      await handleGerenciar(interaction);
+      return;
+    case "categoria":
+      await handleCategoria(interaction);
+      return;
+    case "canais":
+      await handleCanais(interaction);
+      return;
+    case "feedback":
+      await handleFeedback(interaction);
+      return;
+    case "avaliacoes":
+      await handleAvaliacoes(interaction);
+      return;
+    case "painel-ticket":
+      await handlePainelTicket(interaction);
+      return;
     case "ticket":
       await handleTicket(interaction);
+      return;
+    case "logs":
+      await handleLogs(interaction);
+      return;
+    case "relatorio":
+      await handleRelatorio(interaction);
+      return;
+    case "fila":
+      await handleFila(interaction);
+      return;
+    case "backup":
+      await handleBackup(interaction);
       return;
     default:
       console.warn(`Comando nao reconhecido: /${interaction.commandName}. Os comandos atuais serao re-registrados.`);
@@ -4131,9 +5054,7 @@ async function handleButton(interaction) {
       await interaction.reply({ content: "So a staff pode configurar.", ephemeral: true });
       return;
     }
-    await interaction.deferReply({ ephemeral: true });
-    await republicarEmbeds().catch(error => console.error("Falha ao republicar embeds:", error.message));
-    await interaction.editReply({ content: "Embeds republicados: loja, tickets e cupons (editados no lugar ou reenviados se apagados)." });
+    await interaction.reply(payloadEscolherEmbeds());
     return;
   }
 
@@ -4200,7 +5121,7 @@ async function handleButton(interaction) {
       new ActionRowBuilder().addComponents(campoTexto("descricao", "Descricao", TextInputStyle.Paragraph, cfg.descricao, { required: true, maxLength: 1000 })),
       new ActionRowBuilder().addComponents(campoTexto("botao", "Nome do botao", TextInputStyle.Short, cfg.botaoLabel, { required: true, maxLength: 80 })),
       new ActionRowBuilder().addComponents(campoTexto("cor", "Cor hex (ex: 5865F2)", TextInputStyle.Short, cfg.cor || "5865F2", { required: false, maxLength: 7 })),
-      new ActionRowBuilder().addComponents(campoTexto("emoji", "Emoji do botao (unicode ou custom <a:nome:id>)", TextInputStyle.Short, cfg.botaoEmoji || "", { required: false, maxLength: 64 }))    );
+      new ActionRowBuilder().addComponents(campoTexto("emoji", "Emoji do botao (vazio remove)", TextInputStyle.Short, cfg.botaoEmoji || "", { required: false, maxLength: 32 }))    );
     await interaction.showModal(modal);
     return;
   }
@@ -4219,9 +5140,9 @@ async function handleButton(interaction) {
     const modal = new ModalBuilder().setCustomId("cfg_ticket_opcoes_modal").setTitle("Opcoes do ticket");
     modal.addComponents(
       new ActionRowBuilder().addComponents(campoTexto("op1_label", "Opcao 1 - nome", TextInputStyle.Short, opcoes[0]?.label || "Duvidas", { required: true, maxLength: 100 })),
-      new ActionRowBuilder().addComponents(campoTexto("op1_emoji", "Opcao 1 - emoji (unicode ou custom <a:nome:id>)", TextInputStyle.Short, opcoes[0]?.emoji || "", { required: false, maxLength: 64 })),
+      new ActionRowBuilder().addComponents(campoTexto("op1_emoji", "Opcao 1 - emoji (vazio remove)", TextInputStyle.Short, opcoes[0]?.emoji || "", { required: false, maxLength: 32 })),
       new ActionRowBuilder().addComponents(campoTexto("op2_label", "Opcao 2 - nome", TextInputStyle.Short, opcoes[1]?.label || "Entrega de produto", { required: true, maxLength: 100 })),
-      new ActionRowBuilder().addComponents(campoTexto("op2_emoji", "Opcao 2 - emoji (unicode ou custom <a:nome:id>)", TextInputStyle.Short, opcoes[1]?.emoji || "", { required: false, maxLength: 64 }))
+      new ActionRowBuilder().addComponents(campoTexto("op2_emoji", "Opcao 2 - emoji (vazio remove)", TextInputStyle.Short, opcoes[1]?.emoji || "", { required: false, maxLength: 32 }))
     );
     await interaction.showModal(modal);
     return;
@@ -4334,7 +5255,7 @@ async function handleButton(interaction) {
       return;
     }
     if (acao === "gc_emoji") {
-      await interaction.showModal(modalCampoProduto(`gc_emoji_modal:${valor}`, "Alterar emoji", "emoji", "Emoji (unicode ou custom <a:nome:id>)", cat.emoji || "📁", TextInputStyle.Short, { required: false, maxLength: 64 }));
+      await interaction.showModal(modalCampoProduto(`gc_emoji_modal:${valor}`, "Alterar emoji", "emoji", "Emoji", cat.emoji || "📁", TextInputStyle.Short, { required: false, maxLength: 8 }));
       return;
     }
     if (acao === "gc_miniatura") {
@@ -4384,143 +5305,6 @@ async function handleButton(interaction) {
       return;
     }
     await handleRelatorio(interaction);
-    return;
-  }
-
-  if (acao === "hub_logs") {
-    if (!isStaff(interaction.member)) {
-      await interaction.reply({ content: "So a staff pode usar o painel.", ephemeral: true });
-      return;
-    }
-    await handleLogs(interaction, 15);
-    return;
-  }
-
-  if (acao === "hub_fila") {
-    if (!isStaff(interaction.member)) {
-      await interaction.reply({ content: "So a staff pode usar o painel.", ephemeral: true });
-      return;
-    }
-    await handleFila(interaction);
-    return;
-  }
-
-  if (acao === "hub_canais") {
-    if (!isStaff(interaction.member)) {
-      await interaction.reply({ content: "So a staff pode usar o painel.", ephemeral: true });
-      return;
-    }
-    await renderPainel(interaction, payloadHubCanais());
-    return;
-  }
-
-  if (acao === "hub_backup") {
-    if (!isStaff(interaction.member)) {
-      await interaction.reply({ content: "So a staff pode usar o painel.", ephemeral: true });
-      return;
-    }
-    await renderPainel(interaction, payloadHubBackup());
-    return;
-  }
-
-  if (acao === "cfg_backup_exportar") {
-    if (!isStaff(interaction.member)) {
-      await interaction.reply({ content: "So a staff pode usar o painel.", ephemeral: true });
-      return;
-    }
-    await interaction.deferReply({ ephemeral: true });
-    const dump = snapshotStoreCompleto();
-    let githubOk = false;
-    try {
-      githubOk = await persist.githubSalvarAgora(store);
-    } catch (error) {
-      console.error("Falha no backup do GitHub:", error.message);
-    }
-    await interaction.editReply({
-      content:
-        "Backup completo da loja (config, banner, categorias, produtos, estoque, cupons, pedidos, tickets, cargos e logs)." +
-        (githubOk ? "\nSalvo tambem no GitHub (branch de dados)." : "\nGitHub nao configurado ou indisponivel — use o arquivo abaixo."),
-      files: [new AttachmentBuilder(Buffer.from(JSON.stringify(dump, null, 2), "utf8"), { name: `backup-loja-${Date.now()}.json` })]
-    });
-    return;
-  }
-
-  if (acao === "cfg_backup_importar") {
-    if (!isStaff(interaction.member)) {
-      await interaction.reply({ content: "So a staff pode usar o painel.", ephemeral: true });
-      return;
-    }
-    await interaction.showModal(modalImportarBackup());
-    return;
-  }
-
-  if (acao === "cfg_smtp_teste") {
-    if (!isStaff(interaction.member)) {
-      await interaction.reply({ content: "So a staff pode configurar.", ephemeral: true });
-      return;
-    }
-    await interaction.showModal(modalTestarSmtp());
-    return;
-  }
-
-  if (acao === "hub_produto_criar") {
-    if (!isStaff(interaction.member)) {
-      await interaction.reply({ content: "So a staff pode usar o painel.", ephemeral: true });
-      return;
-    }
-    await interaction.showModal(modalProdutoCriar());
-    return;
-  }
-
-  if (acao === "hub_categoria_criar") {
-    if (!isStaff(interaction.member)) {
-      await interaction.reply({ content: "So a staff pode usar o painel.", ephemeral: true });
-      return;
-    }
-    await interaction.showModal(modalCategoriaCriar());
-    return;
-  }
-
-  if (acao === "hub_categoria_remover") {
-    if (!isStaff(interaction.member)) {
-      await interaction.reply({ content: "So a staff pode usar o painel.", ephemeral: true });
-      return;
-    }
-    await interaction.showModal(modalCategoriaRemover());
-    return;
-  }
-
-  if (acao === "hub_categoria_canal") {
-    if (!isStaff(interaction.member)) {
-      await interaction.reply({ content: "So a staff pode usar o painel.", ephemeral: true });
-      return;
-    }
-    await interaction.showModal(modalCategoriaCanal());
-    return;
-  }
-
-  if (acao === "hub_canais_exportar") {
-    if (!isStaff(interaction.member)) {
-      await interaction.reply({ content: "So a staff pode usar o painel.", ephemeral: true });
-      return;
-    }
-    await interaction.deferReply({ ephemeral: true });
-    const snapshot = snapshotCanais(interaction.guild);
-    await interaction.editReply({
-      content:
-        `Estrutura de **${snapshot.guild}** exportada.\n` +
-        `${snapshot.categorias.length} categoria(s), ${snapshot.semCategoria.length} canal(is) sem categoria.`,
-      files: [new AttachmentBuilder(Buffer.from(JSON.stringify(snapshot, null, 2), "utf8"), { name: `canais-${slugCanal(snapshot.guild)}.json` })]
-    });
-    return;
-  }
-
-  if (acao === "hub_canais_colar") {
-    if (!isStaff(interaction.member)) {
-      await interaction.reply({ content: "So a staff pode usar o painel.", ephemeral: true });
-      return;
-    }
-    await interaction.showModal(modalCanaisColar());
     return;
   }
 
@@ -4575,10 +5359,6 @@ async function handleButton(interaction) {
 
     if (acao === "gp_nome") {
       await interaction.showModal(modalCampoProduto(`gp_nome_modal:${valor}`, "Alterar nome", "nome", "Nome do produto", produto.nome, TextInputStyle.Short, { required: true, maxLength: 80 }));
-      return;
-    }
-    if (acao === "gp_emoji") {
-      await interaction.showModal(modalCampoProduto(`gp_emoji_modal:${valor}`, "Alterar emoji", "emoji", "Emoji (unicode ou custom <a:nome:id>)", produto.emoji || "📦", TextInputStyle.Short, { required: false, maxLength: 64 }));
       return;
     }
     if (acao === "gp_desc") {
@@ -4707,6 +5487,35 @@ async function handleSelect(interaction) {
   const id = interaction.customId;
   const valor = interaction.values[0];
 
+  if (id === "cfg_publicar_sel") {
+    if (!isStaff(interaction.member)) {
+      await interaction.reply({ content: "So a staff pode configurar.", ephemeral: true });
+      return;
+    }
+    const escolhas = interaction.values.filter(v => EMBEDS_REPUBLICAVEIS.some(e => e.id === v));
+    if (!escolhas.length) {
+      await interaction.reply({ content: "Selecione ao menos um embed.", ephemeral: true });
+      return;
+    }
+    await interaction.deferUpdate();
+    const relatorio = await republicarEmbeds(escolhas);
+    const linhas = relatorio.map(r => {
+      const onde = GUILD_IDS.length > 1 ? `[${r.guildNome}] ` : "";
+      return r.ok
+        ? `✅ ${onde}${r.nome}: <#${r.canalId}>`
+        : `❌ ${onde}${r.nome}: ${r.erro}`;
+    });
+    const falhas = relatorio.filter(r => !r.ok).length;
+    const cabecalho = falhas
+      ? `Republicacao concluida com **${falhas} falha(s)**:`
+      : "Embeds republicados (mensagem nova, a antiga foi apagada):";
+    await interaction.editReply({
+      content: `${cabecalho}\n${linhas.join("\n")}`.slice(0, 1900),
+      components: []
+    });
+    return;
+  }
+
   if (id === "cat" || id.startsWith("cat:")) {
     if (mensagemEfmera(interaction)) {
       await interaction.update(payloadLoja(valor));
@@ -4817,41 +5626,6 @@ async function handleSelect(interaction) {
     return;
   }
 
-  if (id === "hub_estoque_remover_sel") {
-    if (!isStaff(interaction.member)) {
-      await interaction.reply({ content: "So a staff pode usar o painel.", ephemeral: true });
-      return;
-    }
-    const produto = getProduto(valor);
-    if (!produto) {
-      await interaction.reply({ content: "Produto nao encontrado.", ephemeral: true });
-      return;
-    }
-    const fila = estoqueDe(valor);
-    if (!fila.length) {
-      await renderPainel(interaction, {
-        embeds: [new EmbedBuilder().setTitle("Estoque").setDescription(`**${produto.nome}** esta com estoque vazio.`).setColor(0x3498db)],
-        components: [rowVoltarHub()]
-      });
-      return;
-    }
-    const opcoes = fila.slice(0, 25).map(i => ({
-      label: `#${i.id} — ${String(i.conteudo).slice(0, 80)}`.slice(0, 100),
-      value: String(i.id)
-    }));
-    const sel = new ActionRowBuilder().addComponents(
-      new StringSelectMenuBuilder()
-        .setCustomId(`hub_estoque_item_sel:${valor}`)
-        .setPlaceholder(`Remover item de ${String(produto.nome).slice(0, 60)}`)
-        .addOptions(opcoes)
-    );
-    await renderPainel(interaction, {
-      embeds: [new EmbedBuilder().setTitle("Remover item do estoque").setDescription(`Produto: **${produto.nome}**\nEscolha o item para remover.`).setColor(0x3498db)],
-      components: [sel, rowVoltarHub()]
-    });
-    return;
-  }
-
   if (id === "cfg_cat_ticket") {
     if (!isStaff(interaction.member)) {
       await interaction.reply({ content: "So a staff pode configurar.", ephemeral: true });
@@ -4865,29 +5639,6 @@ async function handleSelect(interaction) {
   }
 
   const [selAcao, selValor] = id.split(":");
-  if (selAcao === "hub_estoque_item_sel") {
-    if (!isStaff(interaction.member)) {
-      await interaction.reply({ content: "So a staff pode usar o painel.", ephemeral: true });
-      return;
-    }
-    const produto = getProduto(selValor);
-    if (!produto) {
-      await interaction.reply({ content: "Produto nao encontrado.", ephemeral: true });
-      return;
-    }
-    const itemId = Number(valor);
-    const fila = estoqueDe(selValor);
-    const idx = fila.findIndex(i => i.id === itemId);
-    if (idx < 0) {
-      await interaction.reply({ content: "Item nao encontrado nesse estoque.", ephemeral: true });
-      return;
-    }
-    fila.splice(idx, 1);
-    salvarStore();
-    await atualizarLojaFixa().catch(() => {});
-    await renderPainel(interaction, payloadHubEstoque());
-    return;
-  }
   if (selAcao === "gp_cargo_sel") {
     if (!isStaff(interaction.member)) {
       await interaction.reply({ content: "So a staff pode configurar.", ephemeral: true });
@@ -4987,7 +5738,7 @@ async function handleModal(interaction) {
     store.config.feedbackTitulo = (interaction.fields.getTextInputValue("titulo") || "").trim().slice(0, 80) || FEEDBACK_TITULO_PADRAO;
     store.config.feedbackMensagem = (interaction.fields.getTextInputValue("mensagem") || "").trim().slice(0, 1000) || FEEDBACK_MSG_PADRAO;
     salvarStore();
-    await enviarPainelConfig(interaction);
+    await interaction.reply({ ...payloadPainelConfig(interaction.guildId), ephemeral: true });
     return;
   }
 
@@ -5292,10 +6043,10 @@ async function handleModal(interaction) {
     store.config.ticketPainel.descricao = (interaction.fields.getTextInputValue("descricao") || "").trim().slice(0, 4096);
     store.config.ticketPainel.botaoLabel = (interaction.fields.getTextInputValue("botao") || "Abrir ticket").trim().slice(0, 80);
     store.config.ticketPainel.cor = (interaction.fields.getTextInputValue("cor") || "5865F2").trim().replace(/^#/, "");
-    store.config.ticketPainel.botaoEmoji = normalizarEmoji(interaction.fields.getTextInputValue("emoji"));
+    store.config.ticketPainel.botaoEmoji = (interaction.fields.getTextInputValue("emoji") || "").trim() || null;
     salvarStore();
     await atualizarPaineisTicket().catch(() => {});
-    await enviarPainelConfig(interaction);
+    await interaction.reply({ ...payloadPainelConfig(interaction.guildId), ephemeral: true });
     return;
   }
 
@@ -5310,18 +6061,18 @@ async function handleModal(interaction) {
       {
         id: atuais[0]?.id || "duvidas",
         label: ler("op1_label", "Duvidas").slice(0, 100),
-        emoji: normalizarEmoji(interaction.fields.getTextInputValue("op1_emoji"))
+        emoji: (interaction.fields.getTextInputValue("op1_emoji") || "").trim() || null
       },
       {
         id: atuais[1]?.id || "entrega",
         label: ler("op2_label", "Entrega de produto").slice(0, 100),
-        emoji: normalizarEmoji(interaction.fields.getTextInputValue("op2_emoji"))
+        emoji: (interaction.fields.getTextInputValue("op2_emoji") || "").trim() || null
       }
     ];
     store.config.ticketPainel.opcoes = opcoes;
     salvarStore();
     await atualizarPaineisTicket().catch(() => {});
-    await enviarPainelConfig(interaction);
+    await interaction.reply({ ...payloadPainelConfig(interaction.guildId), ephemeral: true });
     return;
   }
 
@@ -5346,7 +6097,7 @@ async function handleModal(interaction) {
     store.config.ticketPainel.rodape = rodape || null;
     salvarStore();
     await atualizarPaineisTicket().catch(() => {});
-    await enviarPainelConfig(interaction);
+    await interaction.reply({ ...payloadPainelConfig(interaction.guildId), ephemeral: true });
     return;
   }
   if (acao === "cfg_banner_modal") {
@@ -5365,7 +6116,7 @@ async function handleModal(interaction) {
     salvarStore();
     await atualizarLojaFixa().catch(error => console.error("Falha ao atualizar loja fixa:", error.message));
 
-    await enviarPainelConfig(interaction);    return;
+    await interaction.reply({ ...payloadPainelConfig(interaction.guildId), ephemeral: true });    return;
   }
 
   if (acao === "cfg_smtp_modal") {
@@ -5379,7 +6130,7 @@ async function handleModal(interaction) {
     store.config.smtpPass = interaction.fields.getTextInputValue("senha") || "";
     store.config.smtpFrom = (interaction.fields.getTextInputValue("from") || "").trim();
     salvarStore();
-    await enviarPainelConfig(interaction);
+    await interaction.reply({ ...payloadPainelConfig(interaction.guildId), ephemeral: true });
     return;
   }
 
@@ -5393,7 +6144,7 @@ async function handleModal(interaction) {
     salvarStore();
     await atualizarLojaFixa().catch(() => {});
     registrarLog("loja_pausada", `Loja pausada. ${store.config.lojaPausaMotivo}`, { staffId: interaction.user.id });
-    await enviarPainelConfig(interaction);
+    await interaction.reply({ ...payloadPainelConfig(interaction.guildId), ephemeral: true });
     return;
   }
 
@@ -5407,7 +6158,7 @@ async function handleModal(interaction) {
     store.config.ocultarNomePix = !["nao", "não", "no", "n", "false", "0"].includes(ocultar);
     salvarStore();
 
-    await enviarPainelConfig(interaction);    return;
+    await interaction.reply({ ...payloadPainelConfig(interaction.guildId), ephemeral: true });    return;
   }
 
   if (acao.startsWith("gc_") && acao.endsWith("_modal")) {
@@ -5437,7 +6188,7 @@ async function handleModal(interaction) {
       return;
     }
     if (acao === "gc_emoji_modal") {
-      patchCategoria(valor, { emoji: normalizarEmoji(interaction.fields.getTextInputValue("emoji"), "📁") });
+      patchCategoria(valor, { emoji: (interaction.fields.getTextInputValue("emoji") || "📁").trim().slice(0, 8) });
       await recarregarCat();
       return;
     }
@@ -5501,11 +6252,6 @@ async function handleModal(interaction) {
 
     if (acao === "gp_nome_modal") {
       patchProduto(valor, { nome: interaction.fields.getTextInputValue("nome").trim() });
-      await recarregar();
-      return;
-    }
-    if (acao === "gp_emoji_modal") {
-      patchProduto(valor, { emoji: normalizarEmoji(interaction.fields.getTextInputValue("emoji"), "📦") });
       await recarregar();
       return;
     }
@@ -5652,182 +6398,6 @@ async function handleModal(interaction) {
       await interaction.reply({ content: `Variante **${nome}** (\`${id}\`) criada.`, ephemeral: true });
       return;
     }
-  }
-
-  if (acao === "hub_produto_criar_modal") {
-    if (!isStaff(interaction.member)) {
-      await interaction.reply({ content: "So a staff pode configurar.", ephemeral: true });
-      return;
-    }
-    const id = interaction.fields.getTextInputValue("id").trim().toLowerCase().replace(/[^a-z0-9_-]/g, "").slice(0, 32);
-    const nome = interaction.fields.getTextInputValue("nome").trim();
-    const preco = Number(interaction.fields.getTextInputValue("preco").replace(",", "."));
-    const categoriaId = (interaction.fields.getTextInputValue("categoria") || "").trim().toLowerCase().replace(/[^a-z0-9_-]/g, "").slice(0, 32) || "geral";
-    const emoji = normalizarEmoji(interaction.fields.getTextInputValue("emoji"), "📦");
-    if (!id || !nome || !Number.isFinite(preco) || preco < 0) {
-      await interaction.reply({ content: "ID, nome e preco validos sao obrigatorios.", ephemeral: true });
-      return;
-    }
-    if (getProduto(id)) {
-      await interaction.reply({ content: `Ja existe um produto com o ID \`${id}\`.`, ephemeral: true });
-      return;
-    }
-    if (!store.categorias[categoriaId]) {
-      store.categorias[categoriaId] = {
-        id: categoriaId, nome: categoriaId, emoji: "📁", descricao: "", posicao: Object.keys(store.categorias).length,
-        ativo: true, banner: null, bannerPosicao: "top", imagem: null, cor: null, rodape: null
-      };
-    }
-    store.produtos[id] = {
-      id, nome, descricao: "", precoCentavos: Math.round(preco * 100), emoji,
-      disponivel: true, modo: "semi", cargoId: null, cargoDias: 0, imagem: null, banner: null,
-      bannerPosicao: "bottom", categoriaId, instrucoes: "", precoOriginalCentavos: 0
-    };
-    salvarStore();
-    await atualizarLojaFixa().catch(() => {});
-    const produto = getProduto(id);
-    await enviarPainelProduto(interaction, produto);
-    return;
-  }
-
-  if (acao === "hub_categoria_criar_modal") {
-    if (!isStaff(interaction.member)) {
-      await interaction.reply({ content: "So a staff pode configurar.", ephemeral: true });
-      return;
-    }
-    const id = interaction.fields.getTextInputValue("id").trim().toLowerCase().replace(/[^a-z0-9_-]/g, "").slice(0, 32);
-    const nome = interaction.fields.getTextInputValue("nome").trim();
-    if (!id || !nome) {
-      await interaction.reply({ content: "ID e nome sao obrigatorios.", ephemeral: true });
-      return;
-    }
-    if (store.categorias[id]) {
-      await interaction.reply({ content: `Ja existe uma categoria com o ID \`${id}\`.`, ephemeral: true });
-      return;
-    }
-    store.categorias[id] = {
-      id, nome,
-      emoji: normalizarEmoji(interaction.fields.getTextInputValue("emoji"), "📁"),
-      descricao: (interaction.fields.getTextInputValue("descricao") || "").trim(),
-      posicao: Object.keys(store.categorias).length, ativo: true,
-      banner: null, bannerPosicao: "top", imagem: null, cor: null, rodape: null
-    };
-    salvarStore();
-    await atualizarLojaFixa().catch(() => {});
-    await renderPainel(interaction, payloadHubCategorias());
-    return;
-  }
-
-  if (acao === "hub_categoria_remover_modal") {
-    if (!isStaff(interaction.member)) {
-      await interaction.reply({ content: "So a staff pode configurar.", ephemeral: true });
-      return;
-    }
-    const id = interaction.fields.getTextInputValue("id").trim();
-    if (!store.categorias[id]) {
-      await interaction.reply({ content: "Categoria nao encontrada.", ephemeral: true });
-      return;
-    }
-    store.categorias[id].ativo = false;
-    salvarStore();
-    await atualizarLojaFixa().catch(() => {});
-    await renderPainel(interaction, payloadHubCategorias());
-    return;
-  }
-
-  if (acao === "hub_categoria_canal_modal") {
-    if (!isStaff(interaction.member)) {
-      await interaction.reply({ content: "So a staff pode configurar.", ephemeral: true });
-      return;
-    }
-    const nome = slugCanal(interaction.fields.getTextInputValue("nome"));
-    const novaCategoria = (interaction.fields.getTextInputValue("nova_categoria") || "").trim();
-    const topico = (interaction.fields.getTextInputValue("topico") || "").trim();
-    if (!nome) {
-      await interaction.reply({ content: "Informe o nome do canal.", ephemeral: true });
-      return;
-    }
-    await interaction.deferReply({ ephemeral: true });
-    let parent = null;
-    if (novaCategoria) {
-      parent = interaction.guild.channels.cache.find(c => c.type === ChannelType.GuildCategory && c.name === novaCategoria) || null;
-      if (!parent) parent = await interaction.guild.channels.create({ name: novaCategoria, type: ChannelType.GuildCategory });
-    }
-    const canal = await interaction.guild.channels.create({
-      name: nome, type: ChannelType.GuildText, parent: parent ? parent.id : undefined, topic: topico || undefined
-    });
-    await interaction.editReply({ content: `Canal criado: <#${canal.id}>${parent ? ` em **${parent.name}**` : ""}.` });
-    return;
-  }
-
-  if (acao === "hub_canais_colar_modal") {
-    if (!isStaff(interaction.member)) {
-      await interaction.reply({ content: "So a staff pode configurar.", ephemeral: true });
-      return;
-    }
-    let snapshot;
-    try {
-      snapshot = JSON.parse(interaction.fields.getTextInputValue("json"));
-    } catch {
-      await interaction.reply({ content: "JSON invalido.", ephemeral: true });
-      return;
-    }
-    if (!snapshot || (!Array.isArray(snapshot.categorias) && !Array.isArray(snapshot.semCategoria))) {
-      await interaction.reply({ content: "JSON invalido. Use o gerado em Canais > Exportar.", ephemeral: true });
-      return;
-    }
-    await interaction.deferReply({ ephemeral: true });
-    const { criados, pulados } = await aplicarSnapshotCanais(interaction.guild, snapshot);
-    await interaction.editReply({
-      content:
-        `Colagem concluida.\n` +
-        `Criados (${criados.length}): ${criados.slice(0, 20).join(", ") || "nenhum"}${criados.length > 20 ? "..." : ""}\n` +
-        `Ja existiam (${pulados.length}): ${pulados.slice(0, 15).join(", ") || "nenhum"}${pulados.length > 15 ? "..." : ""}`
-    });
-    return;
-  }
-
-  if (acao === "cfg_backup_importar_modal") {
-    if (!isStaff(interaction.member)) {
-      await interaction.reply({ content: "So a staff pode configurar.", ephemeral: true });
-      return;
-    }
-    let dump;
-    try {
-      dump = JSON.parse(interaction.fields.getTextInputValue("json"));
-    } catch {
-      await interaction.reply({ content: "JSON invalido.", ephemeral: true });
-      return;
-    }
-    try {
-      restaurarStore(dump);
-    } catch (error) {
-      await interaction.reply({ content: `Backup invalido: ${error.message}`, ephemeral: true });
-      return;
-    }
-    await publicarCanaisFixos().catch(() => {});
-    await interaction.reply({ content: "Backup restaurado. Pedidos, produtos, estoque e config foram recarregados.", ephemeral: true });
-    return;
-  }
-
-  if (acao === "cfg_smtp_teste_modal") {
-    if (!isStaff(interaction.member)) {
-      await interaction.reply({ content: "So a staff pode configurar.", ephemeral: true });
-      return;
-    }
-    const destino = (interaction.fields.getTextInputValue("email") || "").trim();
-    if (!destino || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(destino)) {
-      await interaction.reply({ content: "Informe um e-mail valido.", ephemeral: true });
-      return;
-    }
-    await interaction.deferReply({ ephemeral: true });
-    try {
-      await testarSmtp(store.config, destino);
-      await interaction.editReply({ content: `E-mail de teste enviado para **${destino}**.` });
-    } catch (error) {
-      await interaction.editReply({ content: `Falha no SMTP: ${error.message}` });
-    }
-    return;
   }
 
   await interaction
@@ -6002,8 +6572,8 @@ client.once("ready", () => {
 
   // Painel de loja, ticket, cupons e feedbacks NAO sao republicados/atualizados
   // automaticamente a cada reinicio (deploy/atualizacao do codigo). A publicacao
-  // e sempre manual pela staff ("Publicar loja"/"Publicar tickets" no painel,
-  // ou "Publicar" em Cupons). Assim nada e reenviado sozinho nesses canais.
+  // e sempre manual pela staff (/catalogo, "Publicar loja"/"Publicar tickets" no
+  // painel, /cupom publicar). Assim nada e reenviado sozinho nesses canais.
 });
 
 function verificarPrazos() {
